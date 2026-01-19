@@ -1,11 +1,12 @@
-import React, {
+import {
   createContext,
   useContext,
   useState,
-  ReactNode,
   useEffect,
   useRef,
+  type ReactNode,
 } from "react";
+
 
 type User = {
   fname: string;
