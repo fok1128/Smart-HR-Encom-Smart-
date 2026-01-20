@@ -1,10 +1,14 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom"; // ✅ แก้ตรงนี้
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
 import Input from "../form/input/InputField";
 import Checkbox from "../form/input/Checkbox";
 import { useAuth } from "../../context/AuthContext";
+
+type LocationState = {
+  from?: { pathname?: string };
+};
 
 export default function SignInForm() {
   const [showPassword, setShowPassword] = useState(false);
@@ -16,10 +20,18 @@ export default function SignInForm() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const { login } = useAuth();
+  const { login, user, loading: authLoading } = useAuth(); // ✅ ใช้ loading จาก context
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // ✅ ถ้าล็อกอินอยู่แล้ว ไม่ให้เข้าหน้า signin
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate("/", { replace: true });
+    }
+  }, [user, authLoading, navigate]);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
@@ -31,15 +43,28 @@ export default function SignInForm() {
     try {
       setLoading(true);
 
-      // mock login
+      // ✅ mock login (เอาไว้ก่อน)
       if (email !== "admin@local.com" || password !== "1234") {
         throw new Error("Email หรือ Password ไม่ถูกต้อง");
       }
 
+      // ✅ บันทึก session ผ่าน AuthContext (ด้านในจะจัดการ LocalStorage ให้)
       login({ fname: "Admin", lname: "User", email }, isChecked);
-      navigate("/"); // หรือ navigate("/signin") ตาม flow ของคุณ
-    } catch (err: any) {
-      setError(err?.message || "ล็อกอินไม่สำเร็จ");
+
+      // ✅ กลับไปหน้าที่ผู้ใช้พยายามเข้า (มาจาก ProtectedRoute)
+      const state = location.state as LocationState | null;
+      const from = state?.from?.pathname;
+
+      // กันเคสวนกลับ signin
+      const target =
+        from && from !== "/signin" && from !== "/signup" && from !== "/reset-password"
+          ? from
+          : "/";
+
+      navigate(target, { replace: true });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "ล็อกอินไม่สำเร็จ";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -53,9 +78,7 @@ export default function SignInForm() {
     <div className="flex h-full w-full items-center justify-center px-6 sm:px-10">
       <div className="w-full max-w-md xl:max-w-lg 2xl:max-w-2xl">
         <h1 className="font-bold text-gray-900 dark:text-white leading-tight">
-          <span className="block text-3xl xl:text-4xl 2xl:text-5xl">
-            Smart HR
-          </span>
+          <span className="block text-3xl xl:text-4xl 2xl:text-5xl">Smart HR</span>
         </h1>
 
         <p className="mt-5 text-gray-600 dark:text-gray-300 text-base xl:text-lg 2xl:text-xl">
@@ -81,7 +104,7 @@ export default function SignInForm() {
                 type="email"
                 placeholder="Enter your email"
                 value={email}
-                onChange={(e: any) => setEmail(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
                 className={inputBlackBorder}
               />
             </div>
@@ -100,7 +123,9 @@ export default function SignInForm() {
                 type={showPassword ? "text" : "password"}
                 placeholder="Enter your password"
                 value={password}
-                onChange={(e: any) => setPassword(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setPassword(e.target.value)
+                }
                 className={inputBlackBorder}
               />
 
@@ -136,7 +161,7 @@ export default function SignInForm() {
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || authLoading}
               className="w-full rounded-lg bg-green-600 px-4 py-3 text-base font-medium text-white hover:bg-green-700 disabled:opacity-60 xl:py-4 xl:text-lg 2xl:text-xl"
             >
               {loading ? "Signing in..." : "Sign in"}

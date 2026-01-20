@@ -15,44 +15,52 @@ type User = {
 
 type AuthContextType = {
   user: User | null;
-  loading: boolean; // ✅ เพิ่ม
+  loading: boolean;
   login: (user: User, remember: boolean) => void;
   logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const SESSION_TIMEOUT = 30 * 60 * 1000; // ✅ 30 นาทีจริง
-const SESSION_KEY = "demoSession";
+const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 นาที
+const LOCAL_KEY = "demoSession"; // ✅ remember me = localStorage
+const TEMP_KEY = "demoSession_temp"; // ✅ ไม่ remember = sessionStorage
+
+function safeParseUser(raw: string | null): User | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as User;
+    if (!parsed?.email) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 function loadInitialUser(): User | null {
   if (typeof window === "undefined") return null;
 
-  const stored = localStorage.getItem(SESSION_KEY);
-  if (!stored) return null;
+  // ✅ ลองโหลดจาก localStorage ก่อน ถ้าไม่มีค่อยดู sessionStorage
+  const fromLocal = safeParseUser(localStorage.getItem(LOCAL_KEY));
+  if (fromLocal) return fromLocal;
 
-  try {
-    const parsed = JSON.parse(stored) as User;
-    if (!parsed?.email) {
-      localStorage.removeItem(SESSION_KEY);
-      return null;
-    }
-    return parsed;
-  } catch (e) {
-    console.error("Failed to parse session user", e);
-    localStorage.removeItem(SESSION_KEY);
-    return null;
-  }
+  const fromSession = safeParseUser(sessionStorage.getItem(TEMP_KEY));
+  if (fromSession) return fromSession;
+
+  // ถ้าพัง/อ่านไม่ได้ เคลียร์ทิ้ง
+  localStorage.removeItem(LOCAL_KEY);
+  sessionStorage.removeItem(TEMP_KEY);
+  return null;
 }
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [lastActivity, setLastActivity] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true); // ✅ เพิ่ม
+  const [loading, setLoading] = useState(true);
 
   const timeoutRef = useRef<number | null>(null);
 
-  // ✅ โหลด session ครั้งแรกแบบชัวร์ ๆ
+  // ✅ โหลด session ครั้งแรก
   useEffect(() => {
     const initialUser = loadInitialUser();
     setUser(initialUser);
@@ -65,17 +73,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(newUser);
     setLastActivity(now);
 
+    // ✅ remember = เก็บ localStorage
     if (remember) {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(newUser));
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(newUser));
+      sessionStorage.removeItem(TEMP_KEY);
     } else {
-      localStorage.removeItem(SESSION_KEY);
+      // ✅ ไม่ remember = เก็บ sessionStorage (อยู่จนปิด browser)
+      sessionStorage.setItem(TEMP_KEY, JSON.stringify(newUser));
+      localStorage.removeItem(LOCAL_KEY);
     }
   };
 
   const logout = () => {
     setUser(null);
     setLastActivity(null);
-    localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(LOCAL_KEY);
+    sessionStorage.removeItem(TEMP_KEY);
 
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -83,7 +96,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // จับ activity
+  // ✅ จับ activity
   useEffect(() => {
     if (!user) return;
 
@@ -104,7 +117,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [user]);
 
-  // ตั้ง timer auto logout
+  // ✅ ตั้ง timer auto logout
   useEffect(() => {
     if (!user || lastActivity === null) {
       if (timeoutRef.current) {
@@ -123,7 +136,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
     timeoutRef.current = window.setTimeout(logout, remaining);
 
     return () => {
