@@ -23,8 +23,8 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 นาที
-const LOCAL_KEY = "demoSession"; // ✅ remember me = localStorage
-const TEMP_KEY = "demoSession_temp"; // ✅ ไม่ remember = sessionStorage
+const LOCAL_KEY = "demoSession"; // remember me
+const TEMP_KEY = "demoSession_temp"; // ไม่ remember (session)
 
 function safeParseUser(raw: string | null): User | null {
   if (!raw) return null;
@@ -37,19 +37,26 @@ function safeParseUser(raw: string | null): User | null {
   }
 }
 
+function clearAllSessionKeys() {
+  // ✅ เคลียร์ให้หมด กัน build เก่า/ใหม่ค้าง key คนละชื่อ
+  localStorage.removeItem(LOCAL_KEY);
+  localStorage.removeItem(TEMP_KEY);
+  sessionStorage.removeItem(LOCAL_KEY);
+  sessionStorage.removeItem(TEMP_KEY);
+}
+
 function loadInitialUser(): User | null {
   if (typeof window === "undefined") return null;
 
-  // ✅ ลองโหลดจาก localStorage ก่อน ถ้าไม่มีค่อยดู sessionStorage
+  // ✅ priority: localStorage ก่อน แล้วค่อย sessionStorage
   const fromLocal = safeParseUser(localStorage.getItem(LOCAL_KEY));
   if (fromLocal) return fromLocal;
 
   const fromSession = safeParseUser(sessionStorage.getItem(TEMP_KEY));
   if (fromSession) return fromSession;
 
-  // ถ้าพัง/อ่านไม่ได้ เคลียร์ทิ้ง
-  localStorage.removeItem(LOCAL_KEY);
-  sessionStorage.removeItem(TEMP_KEY);
+  // ถ้าอ่านไม่ได้/พัง เคลียร์ทิ้ง
+  clearAllSessionKeys();
   return null;
 }
 
@@ -73,12 +80,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(newUser);
     setLastActivity(now);
 
-    // ✅ remember = เก็บ localStorage
     if (remember) {
+      // ✅ remember = localStorage
       localStorage.setItem(LOCAL_KEY, JSON.stringify(newUser));
       sessionStorage.removeItem(TEMP_KEY);
     } else {
-      // ✅ ไม่ remember = เก็บ sessionStorage (อยู่จนปิด browser)
+      // ✅ ไม่ remember = sessionStorage
       sessionStorage.setItem(TEMP_KEY, JSON.stringify(newUser));
       localStorage.removeItem(LOCAL_KEY);
     }
@@ -87,9 +94,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = () => {
     setUser(null);
     setLastActivity(null);
-    localStorage.removeItem(LOCAL_KEY);
-    sessionStorage.removeItem(TEMP_KEY);
 
+    // ✅ เคลียร์ session ทั้งหมด
+    clearAllSessionKeys();
+
+    // ✅ เคลียร์ timer
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -136,6 +145,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
     timeoutRef.current = window.setTimeout(logout, remaining);
 
     return () => {

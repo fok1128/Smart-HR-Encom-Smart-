@@ -1,25 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 import { useSidebar } from "../context/SidebarContext";
 import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import NotificationDropdown from "../components/header/NotificationDropdown";
-// ❌ ถ้าคุณไม่มี UserDropdown จริง ๆ ให้เอาออก
-// import UserDropdown from "../components/header/UserDropdown";
-import { useAuth } from "../context/AuthContext"; // ✅ เพิ่ม
+import UserDropdown from "../components/header/UserDropdown"; // ✅ ใช้ dropdown แบบเดิม
 
 const AppHeader: React.FC = () => {
   const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
 
   const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
-
-  const navigate = useNavigate(); // ✅ เพิ่ม
-  const { user, logout } = useAuth(); // ✅ เพิ่ม
-
-  const handleLogout = () => {
-    logout();
-    navigate("/signin", { replace: true });
-  };
 
   const handleToggle = () => {
     if (window.innerWidth >= 1024) {
@@ -172,23 +162,8 @@ const AppHeader: React.FC = () => {
             <NotificationDropdown />
           </div>
 
-          {/* ✅ User Area (Logout) */}
-          {user ? (
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-            >
-              Logout
-            </button>
-          ) : (
-            <Link
-              to="/signin"
-              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-            >
-              Sign In
-            </Link>
-          )}
+          {/* ✅ User Area (Dropdown) */}
+          <UserDropdown />
         </div>
       </div>
     </header>
