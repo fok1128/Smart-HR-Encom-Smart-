@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import AppLayout from "./layout/AppLayout";
 import { ScrollToTop } from "./components/common/ScrollToTop";
@@ -13,19 +13,22 @@ import SignUp from "./pages/AuthPages/SignUp";
 import ResetPassword from "./pages/AuthPages/ResetPassword";
 import NotFound from "./pages/OtherPage/NotFound";
 import ProtectedRoute from "./routes/ProtectedRoute";
+import TitleLock from "./components/common/TitleLock"; // ✅ ใช้ตัวนี้แทน
 
 export default function App() {
   return (
     <AuthProvider>
       <Router>
         <ScrollToTop />
+        <TitleLock /> {/* ✅ ล็อกชื่อแท็บ ไม่ให้ใครทับได้ */}
+
         <Routes>
-          {/* หน้า auth (เข้าได้ทุกคน) */}
+          {/* หน้า auth */}
           <Route path="/signin" element={<SignIn />} />
           <Route path="/signup" element={<SignUp />} />
           <Route path="/reset-password" element={<ResetPassword />} />
 
-          {/* กันหน้า: ต้องล็อกอินเท่านั้นถึงเข้าได้ */}
+          {/* หลังบ้าน */}
           <Route element={<ProtectedRoute />}>
             <Route element={<AppLayout />}>
               <Route index element={<Home />} />
@@ -37,7 +40,6 @@ export default function App() {
             </Route>
           </Route>
 
-          {/* เผื่อคนพิมพ์ path แปลก ๆ */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Router>

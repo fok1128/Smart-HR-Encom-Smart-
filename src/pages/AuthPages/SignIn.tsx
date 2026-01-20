@@ -7,7 +7,7 @@ export default function SignIn() {
     <>
       <PageMeta
         title="Smart HR @PEA ENCOM SMART"
-        description="This is React.js SignIn Tables Dashboard page for TailAdmin - React.js Tailwind CSS Admin Dashboard Template"
+        description="Smart HR Sign In"
       />
       <AuthLayout>
         <SignInForm />
