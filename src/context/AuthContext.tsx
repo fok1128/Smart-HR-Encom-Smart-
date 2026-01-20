@@ -7,7 +7,6 @@ import {
   type ReactNode,
 } from "react";
 
-
 type User = {
   fname: string;
   lname: string;
@@ -16,16 +15,16 @@ type User = {
 
 type AuthContextType = {
   user: User | null;
+  loading: boolean; // ✅ เพิ่ม
   login: (user: User, remember: boolean) => void;
   logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const SESSION_TIMEOUT = 30 * 1000; // 30 นาที
+const SESSION_TIMEOUT = 30 * 60 * 1000; // ✅ 30 นาทีจริง
 const SESSION_KEY = "demoSession";
 
-// อ่าน user จาก localStorage ตอนเริ่มต้น
 function loadInitialUser(): User | null {
   if (typeof window === "undefined") return null;
 
@@ -47,17 +46,19 @@ function loadInitialUser(): User | null {
 }
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const initialUser = loadInitialUser();
-
-  // ถ้าเคยติ๊ก keep me → initialUser จะไม่ null ตอนเปิดเว็บ
-  const [user, setUser] = useState<User | null>(initialUser);
-  const [lastActivity, setLastActivity] = useState<number | null>(
-    initialUser ? Date.now() : null
-  );
+  const [user, setUser] = useState<User | null>(null);
+  const [lastActivity, setLastActivity] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true); // ✅ เพิ่ม
 
   const timeoutRef = useRef<number | null>(null);
 
-  // ========== LOGIN / LOGOUT ==========
+  // ✅ โหลด session ครั้งแรกแบบชัวร์ ๆ
+  useEffect(() => {
+    const initialUser = loadInitialUser();
+    setUser(initialUser);
+    setLastActivity(initialUser ? Date.now() : null);
+    setLoading(false);
+  }, []);
 
   const login = (newUser: User, remember: boolean) => {
     const now = Date.now();
@@ -65,10 +66,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLastActivity(now);
 
     if (remember) {
-      // จำ user ข้ามการปิดหน้า/รีเฟรช
       localStorage.setItem(SESSION_KEY, JSON.stringify(newUser));
     } else {
-      // ไม่จำ session
       localStorage.removeItem(SESSION_KEY);
     }
   };
@@ -76,7 +75,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = () => {
     setUser(null);
     setLastActivity(null);
-    // ลบเฉพาะ session ไม่ยุ่งกับบัญชี demoUser
     localStorage.removeItem(SESSION_KEY);
 
     if (timeoutRef.current) {
@@ -85,14 +83,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // ========== จับ activity ในหน้าเว็บ ==========
-
+  // จับ activity
   useEffect(() => {
     if (!user) return;
 
-    const handleActivity = () => {
-      setLastActivity(Date.now());
-    };
+    const handleActivity = () => setLastActivity(Date.now());
 
     window.addEventListener("click", handleActivity);
     window.addEventListener("mousemove", handleActivity);
@@ -109,8 +104,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [user]);
 
-  // ========== ตั้ง timer auto logout จาก lastActivity (เฉพาะรอบที่เปิดอยู่) ==========
-
+  // ตั้ง timer auto logout
   useEffect(() => {
     if (!user || lastActivity === null) {
       if (timeoutRef.current) {
@@ -121,31 +115,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     const now = Date.now();
-    const elapsed = now - lastActivity;
-    const remaining = SESSION_TIMEOUT - elapsed;
+    const remaining = SESSION_TIMEOUT - (now - lastActivity);
 
     if (remaining <= 0) {
       logout();
       return;
     }
 
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-    timeoutRef.current = window.setTimeout(() => {
-      logout();
-    }, remaining);
+    timeoutRef.current = window.setTimeout(logout, remaining);
 
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [user, lastActivity]);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -153,8 +140,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 };

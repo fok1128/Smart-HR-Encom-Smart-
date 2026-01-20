@@ -1,9 +1,8 @@
 import { jsx as _jsx } from "react/jsx-runtime";
 import { createContext, useContext, useState, useEffect, useRef, } from "react";
 const AuthContext = createContext(undefined);
-const SESSION_TIMEOUT = 30 * 1000; // 30 นาที
+const SESSION_TIMEOUT = 30 * 60 * 1000; // ✅ 30 นาทีจริง
 const SESSION_KEY = "demoSession";
-// อ่าน user จาก localStorage ตอนเริ่มต้น
 function loadInitialUser() {
     if (typeof window === "undefined")
         return null;
@@ -25,42 +24,42 @@ function loadInitialUser() {
     }
 }
 export const AuthProvider = ({ children }) => {
-    const initialUser = loadInitialUser();
-    // ถ้าเคยติ๊ก keep me → initialUser จะไม่ null ตอนเปิดเว็บ
-    const [user, setUser] = useState(initialUser);
-    const [lastActivity, setLastActivity] = useState(initialUser ? Date.now() : null);
+    const [user, setUser] = useState(null);
+    const [lastActivity, setLastActivity] = useState(null);
+    const [loading, setLoading] = useState(true); // ✅ เพิ่ม
     const timeoutRef = useRef(null);
-    // ========== LOGIN / LOGOUT ==========
+    // ✅ โหลด session ครั้งแรกแบบชัวร์ ๆ
+    useEffect(() => {
+        const initialUser = loadInitialUser();
+        setUser(initialUser);
+        setLastActivity(initialUser ? Date.now() : null);
+        setLoading(false);
+    }, []);
     const login = (newUser, remember) => {
         const now = Date.now();
         setUser(newUser);
         setLastActivity(now);
         if (remember) {
-            // จำ user ข้ามการปิดหน้า/รีเฟรช
             localStorage.setItem(SESSION_KEY, JSON.stringify(newUser));
         }
         else {
-            // ไม่จำ session
             localStorage.removeItem(SESSION_KEY);
         }
     };
     const logout = () => {
         setUser(null);
         setLastActivity(null);
-        // ลบเฉพาะ session ไม่ยุ่งกับบัญชี demoUser
         localStorage.removeItem(SESSION_KEY);
         if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
         }
     };
-    // ========== จับ activity ในหน้าเว็บ ==========
+    // จับ activity
     useEffect(() => {
         if (!user)
             return;
-        const handleActivity = () => {
-            setLastActivity(Date.now());
-        };
+        const handleActivity = () => setLastActivity(Date.now());
         window.addEventListener("click", handleActivity);
         window.addEventListener("mousemove", handleActivity);
         window.addEventListener("keydown", handleActivity);
@@ -74,7 +73,7 @@ export const AuthProvider = ({ children }) => {
             window.removeEventListener("touchstart", handleActivity);
         };
     }, [user]);
-    // ========== ตั้ง timer auto logout จาก lastActivity (เฉพาะรอบที่เปิดอยู่) ==========
+    // ตั้ง timer auto logout
     useEffect(() => {
         if (!user || lastActivity === null) {
             if (timeoutRef.current) {
@@ -84,30 +83,24 @@ export const AuthProvider = ({ children }) => {
             return;
         }
         const now = Date.now();
-        const elapsed = now - lastActivity;
-        const remaining = SESSION_TIMEOUT - elapsed;
+        const remaining = SESSION_TIMEOUT - (now - lastActivity);
         if (remaining <= 0) {
             logout();
             return;
         }
-        if (timeoutRef.current) {
+        if (timeoutRef.current)
             clearTimeout(timeoutRef.current);
-        }
-        timeoutRef.current = window.setTimeout(() => {
-            logout();
-        }, remaining);
+        timeoutRef.current = window.setTimeout(logout, remaining);
         return () => {
-            if (timeoutRef.current) {
+            if (timeoutRef.current)
                 clearTimeout(timeoutRef.current);
-            }
         };
     }, [user, lastActivity]);
-    return (_jsx(AuthContext.Provider, { value: { user, login, logout }, children: children }));
+    return (_jsx(AuthContext.Provider, { value: { user, loading, login, logout }, children: children }));
 };
 export const useAuth = () => {
     const ctx = useContext(AuthContext);
-    if (!ctx) {
+    if (!ctx)
         throw new Error("useAuth must be used within AuthProvider");
-    }
     return ctx;
 };
