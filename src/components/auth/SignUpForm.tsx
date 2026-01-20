@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
 import Input from "../form/input/InputField";
@@ -33,7 +33,6 @@ export default function SignUpForm() {
 
     console.log("🔥 Sign Up SUBMITTED:", formData);
 
-    // ตัวอย่างง่าย ๆ: เซฟ user ไว้ใน localStorage
     localStorage.setItem("demoUser", JSON.stringify(formData));
 
     alert("Sign Up สำเร็จ! ลองไป Sign In ดูได้เลย");
@@ -63,7 +62,6 @@ export default function SignUpForm() {
             </p>
           </div>
 
-          {/* social sign up */}
           <div className="flex justify-center mb-3 sm:mb-5">
             <button className="inline-flex items-center justify-center gap-3 py-3 text-sm font-normal text-gray-700 transition-colors bg-gray-100 rounded-lg px-7 hover:bg-gray-200 hover:text-gray-800 dark:bg-white/5 dark:text-white/90 dark:hover:bg-white/10">
               <svg
@@ -94,7 +92,6 @@ export default function SignUpForm() {
             </button>
           </div>
 
-          {/* Divider Or */}
           <div className="relative py-3 sm:py-5">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-gray-200 dark:border-gray-800"></div>
@@ -106,11 +103,9 @@ export default function SignUpForm() {
             </div>
           </div>
 
-          {/* Form */}
           <form onSubmit={handleSubmit}>
             <div className="space-y-5">
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                {/* First Name */}
                 <div className="sm:col-span-1">
                   <Label>
                     First Name<span className="text-error-500">*</span>
@@ -124,7 +119,7 @@ export default function SignUpForm() {
                     onChange={handleChange}
                   />
                 </div>
-                {/* Last Name */}
+
                 <div className="sm:col-span-1">
                   <Label>
                     Last Name<span className="text-error-500">*</span>
@@ -140,7 +135,6 @@ export default function SignUpForm() {
                 </div>
               </div>
 
-              {/* Email */}
               <div>
                 <Label>
                   Email<span className="text-error-500">*</span>
@@ -155,7 +149,6 @@ export default function SignUpForm() {
                 />
               </div>
 
-              {/* Password */}
               <div>
                 <Label>
                   Password<span className="text-error-500">*</span>
@@ -182,7 +175,6 @@ export default function SignUpForm() {
                 </div>
               </div>
 
-              {/* Checkbox */}
               <div className="flex items-center gap-3">
                 <Checkbox
                   className="w-5 h-5"
@@ -201,7 +193,6 @@ export default function SignUpForm() {
                 </p>
               </div>
 
-              {/* Button */}
               <div>
                 <button
                   type="submit"

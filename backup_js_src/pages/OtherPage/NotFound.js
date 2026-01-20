@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = NotFound;
+var jsx_runtime_1 = require("react/jsx-runtime");
+var GridShape_1 = require("../../components/common/GridShape");
+var react_router_dom_1 = require("react-router-dom");
+var PageMeta_1 = require("../../components/common/PageMeta");
+function NotFound() {
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(PageMeta_1.default, { title: "React.js 404 Dashboard | TailAdmin - React.js Admin Dashboard Template", description: "This is React.js 404 Dashboard page for TailAdmin - React.js Tailwind CSS Admin Dashboard Template" }), (0, jsx_runtime_1.jsxs)("div", { className: "relative flex flex-col items-center justify-center min-h-screen p-6 overflow-hidden z-1", children: [(0, jsx_runtime_1.jsx)(GridShape_1.default, {}), (0, jsx_runtime_1.jsxs)("div", { className: "mx-auto w-full max-w-[242px] text-center sm:max-w-[472px]", children: [(0, jsx_runtime_1.jsx)("h1", { className: "mb-8 font-bold text-gray-800 text-title-md dark:text-white/90 xl:text-title-2xl", children: "ERROR" }), (0, jsx_runtime_1.jsx)("img", { src: "/images/error/404.svg", alt: "404", className: "dark:hidden" }), (0, jsx_runtime_1.jsx)("img", { src: "/images/error/404-dark.svg", alt: "404", className: "hidden dark:block" }), (0, jsx_runtime_1.jsx)("p", { className: "mt-10 mb-6 text-base text-gray-700 dark:text-gray-400 sm:text-lg", children: "We can\u2019t seem to find the page you are looking for!" }), (0, jsx_runtime_1.jsx)(react_router_dom_1.Link, { to: "/", className: "inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3.5 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] dark:hover:text-gray-200", children: "Back to Home Page" })] }), (0, jsx_runtime_1.jsxs)("p", { className: "absolute text-sm text-center text-gray-500 -translate-x-1/2 bottom-6 left-1/2 dark:text-gray-400", children: ["\u00A9 ", new Date().getFullYear(), " - TailAdmin"] })] })] }));
+}

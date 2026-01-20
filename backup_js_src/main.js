@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var jsx_runtime_1 = require("react/jsx-runtime");
+var react_1 = require("react");
+var client_1 = require("react-dom/client");
+require("./index.css");
+require("swiper/swiper-bundle.css");
+require("flatpickr/dist/flatpickr.css");
+var App_1 = require("./App");
+var PageMeta_1 = require("./components/common/PageMeta");
+var ThemeContext_1 = require("./context/ThemeContext");
+(0, client_1.createRoot)(document.getElementById("root")).render((0, jsx_runtime_1.jsx)(react_1.StrictMode, { children: (0, jsx_runtime_1.jsx)(ThemeContext_1.ThemeProvider, { children: (0, jsx_runtime_1.jsx)(PageMeta_1.AppWrapper, { children: (0, jsx_runtime_1.jsx)(App_1.default, {}) }) }) }));

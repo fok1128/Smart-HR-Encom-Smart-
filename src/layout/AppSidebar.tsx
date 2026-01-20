@@ -1,28 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useLocation } from "react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 
 import {
+  BoxCubeIcon,
   CalenderIcon,
   ChevronDownIcon,
   GridIcon,
   HorizontaLDots,
   ListIcon,
   PageIcon,
+  PieChartIcon,
   PlugInIcon,
   TableIcon,
   UserCircleIcon,
 } from "../icons";
-
 import { useSidebar } from "../context/SidebarContext";
 import SidebarWidget from "./SidebarWidget";
 
 type NavItem = {
   name: string;
-  icon: ReactNode;
+  icon: ReactNode;   // ✅ ใช้ ReactNode โดยตรง
   path?: string;
   subItems?: { name: string; path: string; pro?: boolean; new?: boolean }[];
 };
+console.log("GridIcon typeof:", typeof GridIcon, GridIcon);
+console.log("CalenderIcon typeof:", typeof CalenderIcon, CalenderIcon);
+console.log("ChevronDownIcon typeof:", typeof ChevronDownIcon, ChevronDownIcon);
+console.log("HorizontaLDots typeof:", typeof HorizontaLDots, HorizontaLDots);
+
+// --- โค้ดส่วนที่เหลือของคุณเหมือนเดิมทั้งหมด ---
 
 const navItems: NavItem[] = [
   {
@@ -61,15 +68,13 @@ const navItems: NavItem[] = [
 ];
 
 const othersItems: NavItem[] = [
-  // (Charts / UI Elements ถูกคอมเมนต์ไว้ เลยไม่ต้อง import PieChartIcon / BoxCubeIcon แล้ว)
   {
     icon: <PlugInIcon />,
     name: "Authentication",
     subItems: [
       { name: "Sign In", path: "/signin", pro: false },
       { name: "Sign Up", path: "/signup", pro: false },
-      // เดิมมี space ใน path ทำให้ลิงก์เพี้ยน แนะนำใช้ reset-password ให้ตรง route
-      { name: "Reset Password", path: "/reset-password", pro: false },
+      { name: "Forgot Password", path: "/forgot password", pro: false },
     ],
   },
 ];
@@ -86,7 +91,6 @@ const AppSidebar = () => {
   const [subMenuHeight, setSubMenuHeight] = useState<Record<string, number>>(
     {}
   );
-
   const subMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const isActive = useCallback(
@@ -116,10 +120,11 @@ const AppSidebar = () => {
   useEffect(() => {
     if (openSubmenu !== null) {
       const key = `${openSubmenu.type}-${openSubmenu.index}`;
-      if (subMenuRefs.current[key]) {
+      const el = subMenuRefs.current[key];
+      if (el) {
         setSubMenuHeight((prev) => ({
           ...prev,
-          [key]: subMenuRefs.current[key]?.scrollHeight || 0,
+          [key]: el.scrollHeight || 0,
         }));
       }
     }
@@ -191,6 +196,7 @@ const AppSidebar = () => {
                 >
                   {nav.icon}
                 </span>
+
                 {(isExpanded || isHovered || isMobileOpen) && (
                   <span className="menu-item-text">{nav.name}</span>
                 )}
@@ -338,7 +344,7 @@ const AppSidebar = () => {
                 {isExpanded || isHovered || isMobileOpen ? (
                   "Others"
                 ) : (
-                  <HorizontaLDots />
+                  <HorizontaLDots className="size-6" />
                 )}
               </h2>
               {renderMenuItems(othersItems, "others")}

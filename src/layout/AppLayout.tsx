@@ -1,21 +1,19 @@
-import React, { useEffect } from "react";
-import { Outlet, useNavigate } from "react-router";
+import { useEffect } from "react";
+import { Outlet, useNavigate } from "react-router-dom";
 import { SidebarProvider, useSidebar } from "../context/SidebarContext";
 import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
-import { useAuth } from "../context/AuthContext"; // ⬅️ ใช้ AuthContext
+import { useAuth } from "../context/AuthContext";
 
-const LayoutContent: React.FC = () => {
+const LayoutContent = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
-  const { user } = useAuth();                 // ⬅️ ดึง user จาก context
+  const { user } = useAuth();
   const navigate = useNavigate();
 
-  // ⬅️ ถ้าไม่มี user ให้เด้งไป /signin อัตโนมัติ
-  useEffect(() => {
-    if (!user) {
-      navigate("/signin");
-    }
+  // ถ้าไม่มี user ให้เด้งไป /signin
+ useEffect(() => {
+    if (!user) navigate("/signin");
   }, [user, navigate]);
 
   return (
@@ -24,6 +22,7 @@ const LayoutContent: React.FC = () => {
         <AppSidebar />
         <Backdrop />
       </div>
+
       <div
         className={`flex-1 transition-all duration-300 ease-in-out ${
           isExpanded || isHovered ? "lg:ml-[290px]" : "lg:ml-[90px]"
@@ -38,7 +37,7 @@ const LayoutContent: React.FC = () => {
   );
 };
 
-const AppLayout: React.FC = () => {
+const AppLayout = () => {
   return (
     <SidebarProvider>
       <LayoutContent />
