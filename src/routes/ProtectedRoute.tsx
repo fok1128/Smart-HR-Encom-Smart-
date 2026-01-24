@@ -2,14 +2,17 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function ProtectedRoute() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const location = useLocation();
 
-  // ยังไม่ล็อกอิน -> ส่งไปหน้า signin และจำหน้าที่กำลังจะเข้าไว้
+  // รอ auth โหลดก่อน
+  if (loading) return null; // หรือใส่ Loading UI ก็ได้
+
+  // ถ้ายังไม่ login -> ไปหน้า signin
   if (!user) {
-    return <Navigate to="/signin" replace state={{ from: location }} />;
+    return <Navigate to="/signin" replace state={{ from: location.pathname }} />;
   }
 
-  // ล็อกอินแล้ว -> ให้เข้า route ลูกต่อ
+  // login แล้ว -> ให้เข้า route ลูกได้
   return <Outlet />;
 }

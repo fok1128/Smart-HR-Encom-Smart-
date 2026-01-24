@@ -1,4 +1,5 @@
-console.log("✅ SMART HR SIDEBAR LOADED");
+console.log("✅ SIDEBAR LOADED v2");
+
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -28,9 +29,10 @@ const navItems: NavItem[] = [
   { icon: <GridIcon />, name: "ประกาศ / หน้าแรก", path: "/" },
   { icon: <UserCircleIcon />, name: "Profile", path: "/profile" },
   { icon: <CalenderIcon />, name: "ปฏิทินวันลา", path: "/calendar" },
-  { icon: <ListIcon />, name: "ยื่นใบลา", path: "/leave/request" },
-  { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" },
+  { icon: <ListIcon />, name: "ยื่นใบลา", path: "/leave/submit" },      // ✅
+  { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" }, // ✅
 ];
+
 
 const AppSidebar = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
@@ -40,8 +42,10 @@ const AppSidebar = () => {
 
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;
 
+  // ✅ ไฮไลต์เมนูให้ติดแม้มี subpath
   const isActive = useCallback(
-    (path: string) => location.pathname === path,
+    (path: string) =>
+      location.pathname === path || location.pathname.startsWith(path + "/"),
     [location.pathname]
   );
 
@@ -66,18 +70,10 @@ const AppSidebar = () => {
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* ===== Brand: Logo + Smart HR ===== */}
-      <div
-        className={`py-6 flex ${
-          isCollapsed ? "lg:justify-center" : "justify-start"
-        }`}
-      >
+      <div className={`py-6 flex ${isCollapsed ? "lg:justify-center" : "justify-start"}`}>
         <Link to="/" className="flex items-center gap-3">
           <div className="h-10 w-10 overflow-hidden rounded-xl bg-white">
-            <img
-              src={LOGO_SRC}
-              alt="Company Logo"
-              className="h-full w-full object-contain"
-            />
+            <img src={LOGO_SRC} alt="Company Logo" className="h-full w-full object-contain" />
           </div>
 
           {!isCollapsed && (
@@ -111,25 +107,19 @@ const AppSidebar = () => {
                   <Link
                     to={nav.path}
                     className={`menu-item group ${
-                      isActive(nav.path)
-                        ? "menu-item-active"
-                        : "menu-item-inactive"
-                    } ${
-                      isCollapsed ? "lg:justify-center" : "lg:justify-start"
-                    }`}
+                      isActive(nav.path) ? "menu-item-active" : "menu-item-inactive"
+                    } ${isCollapsed ? "lg:justify-center" : "lg:justify-start"}`}
                   >
                     <span
                       className={`menu-item-icon-size ${
-                        isActive(nav.path)
-                          ? "menu-item-icon-active"
-                          : "menu-item-icon-inactive"
+                        isActive(nav.path) ? "menu-item-icon-active" : "menu-item-icon-inactive"
                       }`}
                     >
                       {nav.icon}
                     </span>
 
                     {!isCollapsed && (
-                      <span className="menu-item-text font-semibold">{nav.name}</span> /* ปรับตัวหนังสือ */
+                      <span className="menu-item-text font-semibold">{nav.name}</span>
                     )}
                   </Link>
                 </li>
@@ -150,8 +140,7 @@ const AppSidebar = () => {
             <span className="menu-item-icon-size menu-item-icon-inactive">
               <PlugInIcon />
             </span>
-            {!isCollapsed && <span className="menu-item-text font-semibold">Logout</span> /* ปรับตัวหนังสือ */
-}
+            {!isCollapsed && <span className="menu-item-text font-semibold">Logout</span>}
           </button>
         </div>
       </div>
