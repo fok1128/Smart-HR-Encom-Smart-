@@ -11,7 +11,12 @@ type User = {
   fname: string;
   lname: string;
   email: string;
+
+  // ✅ เพิ่มไว้สำหรับ UI (ยังไม่ใช้ DB ก็ไม่พัง)
+  position?: string;   // ตำแหน่ง
+  avatarUrl?: string;  // url รูปพนักงาน (ถ้ามีในอนาคต)
 };
+
 
 type AuthContextType = {
   user: User | null;
@@ -75,21 +80,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(false);
   }, []);
 
-  const login = (newUser: User, remember: boolean) => {
-    const now = Date.now();
-    setUser(newUser);
-    setLastActivity(now);
+const login = (newUser: User, remember: boolean) => {
+  const now = Date.now();
 
-    if (remember) {
-      // ✅ remember = localStorage
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(newUser));
-      sessionStorage.removeItem(TEMP_KEY);
-    } else {
-      // ✅ ไม่ remember = sessionStorage
-      sessionStorage.setItem(TEMP_KEY, JSON.stringify(newUser));
-      localStorage.removeItem(LOCAL_KEY);
-    }
+  // ✅ ใส่ default ให้ตำแหน่งไว้ก่อน (ออกแบบ UI ได้เลย)
+  const enrichedUser: User = {
+    ...newUser,
+    position: newUser.position ?? "พนักงาน",
   };
+
+  setUser(enrichedUser);
+  setLastActivity(now);
+
+  if (remember) {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(enrichedUser));
+    sessionStorage.removeItem(TEMP_KEY);
+  } else {
+    sessionStorage.setItem(TEMP_KEY, JSON.stringify(enrichedUser));
+    localStorage.removeItem(LOCAL_KEY);
+  }
+};
+
 
   const logout = () => {
     setUser(null);

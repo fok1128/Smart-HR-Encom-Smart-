@@ -1,10 +1,10 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useSidebar } from "../context/SidebarContext";
-import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
-import NotificationDropdown from "../components/header/NotificationDropdown";
-import UserDropdown from "../components/header/UserDropdown";
+import { useSidebar } from "./src/context/SidebarContext";
+import { ThemeToggleButton } from "./src/components/common/ThemeToggleButton";
+import NotificationDropdown from "./src/components/header/NotificationDropdown";
+import UserDropdown from "./src/components/header/UserDropdown";
 const AppHeader = () => {
     const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
     const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();

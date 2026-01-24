@@ -4,9 +4,9 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
-import { Modal } from "../components/ui/modal";
-import { useModal } from "../hooks/useModal";
-import PageMeta from "../components/common/PageMeta";
+import { Modal } from "./src/components/ui/modal";
+import { useModal } from "./src/hooks/useModal";
+import PageMeta from "./src/components/common/PageMeta";
 const Calendar = () => {
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [eventTitle, setEventTitle] = useState("");

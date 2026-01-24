@@ -1,13 +1,10 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { CalenderIcon, ChevronDownIcon, GridIcon, HorizontaLDots, ListIcon, PageIcon, PlugInIcon, TableIcon, UserCircleIcon, } from "../icons";
-import { useSidebar } from "../context/SidebarContext";
-import SidebarWidget from "./SidebarWidget";
-console.log("GridIcon typeof:", typeof GridIcon, GridIcon);
-console.log("CalenderIcon typeof:", typeof CalenderIcon, CalenderIcon);
-console.log("ChevronDownIcon typeof:", typeof ChevronDownIcon, ChevronDownIcon);
-console.log("HorizontaLDots typeof:", typeof HorizontaLDots, HorizontaLDots);
+import { CalenderIcon, ChevronDownIcon, GridIcon, HorizontaLDots, ListIcon, PageIcon, PlugInIcon, TableIcon, UserCircleIcon, } from "./src/icons";
+import { useSidebar } from "./src/context/SidebarContext";
+import SidebarWidget from "./src/layout/SidebarWidget";
+
 // --- โค้ดส่วนที่เหลือของคุณเหมือนเดิมทั้งหมด ---
 const navItems = [
     {
