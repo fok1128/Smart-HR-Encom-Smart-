@@ -1,17 +1,11 @@
-import PageMeta from "../../components/common/PageMeta";
-import AuthLayout from "./AuthPageLayout";
 import SignInForm from "../../components/auth/SignInForm";
 
 export default function SignIn() {
   return (
-    <>
-      <PageMeta
-        title="Smart HR @PEA ENCOM SMART"
-        description="Smart HR Sign In"
-      />
-      <AuthLayout>
+    <div className="min-h-screen w-full flex items-center justify-center bg-purple-700/40 px-4 py-10">
+      <div className="w-full max-w-3xl rounded-2xl bg-white p-10 shadow-xl">
         <SignInForm />
-      </AuthLayout>
-    </>
+      </div>
+    </div>
   );
 }

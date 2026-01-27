@@ -1,5 +1,3 @@
-console.log("✅ SIDEBAR LOADED v2");
-
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";

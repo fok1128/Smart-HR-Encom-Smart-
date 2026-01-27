@@ -1,178 +1,137 @@
 import {
   createContext,
   useContext,
-  useState,
   useEffect,
-  useRef,
+  useMemo,
+  useState,
   type ReactNode,
 } from "react";
+import { auth } from "../firebase";
+import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
 
-type User = {
-  fname: string;
-  lname: string;
-  email: string;
-
-  // ✅ เพิ่มไว้สำหรับ UI (ยังไม่ใช้ DB ก็ไม่พัง)
-  position?: string;   // ตำแหน่ง
-  avatarUrl?: string;  // url รูปพนักงาน (ถ้ามีในอนาคต)
+type MeResponse = {
+  ok: boolean;
+  uid: string;
+  email: string | null;
+  role: string;
+  user: any; // users/{uid}
+  employee: any; // employees/{employeeNo}
+  projectId?: string;
 };
 
-
 type AuthContextType = {
-  user: User | null;
+  user: MeResponse | null;
   loading: boolean;
-  login: (user: User, remember: boolean) => void;
-  logout: () => void;
+  login: (email: string, password: string, remember: boolean) => Promise<void>;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 นาที
-const LOCAL_KEY = "demoSession"; // remember me
-const TEMP_KEY = "demoSession_temp"; // ไม่ remember (session)
+const API_BASE =
+  (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
 
-function safeParseUser(raw: string | null): User | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as User;
-    if (!parsed?.email) return null;
-    return parsed;
-  } catch {
-    return null;
+async function fetchMe(idToken: string): Promise<MeResponse> {
+  const res = await fetch(`${API_BASE}/me`, {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    const msg = data?.error || `ME_${res.status}`;
+    throw new Error(msg);
   }
+  return data as MeResponse;
 }
 
-function clearAllSessionKeys() {
-  // ✅ เคลียร์ให้หมด กัน build เก่า/ใหม่ค้าง key คนละชื่อ
-  localStorage.removeItem(LOCAL_KEY);
-  localStorage.removeItem(TEMP_KEY);
-  sessionStorage.removeItem(LOCAL_KEY);
-  sessionStorage.removeItem(TEMP_KEY);
-}
-
-function loadInitialUser(): User | null {
-  if (typeof window === "undefined") return null;
-
-  // ✅ priority: localStorage ก่อน แล้วค่อย sessionStorage
-  const fromLocal = safeParseUser(localStorage.getItem(LOCAL_KEY));
-  if (fromLocal) return fromLocal;
-
-  const fromSession = safeParseUser(sessionStorage.getItem(TEMP_KEY));
-  if (fromSession) return fromSession;
-
-  // ถ้าอ่านไม่ได้/พัง เคลียร์ทิ้ง
-  clearAllSessionKeys();
-  return null;
-}
-
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [lastActivity, setLastActivity] = useState<number | null>(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const timeoutRef = useRef<number | null>(null);
-
-  // ✅ โหลด session ครั้งแรก
   useEffect(() => {
-    const initialUser = loadInitialUser();
-    setUser(initialUser);
-    setLastActivity(initialUser ? Date.now() : null);
-    setLoading(false);
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      setLoading(true);
+      try {
+        if (!fbUser) {
+          setUser(null);
+          return;
+        }
+
+        const token = await fbUser.getIdToken();
+        const me = await fetchMe(token);
+        setUser(me);
+      } catch (e) {
+        console.error("Auth bootstrap error:", e);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return () => unsub();
   }, []);
 
-const login = (newUser: User, remember: boolean) => {
-  const now = Date.now();
+  const login: AuthContextType["login"] = async (email, password, remember) => {
+    setLoading(true);
 
-  // ✅ ใส่ default ให้ตำแหน่งไว้ก่อน (ออกแบบ UI ได้เลย)
-  const enrichedUser: User = {
-    ...newUser,
-    position: newUser.position ?? "พนักงาน",
-  };
-
-  setUser(enrichedUser);
-  setLastActivity(now);
-
-  if (remember) {
-    localStorage.setItem(LOCAL_KEY, JSON.stringify(enrichedUser));
-    sessionStorage.removeItem(TEMP_KEY);
-  } else {
-    sessionStorage.setItem(TEMP_KEY, JSON.stringify(enrichedUser));
-    localStorage.removeItem(LOCAL_KEY);
-  }
-};
-
-
-  const logout = () => {
+    // ✅ สำคัญ: เคลียร์ user เก่าก่อนเสมอ
     setUser(null);
-    setLastActivity(null);
 
-    // ✅ เคลียร์ session ทั้งหมด
-    clearAllSessionKeys();
+    try {
+      await setPersistence(
+        auth,
+        remember ? browserLocalPersistence : browserSessionPersistence
+      );
 
-    // ✅ เคลียร์ timer
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+      // ✅ สำคัญ: ถ้ามี session เก่าค้างอยู่ ให้ signOut ก่อน
+      if (auth.currentUser) {
+        await signOut(auth);
+      }
+
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+
+      const token = await cred.user.getIdToken();
+      const me = await fetchMe(token);
+      setUser(me);
+    } catch (e) {
+      // ✅ ถ้าล็อกอินพัง ต้องไม่เหลือ user ค้าง
+      setUser(null);
+      // กัน session แปลก ๆ ค้าง (บางเคส)
+      try {
+        await signOut(auth);
+      } catch {
+        // ignore
+      }
+      throw e;
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ✅ จับ activity
-  useEffect(() => {
-    if (!user) return;
-
-    const handleActivity = () => setLastActivity(Date.now());
-
-    window.addEventListener("click", handleActivity);
-    window.addEventListener("mousemove", handleActivity);
-    window.addEventListener("keydown", handleActivity);
-    window.addEventListener("scroll", handleActivity);
-    window.addEventListener("touchstart", handleActivity);
-
-    return () => {
-      window.removeEventListener("click", handleActivity);
-      window.removeEventListener("mousemove", handleActivity);
-      window.removeEventListener("keydown", handleActivity);
-      window.removeEventListener("scroll", handleActivity);
-      window.removeEventListener("touchstart", handleActivity);
-    };
-  }, [user]);
-
-  // ✅ ตั้ง timer auto logout
-  useEffect(() => {
-    if (!user || lastActivity === null) {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      return;
+  const logout: AuthContextType["logout"] = async () => {
+    setLoading(true);
+    try {
+      await signOut(auth);
+      setUser(null);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const now = Date.now();
-    const remaining = SESSION_TIMEOUT - (now - lastActivity);
+  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading]);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
 
-    if (remaining <= 0) {
-      logout();
-      return;
-    }
-
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-    timeoutRef.current = window.setTimeout(logout, remaining);
-
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [user, lastActivity]);
-
-  return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
-export const useAuth = () => {
+export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
-};
+}

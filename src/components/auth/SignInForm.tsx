@@ -5,14 +5,52 @@ import Label from "../form/Label";
 import Input from "../form/input/InputField";
 import Checkbox from "../form/input/Checkbox";
 import { useAuth } from "../../context/AuthContext";
+import { auth } from "../../firebase"; // ✅ ใช้ auth ตัวเดียวกับ AuthContext
 
 type LocationState = {
   from?: { pathname?: string };
 };
 
+function mapAuthError(err: unknown) {
+  // รองรับ Firebase error ที่มี code
+  const anyErr = err as any;
+  const code = anyErr?.code as string | undefined;
+  const msg =
+    (anyErr?.message as string | undefined) ||
+    (typeof err === "string" ? err : "") ||
+    "ล็อกอินไม่สำเร็จ";
+
+  if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+    return "Email หรือ Password ไม่ถูกต้อง";
+  }
+  if (code === "auth/user-not-found") {
+    return "ไม่พบบัญชีผู้ใช้นี้";
+  }
+  if (code === "auth/too-many-requests") {
+    return "ลองใหม่อีกครั้งภายหลัง (พยายามล็อกอินหลายครั้งเกินไป)";
+  }
+
+  // เผื่อบางที message เป็น auth/...
+  if (msg.includes("auth/invalid-credential") || msg.includes("auth/wrong-password")) {
+    return "Email หรือ Password ไม่ถูกต้อง";
+  }
+  if (msg.includes("auth/user-not-found")) return "ไม่พบบัญชีผู้ใช้นี้";
+  if (msg.includes("auth/too-many-requests")) return "ลองใหม่อีกครั้งภายหลัง";
+
+  // errors ที่เราสร้างเอง
+  if (msg === "FIREBASE_NOT_SIGNED_IN") {
+    return "ระบบไม่ได้ sign-in Firebase จริง (มีโค้ด/ไฟล์เก่าทับ หรือ auth ถูกสร้างคนละตัว)";
+  }
+  if (msg === "FIREBASE_EMAIL_MISMATCH") {
+    return "Firebase session ไม่ตรงกับอีเมลที่กรอก (มี session เก่าคาอยู่)";
+  }
+
+  return msg;
+}
+
 export default function SignInForm() {
   const [showPassword, setShowPassword] = useState(false);
-  const [isChecked, setIsChecked] = useState(false);
+  const [remember, setRemember] = useState(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,22 +58,23 @@ export default function SignInForm() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const { login, user, loading: authLoading } = useAuth(); // ✅ ใช้ loading จาก context
+  const { login, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ✅ ถ้าล็อกอินอยู่แล้ว ไม่ให้เข้าหน้า signin
+  // ✅ กันคนล็อกอินแล้วกลับมา /signin
   useEffect(() => {
-    if (!authLoading && user) {
-      navigate("/", { replace: true });
-    }
+    if (!authLoading && user) navigate("/", { replace: true });
   }, [user, authLoading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
-    if (!email.trim() || !password.trim()) {
+    const emailTrim = email.trim();
+    const passRaw = password; // ❌ อย่า trim password
+
+    if (!emailTrim || !passRaw) {
       setError("กรุณากรอก Email และ Password ให้ครบ");
       return;
     }
@@ -43,19 +82,24 @@ export default function SignInForm() {
     try {
       setLoading(true);
 
-      // ✅ mock login (เอาไว้ก่อน)
-      if (email !== "admin@local.com" || password !== "1234") {
-        throw new Error("Email หรือ Password ไม่ถูกต้อง");
-      }
+      // Debug ให้เห็นชัด
+      console.log("[SignIn] submit", { email: emailTrim, hasPwd: passRaw.length > 0 });
+      console.log("[SignIn] BEFORE login currentUser =", auth.currentUser?.email ?? "(none)");
 
-      // ✅ บันทึก session ผ่าน AuthContext (ด้านในจะจัดการ LocalStorage ให้)
-      login({ fname: "Admin", lname: "User", email }, isChecked);
+      // ✅ ต้องเป็น Firebase sign-in ของจริง ถ้ารหัสมั่วต้อง throw
+      await login(emailTrim, passRaw, remember);
 
-      // ✅ กลับไปหน้าที่ผู้ใช้พยายามเข้า (มาจาก ProtectedRoute)
+      // ✅ จุดสำคัญ: ถ้า Firebase ไม่ได้ sign-in จริง → ห้ามไปต่อ
+      const cu = auth.currentUser;
+      console.log("[SignIn] AFTER login currentUser =", cu?.email ?? "(none)");
+
+      if (!cu) throw new Error("FIREBASE_NOT_SIGNED_IN");
+      if (cu.email && cu.email !== emailTrim) throw new Error("FIREBASE_EMAIL_MISMATCH");
+
+      // ✅ ไปหน้าที่ตั้งใจจะไป
       const state = location.state as LocationState | null;
       const from = state?.from?.pathname;
 
-      // กันเคสวนกลับ signin
       const target =
         from && from !== "/signin" && from !== "/signup" && from !== "/reset-password"
           ? from
@@ -63,8 +107,8 @@ export default function SignInForm() {
 
       navigate(target, { replace: true });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "ล็อกอินไม่สำเร็จ";
-      setError(msg);
+      console.error("[SignIn] error:", err);
+      setError(mapAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -77,6 +121,13 @@ export default function SignInForm() {
   return (
     <div className="flex h-full w-full items-center justify-center px-6 sm:px-10">
       <div className="w-full max-w-md xl:max-w-lg 2xl:max-w-2xl">
+        {/* แถบ debug ว่าใช้ไฟล์นี้จริง */}
+        <div className="mb-4 rounded-md border bg-white/70 px-3 py-2 text-xs text-gray-700">
+          USING <b>SignInForm.tsx</b> ✅<br />
+          Firebase currentUser: <b>{auth.currentUser?.email ?? "(none)"}</b><br />
+          Context user: <b>{user ? user.email ?? "(email null)" : "(null)"}</b>
+        </div>
+
         <h1 className="font-bold text-gray-900 dark:text-white leading-tight">
           <span className="block text-3xl xl:text-4xl 2xl:text-5xl">Smart HR</span>
         </h1>
@@ -123,9 +174,7 @@ export default function SignInForm() {
                 type={showPassword ? "text" : "password"}
                 placeholder="Enter your password"
                 value={password}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setPassword(e.target.value)
-                }
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
                 className={inputBlackBorder}
               />
 
@@ -149,8 +198,8 @@ export default function SignInForm() {
             <label className="flex items-center gap-3 text-sm xl:text-base 2xl:text-lg text-gray-700 dark:text-gray-300">
               <Checkbox
                 id="keep-logged-in"
-                checked={isChecked}
-                onChange={() => setIsChecked((v) => !v)}
+                checked={remember}
+                onChange={() => setRemember((v) => !v)}
                 className="border border-gray-900 dark:border-gray-200 focus:ring-0"
               />
               Keep me logged in
