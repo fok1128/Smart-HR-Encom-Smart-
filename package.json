@@ -20,6 +20,7 @@
     "@react-jvectormap/world": "^1.1.2",
     "apexcharts": "^4.1.0",
     "clsx": "^2.1.1",
+    "firebase": "^12.8.0",
     "flatpickr": "^4.6.13",
     "react": "^19.2.3",
     "react-apexcharts": "^1.7.0",
@@ -61,7 +62,6 @@
     "@react-jvectormap/world": {
       "react": "^16.8.0 || ^17 || ^18 || ^19",
       "react-dom": "^16.8.0 || ^17 || ^18 || ^19"
-      
     }
   }
 }

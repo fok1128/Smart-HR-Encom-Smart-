@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import AppLayout from "./layout/AppLayout";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
@@ -7,8 +7,8 @@ import Calendar from "./pages/Calendar";
 import Blank from "./pages/Blank";
 import FormElements from "./pages/Forms/FormElements";
 import BasicTables from "./pages/Tables/BasicTables";
+
 import SignIn from "./pages/AuthPages/SignIn";
-import SignUp from "./pages/AuthPages/SignUp";
 import ResetPassword from "./pages/AuthPages/ResetPassword";
 import NotFound from "./pages/OtherPage/NotFound";
 import ProtectedRoute from "./routes/ProtectedRoute";
@@ -23,12 +23,12 @@ export default function App() {
       <TitleLock />
 
       <Routes>
-        {/* หน้า auth */}
+        {/* Auth pages */}
         <Route path="/signin" element={<SignIn />} />
-        <Route path="/signup" element={<SignUp />} />
+        <Route path="/signup" element={<Navigate to="/signin" replace />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
-        {/* หลังบ้าน */}
+        {/* Protected area */}
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<AppLayout />}>
             <Route index element={<Home />} />
@@ -38,7 +38,7 @@ export default function App() {
             <Route path="form-elements" element={<FormElements />} />
             <Route path="basic-tables" element={<BasicTables />} />
 
-            {/* Leave (ทำเป็น relative path) */}
+            {/* Leave */}
             <Route path="leave/submit" element={<LeaveSubmitPage />} />
             <Route path="leave/request" element={<LeaveSubmitPage />} />
             <Route path="leave/status" element={<LeaveStatusPage />} />

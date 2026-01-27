@@ -10,6 +10,9 @@ import App from "./App";
 import { ThemeProvider } from "./context/ThemeContext";
 import { AuthProvider } from "./context/AuthContext";
 import { LeaveProvider } from "./context/LeaveContext"; // ✅ เพิ่ม
+if (import.meta.env.DEV) {
+  import("./devtools");
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
