@@ -3,6 +3,17 @@ import { useSidebar } from "../context/SidebarContext";
 import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import { useAuth } from "../context/AuthContext";
 
+// ✅ type ชั่วคราวให้ TS ไม่ฟ้อง (เพราะ MeResponse ยังไม่ประกาศ field พวกนี้)
+type UserProfile = {
+  email?: string;
+  fname?: string;
+  lname?: string;
+  position?: string;
+  avatarUrl?: string;
+  displayName?: string;
+  name?: string;
+};
+
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/);
   const a = parts[0]?.[0] ?? "";
@@ -19,16 +30,19 @@ const AppHeader: React.FC = () => {
     else toggleMobileSidebar();
   };
 
+  // ✅ cast เพื่อกัน TS2339
+  const u = user as unknown as UserProfile | null;
+
   const employeeName = useMemo(() => {
-    const full = [user?.fname, user?.lname].filter(Boolean).join(" ").trim();
-    return full || user?.email || "พนักงาน";
-  }, [user]);
+    const full = [u?.fname, u?.lname].filter(Boolean).join(" ").trim();
+    return full || u?.displayName || u?.name || u?.email || "พนักงาน";
+  }, [u]);
 
   const employeePosition = useMemo(() => {
-    return user?.position || "พนักงาน";
-  }, [user]);
+    return u?.position || "พนักงาน";
+  }, [u]);
 
-  const avatarUrl = user?.avatarUrl || "";
+  const avatarUrl = u?.avatarUrl || "";
 
   return (
     <header className="sticky top-0 flex w-full bg-white border-gray-200 z-99999 dark:border-gray-800 dark:bg-gray-900 lg:border-b">

@@ -16,20 +16,44 @@ import {
   signOut,
 } from "firebase/auth";
 
-type MeResponse = {
+type ApiUser = {
+  email?: string | null;
+  displayName?: string;
+  name?: string;
+  fname?: string;
+  lname?: string;
+  avatarUrl?: string;
+};
+
+type Employee = {
+  fname?: string;
+  lname?: string;
+  position?: string;
+  avatarUrl?: string;
+};
+
+type MeResponseRaw = {
   ok: boolean;
   uid: string;
   email: string | null;
   role: string;
-  user: any; // users/{uid}
-  employee: any; // employees/{employeeNo}
+  user?: ApiUser | null;
+  employee?: Employee | null;
   projectId?: string;
+};
+
+// ✅ ตัวที่ UI ใช้จริง: มี field แบบ "top-level" ให้เรียกได้เลย
+export type MeResponse = MeResponseRaw & {
+  fname?: string;
+  lname?: string;
+  position?: string;
+  avatarUrl?: string;
 };
 
 type AuthContextType = {
   user: MeResponse | null;
   loading: boolean;
-  login: (email: string, password: string, remember: boolean) => Promise<void>;
+  login: (email: string, password: string, remember: boolean) => Promise<MeResponse>;
   logout: () => Promise<void>;
 };
 
@@ -37,6 +61,22 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
+
+// ✅ map ข้อมูลจาก backend ให้เป็นรูปเดียวกับที่ UI อ่านง่าย
+function normalizeMe(raw: MeResponseRaw): MeResponse {
+  const fname = raw.employee?.fname ?? raw.user?.fname;
+  const lname = raw.employee?.lname ?? raw.user?.lname;
+  const position = raw.employee?.position;
+  const avatarUrl = raw.employee?.avatarUrl ?? raw.user?.avatarUrl;
+
+  return {
+    ...raw,
+    fname,
+    lname,
+    position,
+    avatarUrl,
+  };
+}
 
 async function fetchMe(idToken: string): Promise<MeResponse> {
   const res = await fetch(`${API_BASE}/me`, {
@@ -49,7 +89,8 @@ async function fetchMe(idToken: string): Promise<MeResponse> {
     const msg = data?.error || `ME_${res.status}`;
     throw new Error(msg);
   }
-  return data as MeResponse;
+
+  return normalizeMe(data as MeResponseRaw);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -81,36 +122,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login: AuthContextType["login"] = async (email, password, remember) => {
     setLoading(true);
-
-    // ✅ สำคัญ: เคลียร์ user เก่าก่อนเสมอ
-    setUser(null);
-
     try {
       await setPersistence(
         auth,
         remember ? browserLocalPersistence : browserSessionPersistence
       );
 
-      // ✅ สำคัญ: ถ้ามี session เก่าค้างอยู่ ให้ signOut ก่อน
-      if (auth.currentUser) {
-        await signOut(auth);
-      }
-
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-
-      const token = await cred.user.getIdToken();
-      const me = await fetchMe(token);
-      setUser(me);
-    } catch (e) {
-      // ✅ ถ้าล็อกอินพัง ต้องไม่เหลือ user ค้าง
-      setUser(null);
-      // กัน session แปลก ๆ ค้าง (บางเคส)
       try {
         await signOut(auth);
       } catch {
         // ignore
       }
-      throw e;
+
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+
+      const fbEmail = cred.user?.email ?? auth.currentUser?.email ?? null;
+      if (!fbEmail) {
+        throw new Error("FIREBASE_NO_CURRENT_USER");
+      }
+
+      const token = await cred.user.getIdToken();
+      const me = await fetchMe(token);
+      setUser(me);
+
+      return me;
     } finally {
       setLoading(false);
     }
