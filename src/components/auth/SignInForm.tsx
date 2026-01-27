@@ -121,13 +121,6 @@ export default function SignInForm() {
   return (
     <div className="flex h-full w-full items-center justify-center px-6 sm:px-10">
       <div className="w-full max-w-md xl:max-w-lg 2xl:max-w-2xl">
-        {/* แถบ debug ว่าใช้ไฟล์นี้จริง */}
-        <div className="mb-4 rounded-md border bg-white/70 px-3 py-2 text-xs text-gray-700">
-          USING <b>SignInForm.tsx</b> ✅<br />
-          Firebase currentUser: <b>{auth.currentUser?.email ?? "(none)"}</b><br />
-          Context user: <b>{user ? user.email ?? "(email null)" : "(null)"}</b>
-        </div>
-
         <h1 className="font-bold text-gray-900 dark:text-white leading-tight">
           <span className="block text-3xl xl:text-4xl 2xl:text-5xl">Smart HR</span>
         </h1>
