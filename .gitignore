@@ -29,3 +29,5 @@ backend/.env.example
 # allow env template files
 !**/.env.example
 backup_js_src/
+ServiceAccountKey.json
+*serviceAccount*.json
