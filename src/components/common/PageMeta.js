@@ -1,18 +1,17 @@
-import { Fragment as _Fragment, jsx as _jsx } from "react/jsx-runtime";
 import { useEffect } from "react";
+const DEFAULT_TITLE = "Smart HR @PEA ENCOM SMART";
+const DEFAULT_DESC = "Smart HR PEA ENCOM SMART SOLUTION CO., LTD.";
 export default function PageMeta({ title, description }) {
     useEffect(() => {
-        if (title)
-            document.title = title;
-        const meta = document.querySelector('meta[name="description"]') ||
+        // ✅ ตั้ง title เสมอ (มี default)
+        document.title = title?.trim() ? title : DEFAULT_TITLE;
+        // ✅ meta description (มี default)
+        const meta = document.querySelector('meta[name="description"]') ??
             document.createElement("meta");
         meta.setAttribute("name", "description");
-        meta.setAttribute("content", description ?? "");
+        meta.setAttribute("content", description?.trim() ? description : DEFAULT_DESC);
         if (!meta.parentNode)
             document.head.appendChild(meta);
     }, [title, description]);
     return null;
-}
-export function AppWrapper({ children }) {
-    return _jsx(_Fragment, { children: children });
 }

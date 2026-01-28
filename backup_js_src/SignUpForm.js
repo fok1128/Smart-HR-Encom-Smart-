@@ -1,10 +1,10 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "../../icons";
-import Label from "../form/Label";
-import Input from "../form/input/InputField";
-import Checkbox from "../form/input/Checkbox";
+import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "../src/icons";
+import Label from "../src/components/form/Label";
+import Input from "../src/components/form/input/InputField";
+import Checkbox from "../src/components/form/input/Checkbox";
 export default function SignUpForm() {
     const [showPassword, setShowPassword] = useState(false);
     const [isChecked, setIsChecked] = useState(false);

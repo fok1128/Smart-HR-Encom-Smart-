@@ -8,6 +8,7 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true
   }
 }

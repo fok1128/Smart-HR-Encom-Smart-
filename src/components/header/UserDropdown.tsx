@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 
+// ✅ เพิ่ม type ชั่วคราวให้ TS ไม่ฟ้อง (เพราะ MeResponse ยังไม่มี field พวกนี้)
+type UserProfile = {
+  email?: string;
+  fname?: string;
+  lname?: string;
+  position?: string;
+  avatarUrl?: string;
+  displayName?: string; // เผื่อใช้กับ firebase user
+  name?: string;
+};
+
 export default function UserDropdown() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -36,11 +47,20 @@ export default function UserDropdown() {
 
   if (!user) return null;
 
-  const fullName = `${user.fname ?? ""} ${user.lname ?? ""}`.trim() || "User";
-  const email = user.email ?? "";
+  // ✅ ใช้ u แทน user เพื่อให้ TS ไม่ error เรื่อง property ไม่อยู่ใน type
+  const u = user as unknown as UserProfile;
+
+  const fullName =
+    (u.displayName ??
+      u.name ??
+      `${u.fname ?? ""} ${u.lname ?? ""}`.trim()) ||
+    u.email ||
+    "User";
+
+  const email = u.email ?? "";
 
   // ถ้าคุณมีรูปจริงค่อยผูกทีหลัง (ตอนนี้ fallback ไว้ให้สวยขึ้น)
-  const avatarUrl = ""; // ใส่ url ได้ถ้ามี
+  const avatarUrl = u.avatarUrl ?? "";
   const initials =
     fullName
       .split(" ")
@@ -118,7 +138,6 @@ export default function UserDropdown() {
               onClick={() => setOpen(false)}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
             >
-              {/* user icon */}
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"
@@ -142,7 +161,6 @@ export default function UserDropdown() {
               type="button"
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
             >
-              {/* settings icon */}
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
@@ -166,7 +184,6 @@ export default function UserDropdown() {
               type="button"
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
             >
-              {/* info icon */}
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10Z"
@@ -202,7 +219,6 @@ export default function UserDropdown() {
               onClick={handleSignOut}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
             >
-              {/* logout icon */}
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M10 17l5-5-5-5"
