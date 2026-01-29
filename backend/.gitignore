@@ -1,3 +1,6 @@
 node_modules/
+# Firebase / GCP credentials
+serviceAccountKey*.json
+*.pem
+*.key
 .env
-serviceAccountKey.json
