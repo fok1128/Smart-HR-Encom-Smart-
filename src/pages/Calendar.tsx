@@ -1,5 +1,20 @@
 import { useMemo, useState } from "react";
-import { useLeave, type LeaveCategory, type LeaveSubType, type LeaveStatus } from "../context/LeaveContext";
+import { useLeave } from "../context/LeaveContext";
+
+// ===== Types (ทำให้ไฟล์นี้ไม่พึ่ง type ที่ export จาก context) =====
+type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
+type LeaveSubType =
+  | "ลากิจปกติ"
+  | "ลากิจฉุกเฉิน"
+  | "ลาป่วยทั่วไป"
+  | "ลาหมอนัด"
+  | "ลาแบบมีใบรับรองแพทย์"
+  | "ลาพักร้อน"
+  | "ลาคลอด"
+  | "ลาราชการทหาร"
+  | "อื่นๆ";
+
+type LeaveStatus = "อนุมัติ" | "ไม่อนุมัติ" | "รอดำเนินการ";
 
 // ✅ รองรับรายวัน/หลายวัน + รายชั่วโมง/รายนาที
 // - all-day: "YYYY-MM-DD" (ไม่มี T)
@@ -201,21 +216,116 @@ function leaveLabel(ev: LeaveEvent) {
   return `${ev.category} • ${ev.subType}`;
 }
 
+// ===== helpers for mapping requests (รองรับ schema ใหม่/เก่า) =====
+type RequestLike = {
+  id?: string;
+  requestNo?: string;
+  category?: string;
+  subType?: string;
+  status?: string;
+  startAt?: any;
+  endAt?: any;
+  reason?: string;
+
+  // schema เก่า (ที่เจอบ่อย)
+  type?: string;
+  startDate?: any;
+  endDate?: any;
+  startTime?: string; // "HH:mm"
+  endTime?: string; // "HH:mm"
+  note?: string;
+};
+
+function toISODateFromAny(v: any): string {
+  if (!v) return toISODate(new Date());
+  if (typeof v === "string") {
+    // "YYYY-MM-DD" หรือ "YYYY-MM-DDTHH:mm"
+    return v.includes("T") ? v.slice(0, 10) : v;
+  }
+  if (typeof v?.toDate === "function") return toISODate(v.toDate());
+  if (v instanceof Date) return toISODate(v);
+  const d = new Date(v);
+  return toISODate(isNaN(d.getTime()) ? new Date() : d);
+}
+
+function toTimedISO(dateISO: string, hhmm?: string) {
+  if (!hhmm) return dateISO; // ถ้าไม่มีเวลา -> ถือว่า all-day
+  return `${dateISO}T${hhmm.slice(0, 5)}`;
+}
+
+function normalizeCategory(x?: string): LeaveCategory {
+  if (x === "ลากิจ" || x === "ลาป่วย" || x === "ลาพักร้อน" || x === "ลากรณีพิเศษ") return x;
+  // fallback จาก schema เก่า: type อาจเป็น category
+  if (x === "ลาคลอด" || x === "ลาราชการทหาร") return "ลากรณีพิเศษ";
+  return "ลากิจ";
+}
+
+function normalizeSubType(x?: string, cat?: LeaveCategory): LeaveSubType {
+  const all: LeaveSubType[] = [
+    "ลากิจปกติ",
+    "ลากิจฉุกเฉิน",
+    "ลาป่วยทั่วไป",
+    "ลาหมอนัด",
+    "ลาแบบมีใบรับรองแพทย์",
+    "ลาพักร้อน",
+    "ลาคลอด",
+    "ลาราชการทหาร",
+    "อื่นๆ",
+  ];
+  if (x && all.includes(x as LeaveSubType)) return x as LeaveSubType;
+
+  // ถ้าไม่เจอ ให้ default ตาม category
+  if (cat === "ลาป่วย") return "ลาป่วยทั่วไป";
+  if (cat === "ลาพักร้อน") return "ลาพักร้อน";
+  if (cat === "ลากรณีพิเศษ") return "อื่นๆ";
+  return "ลากิจปกติ";
+}
+
+function normalizeStatus(x?: string): LeaveStatus {
+  if (x === "อนุมัติ" || x === "ไม่อนุมัติ" || x === "รอดำเนินการ") return x;
+  return "รอดำเนินการ";
+}
+
 export default function Calendar() {
   const { requests } = useLeave();
 
   // ✅ ดึงจากคำร้องจริงทั้งหมด -> แปลงเป็น event ใช้ในปฏิทิน
   const leaveEvents: LeaveEvent[] = useMemo(() => {
-    return (requests ?? []).map((r) => ({
-      id: r.requestNo,
-      requestNo: r.requestNo,
-      category: r.category,
-      subType: r.subType,
-      status: r.status,
-      startAt: r.startAt,
-      endAt: r.endAt,
-      note: r.reason || "",
-    }));
+    return ((requests ?? []) as unknown as RequestLike[]).map((r) => {
+      const requestNo = r.requestNo ?? r.id ?? "-";
+      const category = normalizeCategory(r.category ?? r.type);
+      const subType = normalizeSubType(r.subType, category);
+      const status = normalizeStatus(r.status);
+
+      // รองรับทั้ง startAt/endAt (ใหม่) และ startDate/endDate + startTime/endTime (เก่า)
+      const startDateISO = toISODateFromAny(r.startAt ?? r.startDate);
+      const endDateISO = toISODateFromAny(r.endAt ?? r.endDate);
+
+      const startAt =
+        typeof r.startAt === "string"
+          ? r.startAt
+          : r.startTime
+          ? toTimedISO(startDateISO, r.startTime)
+          : startDateISO;
+
+      const endAt =
+        typeof r.endAt === "string"
+          ? r.endAt
+          : r.endTime
+          ? toTimedISO(endDateISO, r.endTime)
+          : endDateISO;
+
+      return {
+        id: requestNo,
+        requestNo,
+        category,
+        subType,
+        status,
+        startAt,
+        endAt,
+        note: r.reason ?? r.note ?? "",
+      };
+    });
   }, [requests]);
 
   const weekStartsOn: 0 | 1 = 1; // จันทร์เริ่มสัปดาห์
@@ -249,54 +359,55 @@ export default function Calendar() {
     return m;
   }, [leaveEvents]);
 
- // ✅ bar map: ทำ “แถบต่อเนื่อง” สำหรับ "ลาหลายวัน" (ทั้ง all-day และ timed)
-const barMap = useMemo(() => {
-  const m = new Map<string, BarSeg[]>();
+  // ✅ bar map: ทำ “แถบต่อเนื่อง” สำหรับ "ลาหลายวัน" (ทั้ง all-day และ timed)
+  const barMap = useMemo(() => {
+    const m = new Map<string, BarSeg[]>();
 
-  for (const ev of leaveEvents) {
-    const sISO = datePart(ev.startAt);
-    const eISO = datePart(ev.endAt);
+    for (const ev of leaveEvents) {
+      const sISO = datePart(ev.startAt);
+      const eISO = datePart(ev.endAt);
 
-    const hasTimeStart = ev.startAt.includes("T");
-    const hasTimeEnd = ev.endAt.includes("T");
-    const allDay = !(hasTimeStart && hasTimeEnd);
+      const hasTimeStart = ev.startAt.includes("T");
+      const hasTimeEnd = ev.endAt.includes("T");
+      const allDay = !(hasTimeStart && hasTimeEnd);
 
-    // ✅ เคสลาทั้งวัน "วันเดียว" ให้ทำเป็น bar 1 วัน
-    if (allDay && sISO === eISO) {
-      const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
-      if (!m.has(sISO)) m.set(sISO, []);
-      m.get(sISO)!.push(seg);
-      continue;
+      // ✅ เคสลาทั้งวัน "วันเดียว" ให้ทำเป็น bar 1 วัน
+      if (allDay && sISO === eISO) {
+        const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
+        if (!m.has(sISO)) m.set(sISO, []);
+        m.get(sISO)!.push(seg);
+        continue;
+      }
+
+      // ✅ ทำแถบต่อเนื่องเฉพาะเคสข้ามวัน
+      if (sISO === eISO) continue;
+
+      const days = eachDayISOInRange(sISO, eISO);
+      for (const d of days) {
+        const seg: BarSeg = {
+          event: ev,
+          date: d,
+          isStart: d === sISO,
+          isEnd: d === eISO,
+        };
+        if (!m.has(d)) m.set(d, []);
+        m.get(d)!.push(seg);
+      }
     }
 
-    // ✅ ทำแถบต่อเนื่องเฉพาะเคสข้ามวัน (เดิม)
-    if (sISO === eISO) continue;
-
-    const days = eachDayISOInRange(sISO, eISO);
-    for (const d of days) {
-      const seg: BarSeg = {
-        event: ev,
-        date: d,
-        isStart: d === sISO,
-        isEnd: d === eISO,
-      };
-      if (!m.has(d)) m.set(d, []);
-      m.get(d)!.push(seg);
+    for (const [k, list] of m.entries()) {
+      list.sort((a, b) => {
+        const as = a.event.startAt;
+        const bs = b.event.startAt;
+        if (as !== bs) return as < bs ? -1 : 1;
+        return a.event.id < b.event.id ? -1 : 1;
+      });
+      m.set(k, list);
     }
-  }
 
-  for (const [k, list] of m.entries()) {
-    list.sort((a, b) => {
-      const as = a.event.startAt;
-      const bs = b.event.startAt;
-      if (as !== bs) return as < bs ? -1 : 1;
-      return a.event.id < b.event.id ? -1 : 1;
-    });
-    m.set(k, list);
-  }
+    return m;
+  }, [leaveEvents]);
 
-  return m;
-}, [leaveEvents]);
   const monthTitle = useMemo(() => {
     return new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric" }).format(currentMonth);
   }, [currentMonth]);
@@ -555,10 +666,8 @@ const barMap = useMemo(() => {
 
                     return (
                       <tr key={`${ev.id}-${idx}`} className="bg-white dark:bg-gray-900">
-                        {/* เลขคำร้อง */}
                         <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">{ev.requestNo}</td>
 
-                        {/* ประเภท */}
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
                             <span className={`inline-flex h-2 w-2 rounded-full ${style.dot}`} />
@@ -566,20 +675,14 @@ const barMap = useMemo(() => {
                           </div>
                         </td>
 
-                        {/* สถานะ */}
                         <td className="px-3 py-3">
                           <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyle[ev.status]}`}>
                             {ev.status}
                           </span>
                         </td>
 
-                        {/* เวลา */}
                         <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{timeText}</td>
-
-                        {/* ระยะเวลา */}
                         <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{durText}</td>
-
-                        {/* หมายเหตุ */}
                         <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{ev.note || "-"}</td>
                       </tr>
                     );
