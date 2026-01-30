@@ -1,4 +1,17 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { auth, db } from "../firebase";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+import { useAuth } from "./AuthContext";
 
 export type LeaveStatus = "รอดำเนินการ" | "อนุมัติ" | "ไม่อนุมัติ";
 
@@ -17,29 +30,41 @@ export type LeaveSubType =
 export type LeaveAttachment = { name: string; size: number };
 
 export type LeaveRequest = {
+  id: string;
+  uid: string;
+  createdByEmail?: string;
+
   requestNo: string;
   category: LeaveCategory;
   subType: LeaveSubType;
-  startAt: string; // all-day: YYYY-MM-DD | timed: YYYY-MM-DDTHH:mm
-  endAt: string;   // all-day: YYYY-MM-DD | timed: YYYY-MM-DDTHH:mm
+  startAt: string; // YYYY-MM-DD | YYYY-MM-DDTHH:mm
+  endAt: string;   // YYYY-MM-DD | YYYY-MM-DDTHH:mm
   reason: string;
   attachments: LeaveAttachment[];
   status: LeaveStatus;
   submittedAt: string; // ISO string
 };
 
-type SubmitInput = Omit<LeaveRequest, "requestNo" | "status" | "submittedAt">;
+type SubmitInput = Omit<
+  LeaveRequest,
+  "id" | "uid" | "createdByEmail" | "requestNo" | "status" | "submittedAt"
+>;
 
 type LeaveCtx = {
   requests: LeaveRequest[];
-  submitLeave: (input: SubmitInput) => LeaveRequest;
-  updateStatus: (requestNo: string, status: LeaveStatus) => void;
-  clearAll: () => void;
+  loading: boolean;
+
+  submitLeave: (input: SubmitInput) => Promise<LeaveRequest>;
+
+  updateStatus: (id: string, status: LeaveStatus) => Promise<void>;
+  updateRequest: (
+    id: string,
+    patch: Partial<Pick<LeaveRequest, "category" | "subType" | "startAt" | "endAt" | "reason" | "attachments">>
+  ) => Promise<void>;
+  deleteRequest: (id: string) => Promise<void>;
 };
 
 const LeaveContext = createContext<LeaveCtx | null>(null);
-
-const STORAGE_KEY = "smart_hr_leave_requests_v1";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -53,54 +78,171 @@ function genRequestNo() {
 }
 
 function normalizeDateOnly(s: string) {
-  return String(s || "").slice(0, 10); // YYYY-MM-DD
+  return String(s || "").slice(0, 10);
 }
 function normalizeDateTimeLocal(s: string) {
-  return String(s || "").slice(0, 16); // YYYY-MM-DDTHH:mm
+  return String(s || "").slice(0, 16);
 }
 function isTimed(s: string) {
-  return s.includes("T");
+  return String(s || "").includes("T");
 }
 function normalizeRange(startAt: string, endAt: string) {
   const timed = isTimed(startAt) || isTimed(endAt);
-
   const s = timed ? normalizeDateTimeLocal(startAt) : normalizeDateOnly(startAt);
   const e = timed ? normalizeDateTimeLocal(endAt) : normalizeDateOnly(endAt);
-
-  // กัน end < start
   if (new Date(e).getTime() < new Date(s).getTime()) return { startAt: s, endAt: s };
   return { startAt: s, endAt: e };
 }
 
+function tsToMs(ts: any): number {
+  const d = ts?.toDate?.();
+  return d instanceof Date ? d.getTime() : 0;
+}
+function tsToISO(ts: any): string {
+  const d = ts?.toDate?.();
+  return d instanceof Date ? d.toISOString() : new Date(0).toISOString();
+}
+
+function explainFsError(err: any) {
+  const code = err?.code as string | undefined;
+
+  if (code === "permission-denied") {
+    return "สิทธิ์อ่านข้อมูลไม่พอ (permission-denied) — ตรวจ Firestore Rules";
+  }
+  if (code === "failed-precondition") {
+    // มักเจอเมื่อ query ต้องสร้าง index
+    return "Query ต้องสร้าง Index ก่อน (failed-precondition) — กดลิงก์ใน Console เพื่อ Create Index";
+  }
+  return err?.message || String(err);
+}
+
 export function LeaveProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
+
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // load
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as LeaveRequest[];
-      if (Array.isArray(parsed)) setRequests(parsed);
-    } catch {
-      // ignore
-    }
-  }, []);
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
 
-  // save
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(requests));
-    } catch {
-      // ignore
-    }
-  }, [requests]);
+    const u = auth.currentUser;
 
-  const submitLeave = useCallback((input: SubmitInput) => {
+    // ถ้ายังไม่ login firebase → เคลียร์สถานะ
+    if (!u) {
+      setRequests([]);
+      setLoading(false);
+      return;
+    }
+
+    const colRef = collection(db, "leave_requests");
+    const myQuery = query(colRef, where("uid", "==", u.uid));
+    const adminQuery = query(colRef);
+
+    let triedFallback = false;
+
+    const subscribe = (qy: any) => {
+      if (unsub) unsub();
+
+      setLoading(true);
+
+      unsub = onSnapshot(
+        qy,
+        (snap) => {
+          if (cancelled) return;
+
+          const rows: Array<LeaveRequest & { _ms: number }> = snap.docs.map((d) => {
+            const data: any = d.data();
+            const ms = tsToMs(data.submittedAt);
+
+            return {
+              id: d.id,
+              uid: data.uid,
+              createdByEmail: data.createdByEmail ?? undefined,
+
+              requestNo: data.requestNo,
+              category: data.category,
+              subType: data.subType,
+              startAt: data.startAt,
+              endAt: data.endAt,
+              reason: data.reason,
+              attachments: data.attachments ?? [],
+              status: (data.status ?? "รอดำเนินการ") as LeaveStatus,
+              submittedAt: tsToISO(data.submittedAt),
+              _ms: ms,
+            };
+          });
+
+          rows.sort((a, b) => b._ms - a._ms);
+          setRequests(rows.map(({ _ms, ...r }) => r));
+          setLoading(false);
+        },
+        (err) => {
+          if (cancelled) return;
+
+          console.error("listen leave_requests error:", err, explainFsError(err));
+
+          // ✅ ห้าม throw ไม่งั้นทั้งเว็บขาว
+          setLoading(false);
+
+          // ✅ กัน admin อ่านทั้งหมดไม่ได้ → fallback มาอ่านของตัวเอง
+          if (err?.code === "permission-denied") {
+            if (isAdmin && !triedFallback) {
+              triedFallback = true;
+              subscribe(myQuery);
+              return;
+            }
+            // user ทั่วไปโดนบล็อก → เคลียร์ให้ปลอดภัย
+            setRequests([]);
+            return;
+          }
+
+          // ✅ ถ้า query ต้องสร้าง index / อื่น ๆ → ไม่ให้เว็บพัง แค่ยังไม่โชว์ข้อมูล
+          setRequests([]);
+        }
+      );
+    };
+
+    subscribe(isAdmin ? adminQuery : myQuery);
+
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, [isAdmin]);
+
+  const submitLeave = async (input: SubmitInput): Promise<LeaveRequest> => {
+    const u = auth.currentUser;
+    if (!u) throw new Error("NOT_AUTHENTICATED");
+
     const { startAt, endAt } = normalizeRange(input.startAt, input.endAt);
+    const requestNo = genRequestNo();
 
-    const created: LeaveRequest = {
-      requestNo: genRequestNo(),
+    const payload = {
+      uid: u.uid,
+      createdByEmail: u.email ?? null,
+
+      requestNo,
+      category: input.category,
+      subType: input.subType,
+      startAt,
+      endAt,
+      reason: input.reason,
+      attachments: input.attachments ?? [],
+
+      status: "รอดำเนินการ" as LeaveStatus,
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    const ref = await addDoc(collection(db, "leave_requests"), payload);
+
+    return {
+      id: ref.id,
+      uid: u.uid,
+      createdByEmail: u.email ?? undefined,
+      requestNo,
       category: input.category,
       subType: input.subType,
       startAt,
@@ -110,23 +252,42 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
       status: "รอดำเนินการ",
       submittedAt: new Date().toISOString(),
     };
+  };
 
-    setRequests((prev) => [created, ...prev]);
-    return created;
-  }, []);
+  const updateStatus = async (id: string, status: LeaveStatus) => {
+    if (!isAdmin) throw new Error("FORBIDDEN");
+    await updateDoc(doc(db, "leave_requests", id), {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+  };
 
-  const updateStatus = useCallback((requestNo: string, status: LeaveStatus) => {
-    setRequests((prev) => prev.map((r) => (r.requestNo === requestNo ? { ...r, status } : r)));
-  }, []);
+  const updateRequest: LeaveCtx["updateRequest"] = async (id, patch) => {
+    if (!isAdmin) throw new Error("FORBIDDEN");
 
-  const clearAll = useCallback(() => setRequests([]), []);
+    const next: any = { ...patch, updatedAt: serverTimestamp() };
 
-  const value = useMemo(() => ({ requests, submitLeave, updateStatus, clearAll }), [
-    requests,
-    submitLeave,
-    updateStatus,
-    clearAll,
-  ]);
+    if (patch.startAt || patch.endAt) {
+      const cur = requests.find((r) => r.id === id);
+      const s = patch.startAt ?? cur?.startAt ?? "";
+      const e = patch.endAt ?? cur?.endAt ?? "";
+      const norm = normalizeRange(s, e);
+      next.startAt = norm.startAt;
+      next.endAt = norm.endAt;
+    }
+
+    await updateDoc(doc(db, "leave_requests", id), next);
+  };
+
+  const deleteRequest = async (id: string) => {
+    if (!isAdmin) throw new Error("FORBIDDEN");
+    await deleteDoc(doc(db, "leave_requests", id));
+  };
+
+  const value: LeaveCtx = useMemo(
+    () => ({ requests, loading, submitLeave, updateStatus, updateRequest, deleteRequest }),
+    [requests, loading]
+  );
 
   return <LeaveContext.Provider value={value}>{children}</LeaveContext.Provider>;
 }

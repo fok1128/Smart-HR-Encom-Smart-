@@ -1,29 +1,27 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import React from "react";
+import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import "./index.css";
-import "swiper/swiper-bundle.css";
-import "flatpickr/dist/flatpickr.css";
 
 import App from "./App";
-import { ThemeProvider } from "./context/ThemeContext";
 import { AuthProvider } from "./context/AuthContext";
-import { LeaveProvider } from "./context/LeaveContext"; // ✅ เพิ่ม
-if (import.meta.env.DEV) {
-  import("./devtools");
-}
+import { LeaveProvider } from "./context/LeaveContext";
+import { SidebarProvider } from "./context/SidebarContext";
+import { ThemeProvider } from "./context/ThemeContext"; // ✅ เพิ่ม
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <BrowserRouter>
-      <ThemeProvider>
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <ThemeProvider>
+      <BrowserRouter>
         <AuthProvider>
           <LeaveProvider>
-            <App />
+            <SidebarProvider>
+              <App />
+            </SidebarProvider>
           </LeaveProvider>
         </AuthProvider>
-      </ThemeProvider>
-    </BrowserRouter>
-  </StrictMode>
+      </BrowserRouter>
+    </ThemeProvider>
+  </React.StrictMode>
 );

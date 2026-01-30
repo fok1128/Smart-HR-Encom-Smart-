@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import AppLayout from "./layout/AppLayout";
-import { ScrollToTop } from "./components/common/ScrollToTop";
+import  ScrollToTop  from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
 import UserProfiles from "./pages/UserProfiles";
 import Calendar from "./pages/Calendar";

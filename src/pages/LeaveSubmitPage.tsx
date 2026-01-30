@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
 
-// ====== Types (ถ้า LeaveContext export type อยู่แล้ว ให้ import มาแทนก็ได้) ======
+// ====== Types ======
 type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
 type LeaveSubType =
   | "ลากิจปกติ"
@@ -33,7 +33,7 @@ function XIcon({ className = "" }: { className?: string }) {
   );
 }
 
-/** ✅ Dropdown custom */
+/** ✅ Dropdown custom (แก้ไม่ให้ button ซ้อน button แล้ว) */
 function SelectBox<T extends string>({
   label,
   placeholder,
@@ -78,10 +78,7 @@ function SelectBox<T extends string>({
       <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">{label}</div>
 
       <div ref={wrapRef} className="relative mt-2">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => !disabled && setOpen((v) => !v)}
+        <div
           className={[
             "w-full rounded-md border bg-white px-3 py-2 text-left",
             "flex items-center justify-between gap-3",
@@ -89,9 +86,16 @@ function SelectBox<T extends string>({
             "dark:bg-gray-900",
             disabled
               ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-500"
-              : "border-gray-300 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-700",
+              : "border-gray-300 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-700 cursor-pointer",
             open && !disabled ? "border-teal-500 ring-2 ring-teal-500/20" : "",
           ].join(" ")}
+          role="button"
+          tabIndex={0}
+          onClick={() => !disabled && setOpen((v) => !v)}
+          onKeyDown={(e) => {
+            if (disabled) return;
+            if (e.key === "Enter" || e.key === " ") setOpen((v) => !v);
+          }}
         >
           <span className={selected ? "text-gray-900 dark:text-gray-100" : "text-gray-400"}>
             {selected?.label ?? placeholder}
@@ -99,22 +103,31 @@ function SelectBox<T extends string>({
 
           <span className="flex items-center gap-2 text-gray-500">
             {clearable && value && !disabled && (
-              <button
-                type="button"
+              <span
+                role="button"
+                tabIndex={0}
                 onClick={(e) => {
                   e.stopPropagation();
                   onChange("");
                   setOpen(false);
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    onChange("");
+                    setOpen(false);
+                  }
+                }}
                 className="grid h-6 w-6 place-items-center rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 aria-label="Clear"
+                title="ล้าง"
               >
                 <XIcon />
-              </button>
+              </span>
             )}
             <ChevronDownIcon className={open ? "rotate-180 transition" : "transition"} />
           </span>
-        </button>
+        </div>
 
         {open && !disabled && (
           <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg dark:border-gray-800 dark:bg-gray-900">
@@ -122,23 +135,30 @@ function SelectBox<T extends string>({
               {options.map((opt) => {
                 const isSelected = opt.value === value;
                 return (
-                  <button
+                  <div
                     key={opt.value}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       onChange(opt.value);
                       setOpen(false);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        onChange(opt.value);
+                        setOpen(false);
+                      }
+                    }}
                     className={[
                       "w-full px-3 py-2 text-left text-sm",
-                      "transition",
+                      "transition cursor-pointer",
                       isSelected
                         ? "bg-teal-50 text-teal-700 font-semibold dark:bg-teal-500/10 dark:text-teal-200"
                         : "text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-gray-800/60",
                     ].join(" ")}
                   >
                     {opt.label}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -178,11 +198,7 @@ function isEndBeforeStart(start: string, end: string) {
 }
 
 export default function LeaveSubmitPage() {
-  const leave = useLeave() as any;
-
-  // ✅ รองรับได้ทั้ง 2 ชื่อ (กันเธอไปแก้ Context แล้วชื่อไม่ตรง)
-  const submitLeave: ((payload: any) => any) | undefined = leave.submitLeave;
-  const addRequest: ((payload: any) => any) | undefined = leave.addRequest;
+  const { submitLeave } = useLeave(); // ✅ เอา ! ออก ไม่แดงแล้ว
 
   // dropdown
   const [category, setCategory] = useState<LeaveCategory | "">("");
@@ -268,39 +284,29 @@ export default function LeaveSubmitPage() {
     return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = (ev: React.FormEvent) => {
+  const handleSubmit = async (ev: React.FormEvent) => {
     ev.preventDefault();
     setSuccessMsg("");
 
     if (!validate()) return;
 
-    // ✅ สำคัญมาก: allDay ต้องเป็น YYYY-MM-DD (ไม่มี T) เพื่อให้ Calendar ทำแถบสีได้
     const payload = {
       category: category as LeaveCategory,
       subType: subType as LeaveSubType,
-      mode, // ✅ ส่ง mode ไปด้วย (Calendar ใช้ได้ชัวร์)
       startAt: mode === "allDay" ? startDate : startDT,
       endAt: mode === "allDay" ? endDate : endDT,
       reason,
-      // ✅ ให้ชื่อเดียวกันกับ Context ใหม่ (files) แต่เผื่อของเดิม (attachments) ด้วย
-      files: files.map((f) => ({ name: f.name, size: f.size })),
       attachments: files.map((f) => ({ name: f.name, size: f.size })),
     };
 
-    let created: any;
-
-    if (typeof submitLeave === "function") {
-      created = submitLeave(payload);
-    } else if (typeof addRequest === "function") {
-      created = addRequest(payload);
-    } else {
-      console.error("LeaveContext ไม่มี submitLeave/addRequest — ไปเช็ค LeaveContext.tsx");
-      setSuccessMsg("ส่งไม่ได้: LeaveContext ไม่มี submitLeave/addRequest");
-      return;
+    try {
+      const created = await submitLeave(payload);
+      setErrors({});
+      setSuccessMsg(`ส่งคำร้องสำเร็จ ✅ เลขคำร้อง: ${created.requestNo}`);
+    } catch (e: any) {
+      console.error(e);
+      setSuccessMsg(`ส่งไม่สำเร็จ: ${e?.message || e}`);
     }
-
-    setErrors({});
-    setSuccessMsg(`ส่งคำร้องสำเร็จ ✅ เลขคำร้อง: ${created?.requestNo ?? created?.id ?? "-"}`);
   };
 
   return (
