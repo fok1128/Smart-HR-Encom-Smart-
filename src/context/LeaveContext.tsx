@@ -114,7 +114,7 @@ function tsToISO(ts: unknown): string {
 
 function explainFsError(err: FirestoreError) {
   if (err.code === "permission-denied") {
-    return "สิทธิ์อ่านข้อมูลไม่พอ (permission-denied) — ตรวจ Firestore Rules";
+    return "สิทธิ์อ่าน/เขียนข้อมูลไม่พอ (permission-denied) — ตรวจ Firestore Rules";
   }
   if (err.code === "failed-precondition") {
     return "Query ต้องสร้าง Index ก่อน (failed-precondition) — กดลิงก์ใน Console เพื่อ Create Index";
@@ -123,8 +123,10 @@ function explainFsError(err: FirestoreError) {
 }
 
 export function LeaveProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "ADMIN";
+  const { user, loading: authLoading } = useAuth();
+
+  // ✅ อย่าให้ isAdmin เป็น true ระหว่าง auth ยังโหลด (กันกระพริบ/subscribe ผิด query)
+  const isAdmin = !authLoading && user?.role === "ADMIN";
 
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,17 +135,23 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     let unsub: (() => void) | null = null;
 
-    const u = auth.currentUser;
+    const fbUser = auth.currentUser;
 
-    // ยังไม่ login firebase → เคลียร์
-    if (!u) {
+    // ✅ รอ AuthContext ก่อน (สำคัญ: กัน subscribe ตอน /me ยังไม่มา)
+    if (authLoading) {
+      setLoading(true);
+      return;
+    }
+
+    // ✅ ยังไม่ login หรือยังไม่มี user จาก backend -> เคลียร์
+    if (!fbUser || !user) {
       setRequests([]);
       setLoading(false);
       return;
     }
 
     const colRef = collection(db, "leave_requests");
-    const myQuery = query(colRef, where("uid", "==", u.uid));
+    const myQuery = query(colRef, where("uid", "==", fbUser.uid));
     const adminQuery = query(colRef);
 
     let triedFallback = false;
@@ -191,7 +199,7 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
           console.error("listen leave_requests error:", err, explainFsError(err));
           setLoading(false);
 
-          // ✅ กัน admin อ่านทั้งหมดไม่ได้ → fallback มาอ่านของตัวเอง
+          // ✅ Admin อ่านทั้งหมดไม่ได้ → fallback มาอ่านของตัวเอง (ไม่ทำให้เว็บพัง)
           if (err.code === "permission-denied") {
             if (isAdmin && !triedFallback) {
               triedFallback = true;
@@ -202,7 +210,6 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          // ✅ ถ้า query ต้องสร้าง index / อื่น ๆ → ไม่ให้เว็บพัง แค่ยังไม่โชว์ข้อมูล
           setRequests([]);
         }
       );
@@ -214,18 +221,18 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       if (unsub) unsub();
     };
-  }, [isAdmin]);
+  }, [authLoading, user?.uid, isAdmin]);
 
   const submitLeave = async (input: SubmitInput): Promise<LeaveRequest> => {
-    const u = auth.currentUser;
-    if (!u) throw new Error("NOT_AUTHENTICATED");
+    const fbUser = auth.currentUser;
+    if (!fbUser || !user) throw new Error("NOT_AUTHENTICATED");
 
     const { startAt, endAt } = normalizeRange(input.startAt, input.endAt);
     const requestNo = genRequestNo();
 
     const payload = {
-      uid: u.uid,
-      createdByEmail: u.email ?? null,
+      uid: fbUser.uid,
+      createdByEmail: fbUser.email ?? user.email ?? null,
 
       requestNo,
       category: input.category,
@@ -244,8 +251,8 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
 
     return {
       id: ref.id,
-      uid: u.uid,
-      createdByEmail: u.email ?? undefined,
+      uid: fbUser.uid,
+      createdByEmail: (fbUser.email ?? user.email) ?? undefined,
       requestNo,
       category: input.category,
       subType: input.subType,
@@ -260,13 +267,10 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
 
   const updateStatus = async (id: string, status: LeaveStatus) => {
     if (!isAdmin) throw new Error("FORBIDDEN");
-    await updateDoc(
-      doc(db, "leave_requests", id),
-      {
-        status,
-        updatedAt: serverTimestamp(),
-      } as any
-    );
+    await updateDoc(doc(db, "leave_requests", id), {
+      status,
+      updatedAt: serverTimestamp(),
+    } as any);
   };
 
   const updateRequest: LeaveCtx["updateRequest"] = async (id, patch) => {
