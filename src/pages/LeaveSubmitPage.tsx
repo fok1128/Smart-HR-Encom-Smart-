@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useLeave } from "../context/LeaveContext";
 
 // ====== Types ======
@@ -198,7 +198,7 @@ function isEndBeforeStart(start: string, end: string) {
 }
 
 export default function LeaveSubmitPage() {
-  const { submitLeave } = useLeave(); // ✅ เอา ! ออก ไม่แดงแล้ว
+  const { submitLeave } = useLeave();
 
   // dropdown
   const [category, setCategory] = useState<LeaveCategory | "">("");
@@ -284,7 +284,7 @@ export default function LeaveSubmitPage() {
     return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = async (ev: React.FormEvent) => {
+  const handleSubmit = async (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
     setSuccessMsg("");
 
@@ -300,9 +300,12 @@ export default function LeaveSubmitPage() {
     };
 
     try {
-      const created = await submitLeave(payload);
+      // ✅ แก้แดง created.requestNo
+      type Created = { requestNo?: string; id?: string };
+      const created = (await submitLeave(payload)) as Created;
+
       setErrors({});
-      setSuccessMsg(`ส่งคำร้องสำเร็จ ✅ เลขคำร้อง: ${created.requestNo}`);
+      setSuccessMsg(`ส่งคำร้องสำเร็จ ✅ เลขคำร้อง: ${created.requestNo ?? created.id ?? "-"}`);
     } catch (e: any) {
       console.error(e);
       setSuccessMsg(`ส่งไม่สำเร็จ: ${e?.message || e}`);
