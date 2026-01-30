@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { auth, db } from "../firebase";
 import {
   addDoc,
@@ -10,6 +10,11 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  type DocumentData,
+  type FirestoreError,
+  type Query,
+  type QueryDocumentSnapshot,
+  type QuerySnapshot,
 } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
 
@@ -38,7 +43,7 @@ export type LeaveRequest = {
   category: LeaveCategory;
   subType: LeaveSubType;
   startAt: string; // YYYY-MM-DD | YYYY-MM-DDTHH:mm
-  endAt: string;   // YYYY-MM-DD | YYYY-MM-DDTHH:mm
+  endAt: string; // YYYY-MM-DD | YYYY-MM-DDTHH:mm
   reason: string;
   attachments: LeaveAttachment[];
   status: LeaveStatus;
@@ -59,7 +64,9 @@ type LeaveCtx = {
   updateStatus: (id: string, status: LeaveStatus) => Promise<void>;
   updateRequest: (
     id: string,
-    patch: Partial<Pick<LeaveRequest, "category" | "subType" | "startAt" | "endAt" | "reason" | "attachments">>
+    patch: Partial<
+      Pick<LeaveRequest, "category" | "subType" | "startAt" | "endAt" | "reason" | "attachments">
+    >
   ) => Promise<void>;
   deleteRequest: (id: string) => Promise<void>;
 };
@@ -94,26 +101,25 @@ function normalizeRange(startAt: string, endAt: string) {
   return { startAt: s, endAt: e };
 }
 
-function tsToMs(ts: any): number {
-  const d = ts?.toDate?.();
+function tsToMs(ts: unknown): number {
+  const anyTs = ts as { toDate?: () => Date };
+  const d = anyTs?.toDate?.();
   return d instanceof Date ? d.getTime() : 0;
 }
-function tsToISO(ts: any): string {
-  const d = ts?.toDate?.();
+function tsToISO(ts: unknown): string {
+  const anyTs = ts as { toDate?: () => Date };
+  const d = anyTs?.toDate?.();
   return d instanceof Date ? d.toISOString() : new Date(0).toISOString();
 }
 
-function explainFsError(err: any) {
-  const code = err?.code as string | undefined;
-
-  if (code === "permission-denied") {
+function explainFsError(err: FirestoreError) {
+  if (err.code === "permission-denied") {
     return "สิทธิ์อ่านข้อมูลไม่พอ (permission-denied) — ตรวจ Firestore Rules";
   }
-  if (code === "failed-precondition") {
-    // มักเจอเมื่อ query ต้องสร้าง index
+  if (err.code === "failed-precondition") {
     return "Query ต้องสร้าง Index ก่อน (failed-precondition) — กดลิงก์ใน Console เพื่อ Create Index";
   }
-  return err?.message || String(err);
+  return err.message || String(err);
 }
 
 export function LeaveProvider({ children }: { children: React.ReactNode }) {
@@ -129,7 +135,7 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
 
     const u = auth.currentUser;
 
-    // ถ้ายังไม่ login firebase → เคลียร์สถานะ
+    // ยังไม่ login firebase → เคลียร์
     if (!u) {
       setRequests([]);
       setLoading(false);
@@ -142,58 +148,56 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
 
     let triedFallback = false;
 
-    const subscribe = (qy: any) => {
+    const subscribe = (qy: Query<DocumentData>) => {
       if (unsub) unsub();
-
       setLoading(true);
 
       unsub = onSnapshot(
         qy,
-        (snap) => {
+        (snap: QuerySnapshot<DocumentData>) => {
           if (cancelled) return;
 
-          const rows: Array<LeaveRequest & { _ms: number }> = snap.docs.map((d) => {
-            const data: any = d.data();
-            const ms = tsToMs(data.submittedAt);
+          const rows: Array<LeaveRequest & { _ms: number }> = snap.docs.map(
+            (d: QueryDocumentSnapshot<DocumentData>) => {
+              const data = d.data() as Record<string, any>;
+              const ms = tsToMs(data.submittedAt);
 
-            return {
-              id: d.id,
-              uid: data.uid,
-              createdByEmail: data.createdByEmail ?? undefined,
+              return {
+                id: d.id,
+                uid: data.uid,
+                createdByEmail: data.createdByEmail ?? undefined,
 
-              requestNo: data.requestNo,
-              category: data.category,
-              subType: data.subType,
-              startAt: data.startAt,
-              endAt: data.endAt,
-              reason: data.reason,
-              attachments: data.attachments ?? [],
-              status: (data.status ?? "รอดำเนินการ") as LeaveStatus,
-              submittedAt: tsToISO(data.submittedAt),
-              _ms: ms,
-            };
-          });
+                requestNo: data.requestNo,
+                category: data.category,
+                subType: data.subType,
+                startAt: data.startAt,
+                endAt: data.endAt,
+                reason: data.reason,
+                attachments: data.attachments ?? [],
+                status: (data.status ?? "รอดำเนินการ") as LeaveStatus,
+                submittedAt: tsToISO(data.submittedAt),
+                _ms: ms,
+              };
+            }
+          );
 
           rows.sort((a, b) => b._ms - a._ms);
           setRequests(rows.map(({ _ms, ...r }) => r));
           setLoading(false);
         },
-        (err) => {
+        (err: FirestoreError) => {
           if (cancelled) return;
 
           console.error("listen leave_requests error:", err, explainFsError(err));
-
-          // ✅ ห้าม throw ไม่งั้นทั้งเว็บขาว
           setLoading(false);
 
           // ✅ กัน admin อ่านทั้งหมดไม่ได้ → fallback มาอ่านของตัวเอง
-          if (err?.code === "permission-denied") {
+          if (err.code === "permission-denied") {
             if (isAdmin && !triedFallback) {
               triedFallback = true;
               subscribe(myQuery);
               return;
             }
-            // user ทั่วไปโดนบล็อก → เคลียร์ให้ปลอดภัย
             setRequests([]);
             return;
           }
@@ -265,7 +269,7 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
   const updateRequest: LeaveCtx["updateRequest"] = async (id, patch) => {
     if (!isAdmin) throw new Error("FORBIDDEN");
 
-    const next: any = { ...patch, updatedAt: serverTimestamp() };
+    const next: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
 
     if (patch.startAt || patch.endAt) {
       const cur = requests.find((r) => r.id === id);
