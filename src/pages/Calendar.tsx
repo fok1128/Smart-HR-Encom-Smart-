@@ -257,7 +257,19 @@ const barMap = useMemo(() => {
     const sISO = datePart(ev.startAt);
     const eISO = datePart(ev.endAt);
 
-    // ✅ ทำแถบเฉพาะเคส "ข้ามวัน" (start date != end date)
+    const hasTimeStart = ev.startAt.includes("T");
+    const hasTimeEnd = ev.endAt.includes("T");
+    const allDay = !(hasTimeStart && hasTimeEnd);
+
+    // ✅ เคสลาทั้งวัน "วันเดียว" ให้ทำเป็น bar 1 วัน
+    if (allDay && sISO === eISO) {
+      const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
+      if (!m.has(sISO)) m.set(sISO, []);
+      m.get(sISO)!.push(seg);
+      continue;
+    }
+
+    // ✅ ทำแถบต่อเนื่องเฉพาะเคสข้ามวัน (เดิม)
     if (sISO === eISO) continue;
 
     const days = eachDayISOInRange(sISO, eISO);
@@ -273,7 +285,6 @@ const barMap = useMemo(() => {
     }
   }
 
-  // sort ให้ตำแหน่งแถบคงที่
   for (const [k, list] of m.entries()) {
     list.sort((a, b) => {
       const as = a.event.startAt;

@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useSidebar } from "../context/SidebarContext";
-import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import { useAuth } from "../context/AuthContext";
 
 // ✅ type ชั่วคราวให้ TS ไม่ฟ้อง (เพราะ MeResponse ยังไม่ประกาศ field พวกนี้)
@@ -81,10 +80,8 @@ const AppHeader: React.FC = () => {
           </h1>
         </div>
 
-        {/* Right: Theme + Employee */}
+        {/* Right: Employee */}
         <div className="flex items-center gap-3">
-          <ThemeToggleButton />
-
           <div className="flex items-center gap-3 rounded-xl px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
             <div className="text-right leading-tight">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
