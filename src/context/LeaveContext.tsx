@@ -260,16 +260,19 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
 
   const updateStatus = async (id: string, status: LeaveStatus) => {
     if (!isAdmin) throw new Error("FORBIDDEN");
-    await updateDoc(doc(db, "leave_requests", id), {
-      status,
-      updatedAt: serverTimestamp(),
-    });
+    await updateDoc(
+      doc(db, "leave_requests", id),
+      {
+        status,
+        updatedAt: serverTimestamp(),
+      } as any
+    );
   };
 
   const updateRequest: LeaveCtx["updateRequest"] = async (id, patch) => {
     if (!isAdmin) throw new Error("FORBIDDEN");
 
-    const next: Record<string, unknown> = { ...patch, updatedAt: serverTimestamp() };
+    const next: Record<string, any> = { ...patch, updatedAt: serverTimestamp() };
 
     if (patch.startAt || patch.endAt) {
       const cur = requests.find((r) => r.id === id);
@@ -280,7 +283,7 @@ export function LeaveProvider({ children }: { children: React.ReactNode }) {
       next.endAt = norm.endAt;
     }
 
-    await updateDoc(doc(db, "leave_requests", id), next);
+    await updateDoc(doc(db, "leave_requests", id), next as any);
   };
 
   const deleteRequest = async (id: string) => {
