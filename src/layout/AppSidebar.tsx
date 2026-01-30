@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -23,27 +23,18 @@ type NavItem = {
 
 const LOGO_SRC = "/images/logo/company-logo3.jpg";
 
-const navItems: NavItem[] = [
-  { icon: <GridIcon />, name: "ประกาศ / หน้าแรก", path: "/" },
-  { icon: <UserCircleIcon />, name: "Profile", path: "/profile" },
-  { icon: <CalenderIcon />, name: "ปฏิทินวันลา", path: "/calendar" },
-  { icon: <ListIcon />, name: "ยื่นใบลา", path: "/leave/submit" },      // ✅
-  { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" }, // ✅
-];
-
-
 const AppSidebar = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
+  const isAdmin = user?.role === "ADMIN";
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;
 
   // ✅ ไฮไลต์เมนูให้ติดแม้มี subpath
   const isActive = useCallback(
-    (path: string) =>
-      location.pathname === path || location.pathname.startsWith(path + "/"),
+    (path: string) => location.pathname === path || location.pathname.startsWith(path + "/"),
     [location.pathname]
   );
 
@@ -51,6 +42,28 @@ const AppSidebar = () => {
     logout();
     navigate("/signin", { replace: true });
   };
+
+  // ✅ ทำ nav ตาม role
+  const navItems: NavItem[] = useMemo(() => {
+    const base: NavItem[] = [
+      { icon: <GridIcon />, name: "ประกาศ / หน้าแรก", path: "/" },
+      { icon: <UserCircleIcon />, name: "Profile", path: "/profile" },
+      { icon: <CalenderIcon />, name: "ปฏิทินวันลา", path: "/calendar" },
+      { icon: <ListIcon />, name: "ยื่นใบลา", path: "/leave/submit" },
+      { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" },
+    ];
+
+    // ✅ เฉพาะ ADMIN
+    if (isAdmin) {
+      base.push({
+        icon: <PieChartIcon />,
+        name: "อนุมัติใบลา (ADMIN)",
+        path: "/leave/approve",
+      });
+    }
+
+    return base;
+  }, [isAdmin]);
 
   return (
     <aside
@@ -76,12 +89,8 @@ const AppSidebar = () => {
 
           {!isCollapsed && (
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                Smart HR
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                Encom Smart Solution
-              </div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">Smart HR</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Encom Smart Solution</div>
             </div>
           )}
         </Link>
@@ -116,9 +125,7 @@ const AppSidebar = () => {
                       {nav.icon}
                     </span>
 
-                    {!isCollapsed && (
-                      <span className="menu-item-text font-semibold">{nav.name}</span>
-                    )}
+                    {!isCollapsed && <span className="menu-item-text font-semibold">{nav.name}</span>}
                   </Link>
                 </li>
               ))}

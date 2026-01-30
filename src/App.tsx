@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import AppLayout from "./layout/AppLayout";
-import  ScrollToTop  from "./components/common/ScrollToTop";
+import ScrollToTop from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
 import UserProfiles from "./pages/UserProfiles";
 import Calendar from "./pages/Calendar";
@@ -13,8 +13,13 @@ import ResetPassword from "./pages/AuthPages/ResetPassword";
 import NotFound from "./pages/OtherPage/NotFound";
 import ProtectedRoute from "./routes/ProtectedRoute";
 import TitleLock from "./components/common/TitleLock";
+
 import LeaveSubmitPage from "./pages/LeaveSubmitPage";
 import LeaveStatusPage from "./pages/LeaveStatusPage";
+
+// ✅ เพิ่ม 2 อันนี้
+import RequireAdmin from "./components/auth/RequireAdmin";
+import LeaveApprovePage from "./pages/LeaveApprovePage";
 
 export default function App() {
   return (
@@ -42,6 +47,16 @@ export default function App() {
             <Route path="leave/submit" element={<LeaveSubmitPage />} />
             <Route path="leave/request" element={<LeaveSubmitPage />} />
             <Route path="leave/status" element={<LeaveStatusPage />} />
+
+            {/* ✅ Admin only */}
+            <Route
+              path="leave/approve"
+              element={
+                <RequireAdmin>
+                  <LeaveApprovePage />
+                </RequireAdmin>
+              }
+            />
           </Route>
         </Route>
 
