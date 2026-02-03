@@ -21,7 +21,7 @@ type Profile = {
   active: boolean;
 };
 
-export default function UserInfoCard({ profile }: { profile: any }) {
+export default function UserInfoCard({ profile }: { profile: Profile }) {
   const { isOpen, openModal, closeModal } = useModal();
   const { showToast } = useToastCenter();
 

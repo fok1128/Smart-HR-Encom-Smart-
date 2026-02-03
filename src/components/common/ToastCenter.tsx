@@ -11,7 +11,10 @@ type ToastItem = {
 };
 
 type ToastContextType = {
-  showToast: (message: string, opts?: { title?: string; variant?: ToastVariant; durationMs?: number }) => void;
+  showToast: (
+    message: string,
+    opts?: { title?: string; variant?: ToastVariant; durationMs?: number }
+  ) => void;
 };
 
 const ToastCenterContext = createContext<ToastContextType | undefined>(undefined);
@@ -40,6 +43,7 @@ export function ToastCenterProvider({ children }: { children: React.ReactNode })
 
   const value = useMemo(() => ({ showToast }), [showToast]);
 
+  // ✅ ใช้จริงใน className แล้ว (ไม่ unused)
   const variantStyles = (v: ToastVariant) => {
     switch (v) {
       case "success":
@@ -59,44 +63,39 @@ export function ToastCenterProvider({ children }: { children: React.ReactNode })
 
       {/* Center overlay */}
       {toasts.length > 0 &&
-  createPortal(
-    <div className="fixed inset-0 z-[2147483647] flex items-center justify-center px-4">
-      {/* backdrop: เบลอทั้งหน้า รวม topbar */}
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-lg" />
+        createPortal(
+          <div className="fixed inset-0 z-[2147483647] flex items-center justify-center px-4">
+            {/* backdrop: เบลอทั้งหน้า รวม topbar */}
+            <div className="absolute inset-0 bg-black/45 backdrop-blur-lg" />
 
-      {/* toast */}
-      <div className="relative w-full max-w-md">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`w-full rounded-2xl border p-4 shadow-xl ${
-              t.variant === "danger"
-                ? "border-red-200 bg-red-50 text-red-900"
-                : "border-gray-200 bg-white text-gray-900"
-            }`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                {t.title && <div className="text-sm font-semibold">{t.title}</div>}
-                <div className="mt-1 text-sm whitespace-pre-wrap">{t.message}</div>
-              </div>
+            {/* toast */}
+            <div className="relative w-full max-w-md">
+              {toasts.map((t) => (
+                <div
+                  key={t.id}
+                  className={`w-full rounded-2xl border p-4 shadow-xl ${variantStyles(t.variant)}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      {t.title && <div className="text-sm font-semibold">{t.title}</div>}
+                      <div className="mt-1 whitespace-pre-wrap text-sm">{t.message}</div>
+                    </div>
 
-              <button
-                type="button"
-                onClick={() => remove(t.id)}
-                className="shrink-0 rounded-lg px-2 py-1 text-sm text-gray-600 hover:bg-black/5"
-                aria-label="Close"
-              >
-                ✕
-              </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(t.id)}
+                      className="shrink-0 rounded-lg px-2 py-1 text-sm text-gray-600 hover:bg-black/5"
+                      aria-label="Close"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
-      </div>
-    </div>,
-    document.body
-  )}
-
+          </div>,
+          document.body
+        )}
     </ToastCenterContext.Provider>
   );
 }
