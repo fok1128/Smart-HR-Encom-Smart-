@@ -29,7 +29,7 @@ const AppSidebar = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isAdmin = user?.role === "ADMIN";
+  const isAdmin = String(user?.role || "").toUpperCase() === "ADMIN";
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;
 
   // ✅ ไฮไลต์เมนูให้ติดแม้มี subpath

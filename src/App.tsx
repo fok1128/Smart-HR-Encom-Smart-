@@ -7,23 +7,20 @@ import Calendar from "./pages/Calendar";
 import Blank from "./pages/Blank";
 import FormElements from "./pages/Forms/FormElements";
 import BasicTables from "./pages/Tables/BasicTables";
-
 import SignIn from "./pages/AuthPages/SignIn";
 import ResetPassword from "./pages/AuthPages/ResetPassword";
 import NotFound from "./pages/OtherPage/NotFound";
 import ProtectedRoute from "./routes/ProtectedRoute";
 import TitleLock from "./components/common/TitleLock";
-
 import LeaveSubmitPage from "./pages/LeaveSubmitPage";
 import LeaveStatusPage from "./pages/LeaveStatusPage";
-
-// ✅ เพิ่ม 2 อันนี้
 import RequireAdmin from "./components/auth/RequireAdmin";
 import LeaveApprovePage from "./pages/LeaveApprovePage";
+import { ToastCenterProvider } from "./components/common/ToastCenter";
 
 export default function App() {
   return (
-    <>
+    <ToastCenterProvider>
       <ScrollToTop />
       <TitleLock />
 
@@ -63,6 +60,6 @@ export default function App() {
         {/* 404 */}
         <Route path="*" element={<NotFound />} />
       </Routes>
-    </>
+      </ToastCenterProvider>
   );
 }

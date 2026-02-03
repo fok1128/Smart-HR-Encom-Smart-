@@ -1,16 +1,79 @@
+import { useEffect, useState } from "react";
+import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { db } from "../../firebase";
+
 import { useModal } from "../../hooks/useModal";
 import { Modal } from "../ui/modal";
 import Button from "../ui/button/Button";
 import Input from "../form/input/InputField";
 import Label from "../form/Label";
+import { useToastCenter } from "../common/ToastCenter";
 
-export default function UserInfoCard() {
+type Profile = {
+  email: string;
+  employeeNo: string;
+  role: string;
+  fname: string;
+  lname: string;
+  position: string;
+  departmentId: string;
+  phone: string;
+  active: boolean;
+};
+
+export default function UserInfoCard({ profile }: { profile: any }) {
   const { isOpen, openModal, closeModal } = useModal();
-  const handleSave = () => {
-    // Handle save logic here
-    console.log("Saving changes...");
-    closeModal();
+  const { showToast } = useToastCenter();
+
+  const [fname, setFname] = useState(profile.fname);
+  const [lname, setLname] = useState(profile.lname);
+  const [phone, setPhone] = useState(profile.phone);
+  const [position, setPosition] = useState(profile.position);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setFname(profile.fname);
+    setLname(profile.lname);
+    setPhone(profile.phone);
+    setPosition(profile.position);
+  }, [profile.fname, profile.lname, profile.phone, profile.position]);
+
+  const handleOpen = () => {
+    setFname(profile.fname);
+    setLname(profile.lname);
+    setPhone(profile.phone);
+    setPosition(profile.position);
+    openModal();
   };
+
+  const handleSave = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    if (!profile.employeeNo || profile.employeeNo === "-") {
+      showToast("ไม่พบ employeeNo ในระบบ", { title: "Error", variant: "danger" });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "employees", profile.employeeNo), {
+        fname: fname.trim(),
+        lname: lname.trim(),
+        phone: phone.trim(),
+        position: position.trim(),
+        updatedAt: serverTimestamp(),
+      });
+
+      showToast("บันทึกข้อมูลแล้ว", { title: "Success", variant: "success" });
+      window.dispatchEvent(new Event("profile-updated"));
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      showToast("บันทึกไม่สำเร็จ", { title: "Error", variant: "danger" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="p-5 border border-gray-200 rounded-2xl dark:border-gray-800 lg:p-6">
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
@@ -21,64 +84,37 @@ export default function UserInfoCard() {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-7 2xl:gap-x-32">
             <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                First Name
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                Musharof
-              </p>
+              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">First Name</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-white/90">{profile.fname}</p>
             </div>
 
             <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Last Name
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                Chowdhury
-              </p>
+              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">Last Name</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-white/90">{profile.lname}</p>
             </div>
 
             <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Email address
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                randomuser@pimjo.com
-              </p>
+              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">Email address</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-white/90">{profile.email}</p>
             </div>
 
             <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Phone
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                +09 363 398 46
-              </p>
+              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">Phone</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-white/90">{profile.phone}</p>
             </div>
 
             <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Bio
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                Team Manager
-              </p>
+              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">Bio / Position</p>
+              <p className="text-sm font-medium text-gray-800 dark:text-white/90">{profile.position}</p>
             </div>
           </div>
         </div>
 
         <button
-          onClick={openModal}
+          onClick={handleOpen}
           className="flex w-full items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] dark:hover:text-gray-200 lg:inline-flex lg:w-auto"
         >
-          <svg
-            className="fill-current"
-            width="18"
-            height="18"
-            viewBox="0 0 18 18"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
+          <svg className="fill-current" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path
               fillRule="evenodd"
               clipRule="evenodd"
@@ -100,42 +136,10 @@ export default function UserInfoCard() {
               Update your details to keep your profile up-to-date.
             </p>
           </div>
+
           <form className="flex flex-col">
             <div className="custom-scrollbar h-[450px] overflow-y-auto px-2 pb-3">
-              <div>
-                <h5 className="mb-5 text-lg font-medium text-gray-800 dark:text-white/90 lg:mb-6">
-                  Social Links
-                </h5>
-
-                <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
-                  <div>
-                    <Label>Facebook</Label>
-                    <Input
-                      type="text"
-                      value="https://www.facebook.com/PimjoHQ"
-                    />
-                  </div>
-
-                  <div>
-                    <Label>X.com</Label>
-                    <Input type="text" value="https://x.com/PimjoHQ" />
-                  </div>
-
-                  <div>
-                    <Label>Linkedin</Label>
-                    <Input
-                      type="text"
-                      value="https://www.linkedin.com/company/pimjo"
-                    />
-                  </div>
-
-                  <div>
-                    <Label>Instagram</Label>
-                    <Input type="text" value="https://instagram.com/PimjoHQ" />
-                  </div>
-                </div>
-              </div>
-              <div className="mt-7">
+              <div className="mt-2">
                 <h5 className="mb-5 text-lg font-medium text-gray-800 dark:text-white/90 lg:mb-6">
                   Personal Information
                 </h5>
@@ -143,37 +147,38 @@ export default function UserInfoCard() {
                 <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
                   <div className="col-span-2 lg:col-span-1">
                     <Label>First Name</Label>
-                    <Input type="text" value="Musharof" />
+                    <Input type="text" value={fname} onChange={(e: any) => setFname(e.target.value)} />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
                     <Label>Last Name</Label>
-                    <Input type="text" value="Chowdhury" />
+                    <Input type="text" value={lname} onChange={(e: any) => setLname(e.target.value)} />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
                     <Label>Email Address</Label>
-                    <Input type="text" value="randomuser@pimjo.com" />
+                    <Input type="text" value={profile.email} readOnly />
                   </div>
 
                   <div className="col-span-2 lg:col-span-1">
                     <Label>Phone</Label>
-                    <Input type="text" value="+09 363 398 46" />
+                    <Input type="text" value={phone} onChange={(e: any) => setPhone(e.target.value)} />
                   </div>
 
                   <div className="col-span-2">
-                    <Label>Bio</Label>
-                    <Input type="text" value="Team Manager" />
+                    <Label>Bio / Position</Label>
+                    <Input type="text" value={position} onChange={(e: any) => setPosition(e.target.value)} />
                   </div>
                 </div>
               </div>
             </div>
+
             <div className="flex items-center gap-3 px-2 mt-6 lg:justify-end">
-              <Button size="sm" variant="outline" onClick={closeModal}>
+              <Button size="sm" variant="outline" onClick={closeModal} type="button">
                 Close
               </Button>
-              <Button size="sm" onClick={handleSave}>
-                Save Changes
+              <Button size="sm" onClick={handleSave} type="button" disabled={saving}>
+                {saving ? "Saving..." : "Save Changes"}
               </Button>
             </div>
           </form>
