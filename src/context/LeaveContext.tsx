@@ -160,11 +160,15 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       },
       (err: any) => {
         console.error("LeaveContext onSnapshot error:", err);
+
         const msg =
           err?.code === "permission-denied"
             ? "ไม่มีสิทธิ์อ่านข้อมูลการลา (permission denied)"
             : err?.message || "โหลดข้อมูลการลาไม่สำเร็จ";
-        // ✅ ถ้าเธอมี toast ก็เอา msg ไปโชว์ได้
+
+        // ✅ กัน TS6133: ใช้ msg จริง (ถ้ามี toast ก็เปลี่ยนเป็น toast(msg) ได้)
+        console.warn(msg);
+
         setRequests([]);
         setLoading(false);
       }

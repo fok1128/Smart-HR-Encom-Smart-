@@ -30,7 +30,6 @@ const AppSidebar = () => {
   const location = useLocation();
 
   const role = String(user?.role || "").toUpperCase();
-  const isAdmin = role === "ADMIN";
   const canApprove = ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(role);
 
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;

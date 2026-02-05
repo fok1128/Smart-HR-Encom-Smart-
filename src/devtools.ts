@@ -40,15 +40,16 @@ export function installNetworkSpy() {
   (window as any).__NET_SPY_INSTALLED__ = true;
 
   // ---- spy fetch ----
-  const origFetch = window.fetch.bind(window);
-  window.fetch = async (...args: any[]) => {
-    const url = args?.[0];
+  const origFetch: typeof window.fetch = window.fetch.bind(window);
+
+  window.fetch = (async (...args: Parameters<typeof fetch>) => {
+    const url = args?.[0] as any;
     if (isStorageUrl(url)) {
       console.warn("[NET-SPY][fetch] storage url =", url);
       console.trace("[NET-SPY][fetch] stack");
     }
     return origFetch(...args);
-  };
+  }) as typeof window.fetch;
 
   // ---- spy XHR ----
   const OrigXHR = window.XMLHttpRequest;
@@ -56,28 +57,39 @@ export function installNetworkSpy() {
   class SpyXHR extends OrigXHR {
     private __url: any;
 
-    open(method: string, url: string, ...rest: any[]) {
+    // ให้ signature ตรงกับ XHR จริง (ไม่ใช้ ...rest แล้ว)
+    open(
+      method: string,
+      url: string | URL,
+      async?: boolean,
+      username?: string | null,
+      password?: string | null
+    ) {
       this.__url = url;
-      if (isStorageUrl(url)) {
+      if (isStorageUrl(String(url))) {
         console.warn("[NET-SPY][xhr.open] method =", method, "url =", url);
         console.trace("[NET-SPY][xhr.open] stack");
       }
-      // @ts-ignore
-      return super.open(method, url, ...rest);
+
+      return super.open(
+        method,
+        url as any,
+        async ?? true,
+        username ?? undefined,
+        password ?? undefined
+      );
     }
 
     send(body?: any) {
-      if (isStorageUrl(this.__url)) {
+      if (isStorageUrl(String(this.__url))) {
         console.warn("[NET-SPY][xhr.send] url =", this.__url);
         console.trace("[NET-SPY][xhr.send] stack");
       }
-      // @ts-ignore
       return super.send(body);
     }
   }
 
-  // @ts-ignore
-  window.XMLHttpRequest = SpyXHR;
+  window.XMLHttpRequest = SpyXHR as any;
 
   console.log("✅ NET-SPY installed (fetch + XHR)");
 }
