@@ -15,7 +15,7 @@ type LeaveSubType =
   | "ลาราชการทหาร"
   | "อื่นๆ";
 
-type LeaveMode = "allDay" | "time";
+
 type Option<T extends string> = { value: T; label: string };
 
 function ChevronDownIcon({ className = "" }: { className?: string }) {

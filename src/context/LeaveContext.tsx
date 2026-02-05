@@ -213,7 +213,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       (err: any) => {
         // ถ้าเจอ error จะเห็นใน console ชัด ๆ
         console.error("LeaveContext onSnapshot error:", err);
-        const msg =
           err?.code === "permission-denied"
             ? "ไม่มีสิทธิ์อ่านข้อมูลการลา (permission denied)"
             : err?.message || "โหลดข้อมูลการลาไม่สำเร็จ";
