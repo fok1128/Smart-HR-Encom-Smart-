@@ -30,7 +30,6 @@ const AppSidebar = () => {
   const location = useLocation();
 
   const role = String(user?.role || "").toUpperCase();
-  const isAdmin = role === "ADMIN";
   const canApprove = ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(role);
 
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;
@@ -58,11 +57,18 @@ const AppSidebar = () => {
 
     // ✅ ผู้อนุมัติ: ADMIN / HR / MANAGER / EXECUTIVE_MANAGER
     if (canApprove) {
-      base.push({
-        icon: <PieChartIcon />,
-        name: "อนุมัติใบลา",
-        path: "/leave/approve",
-      });
+      base.push(
+        {
+          icon: <PieChartIcon />,
+          name: "อนุมัติใบลา",
+          path: "/leave/approve",
+        },
+        {
+          icon: <ListIcon />,
+          name: "ประวัติการอนุมัติ",
+          path: "/leave/approve-history",
+        }
+      );
     }
 
     return base;

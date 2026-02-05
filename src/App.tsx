@@ -15,6 +15,7 @@ import TitleLock from "./components/common/TitleLock";
 import LeaveSubmitPage from "./pages/LeaveSubmitPage";
 import LeaveStatusPage from "./pages/LeaveStatusPage";
 import LeaveApprovePage from "./pages/LeaveApprovePage";
+import LeaveApproveHistoryPage from "./pages/LeaveApproveHistoryPage"; // ✅ เพิ่ม
 import RequireRole from "./routes/RequireRole";
 import { ToastCenterProvider } from "./components/common/ToastCenter";
 
@@ -48,10 +49,16 @@ export default function App() {
             {/* ✅ Approver roles (ADMIN/HR/MANAGER/EXECUTIVE_MANAGER) */}
             <Route
               element={
-                <RequireRole allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]} />
+                <RequireRole
+                  allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]}
+                />
               }
             >
               <Route path="leave/approve" element={<LeaveApprovePage />} />
+              <Route
+                path="leave/approve-history"
+                element={<LeaveApproveHistoryPage />}
+              />
             </Route>
           </Route>
         </Route>

@@ -1,609 +1,549 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+console.log("✅ REAL LeaveApprovePage loaded");
+import { useEffect, useMemo, useState } from "react";
+import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";
-import { createLeaveRequestWithFiles } from "../services/leaveRequests";
 import { db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
-// ====== Types ======
-type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
-type LeaveSubType =
-  | "ลากิจปกติ"
-  | "ลากิจฉุกเฉิน"
-  | "ลาป่วยทั่วไป"
-  | "ลาหมอนัด"
-  | "ลาแบบมีใบรับรองแพทย์"
-  | "ลาพักร้อน"
-  | "ลาคลอด"
-  | "ลาราชการทหาร"
-  | "อื่นๆ";
+// ✅ ใช้ Supabase signed-url ผ่าน backend (มาจาก leaveRequests.ts ของเธอ)
+import { getAttachmentKey, getSignedUrlForKey } from "../services/leaveRequests";
 
-type LeaveMode = "allDay" | "time";
-type Option<T extends string> = { value: T; label: string };
+function fmtDate(ts: any) {
+  const d =
+    ts?.toDate?.() ? ts.toDate() :
+    ts instanceof Date ? ts :
+    ts ? new Date(ts) : null;
 
-function pickPhoneFromAny(...vals: any[]) {
-  for (const v of vals) {
-    const s = String(v ?? "").trim();
-    if (s) return s;
-  }
-  return "";
+  if (!d) return "-";
+  return d.toLocaleString("th-TH", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function ChevronDownIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none">
-      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
+const APPROVER_ROLES = ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"];
 
-function XIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** ✅ Dropdown custom */
-function SelectBox<T extends string>({
-  label,
-  placeholder,
-  value,
-  options,
-  onChange,
-  disabled,
-  clearable = true,
-}: {
-  label: string;
-  placeholder: string;
-  value: T | "";
-  options: Option<T>[];
-  onChange: (v: T | "") => void;
-  disabled?: boolean;
-  clearable?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  const selected = useMemo(() => options.find((o) => o.value === value) ?? null, [options, value]);
-
-  useEffect(() => {
-    const onClickOutside = (e: MouseEvent) => {
-      if (!wrapRef.current) return;
-      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
-
-  return (
-    <div>
-      <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">{label}</div>
-
-      <div ref={wrapRef} className="relative mt-2">
-        <div
-          className={[
-            "w-full rounded-md border bg-white px-3 py-2 text-left",
-            "flex items-center justify-between gap-3",
-            "transition",
-            "dark:bg-gray-900",
-            disabled
-              ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-500"
-              : "border-gray-300 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-700 cursor-pointer",
-            open && !disabled ? "border-teal-500 ring-2 ring-teal-500/20" : "",
-          ].join(" ")}
-          role="button"
-          tabIndex={0}
-          onClick={() => !disabled && setOpen((v) => !v)}
-          onKeyDown={(e) => {
-            if (disabled) return;
-            if (e.key === "Enter" || e.key === " ") setOpen((v) => !v);
-          }}
-        >
-          <span className={selected ? "text-gray-900 dark:text-gray-100" : "text-gray-400"}>
-            {selected?.label ?? placeholder}
-          </span>
-
-          <span className="flex items-center gap-2 text-gray-500">
-            {clearable && value && !disabled && (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChange("");
-                  setOpen(false);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.stopPropagation();
-                    onChange("");
-                    setOpen(false);
-                  }
-                }}
-                className="grid h-6 w-6 place-items-center rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                aria-label="Clear"
-                title="ล้าง"
-              >
-                <XIcon />
-              </span>
-            )}
-            <ChevronDownIcon className={open ? "rotate-180 transition" : "transition"} />
-          </span>
-        </div>
-
-        {open && !disabled && (
-          <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg dark:border-gray-800 dark:bg-gray-900">
-            <div className="max-h-64 overflow-auto">
-              {options.map((opt) => {
-                const isSelected = opt.value === value;
-                return (
-                  <div
-                    key={opt.value}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      onChange(opt.value);
-                      setOpen(false);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        onChange(opt.value);
-                        setOpen(false);
-                      }
-                    }}
-                    className={[
-                      "w-full px-3 py-2 text-left text-sm",
-                      "transition cursor-pointer",
-                      isSelected
-                        ? "bg-teal-50 text-teal-700 font-semibold dark:bg-teal-500/10 dark:text-teal-200"
-                        : "text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-gray-800/60",
-                    ].join(" ")}
-                  >
-                    {opt.label}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-const subTypeByCategory: Record<LeaveCategory, LeaveSubType[]> = {
-  ลากิจ: ["ลากิจปกติ", "ลากิจฉุกเฉิน"],
-  ลาป่วย: ["ลาป่วยทั่วไป", "ลาหมอนัด", "ลาแบบมีใบรับรองแพทย์"],
-  ลาพักร้อน: ["ลาพักร้อน"],
-  ลากรณีพิเศษ: ["ลาคลอด", "ลาราชการทหาร", "อื่นๆ"],
+type AttachItem = {
+  name: string;
+  size: number;
+  url?: string;          // legacy/signed url
+  storagePath?: string;  // supabase key (บางระบบใช้ชื่อนี้)
+  key?: string;          // supabase key (บางระบบใช้ชื่อนี้)
+  contentType?: string;
 };
 
-function todayISODate() {
-  const d = new Date();
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+function isFirebaseStorageUrl(url: string) {
+  return /https:\/\/firebasestorage\.googleapis\.com\/v0\/b\//i.test(url);
 }
 
-function toISODateTimeLocal(d: Date) {
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+function openInNewTab(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function isEndBeforeStart(start: string, end: string) {
-  if (!start || !end) return false;
-  return new Date(end).getTime() < new Date(start).getTime();
-}
+export default function LeaveApprovePage() {
+  const { requests, loading, updateStatus, deleteRequest, deleteRequestsByUid } = useLeave();
 
-export default function LeaveSubmitPage() {
   const { user } = useAuth();
+  const role = (user?.role || "").toUpperCase();
+  const isAdmin = role === "ADMIN";
+  const canApprove = APPROVER_ROLES.includes(role);
 
-  const [category, setCategory] = useState<LeaveCategory | "">("");
-  const [subType, setSubType] = useState<LeaveSubType | "">("");
+  const [savingId, setSavingId] = useState<string | null>(null);
 
-  const [mode, setMode] = useState<"allDay" | "time">("allDay");
+  // uid -> employee data
+  const [empMap, setEmpMap] = useState<Record<string, { name: string; phone: string; employeeNo: string }>>({});
 
-  const [startDate, setStartDate] = useState<string>(todayISODate());
-  const [endDate, setEndDate] = useState<string>(todayISODate());
+  // reject modal
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectId, setRejectId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
-  const [startDT, setStartDT] = useState<string>(() => toISODateTimeLocal(new Date()));
-  const [endDT, setEndDT] = useState<string>(() => toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+  // preview modal
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewName, setPreviewName] = useState<string>("");
+  const [previewUrl, setPreviewUrl] = useState<string>("");
+  const [previewLoading, setPreviewLoading] = useState(false);
 
-  const [reason, setReason] = useState<string>("");
-  const [files, setFiles] = useState<File[]>([]);
+  const sorted = useMemo(() => requests, [requests]);
+  const busy = (key: string) => savingId === key;
 
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [successMsg, setSuccessMsg] = useState<string>("");
-
-  const [submitting, setSubmitting] = useState(false);
-  const [uploadPct, setUploadPct] = useState<number>(0);
-
-  // ✅ ดึง phone / employeeNo ของตัวเอง แล้วแปะลง leave_request ตอนส่ง
-  const [myPhone, setMyPhone] = useState<string>("");
-  const [myEmployeeNo, setMyEmployeeNo] = useState<string>("");
-
+  // load employees info
   useEffect(() => {
     let alive = true;
 
-    async function loadMe() {
-      if (!user?.uid) return;
+    async function load() {
+      const uids = Array.from(new Set((sorted || []).map((r: any) => r.uid).filter(Boolean)));
+      if (uids.length === 0) return;
 
-      try {
-        const uSnap = await getDoc(doc(db, "users", user.uid));
-        const udata: any = uSnap.exists() ? uSnap.data() : null;
+      const pairs = await Promise.all(
+        uids.map(async (uid) => {
+          try {
+            const userSnap = await getDoc(doc(db, "users", uid));
+            const udata: any = userSnap.exists() ? userSnap.data() : null;
 
-        const employeeNo = String(udata?.employeeNo ?? "").trim();
-        const uPhone = pickPhoneFromAny(udata?.phone, udata?.tel, udata?.mobile);
+            const employeeNo = String(udata?.employeeNo ?? "").trim();
+            const userPhone = String(udata?.phone ?? udata?.tel ?? udata?.mobile ?? "").trim() || "-";
 
-        let ePhone = "";
-        if (employeeNo) {
-          const eSnap = await getDoc(doc(db, "employees", employeeNo));
-          const edata: any = eSnap.exists() ? eSnap.data() : null;
-          ePhone = pickPhoneFromAny(
-            edata?.phone,
-            edata?.tel,
-            edata?.mobile,
-            Array.isArray(edata?.phones) ? edata.phones[0] : ""
-          );
-        }
+            if (!employeeNo) {
+              return [uid, { name: "-", phone: userPhone, employeeNo: "" }] as const;
+            }
 
-        if (!alive) return;
-        setMyEmployeeNo(employeeNo);
-        setMyPhone(ePhone || uPhone || "");
-      } catch {
-        // เงียบไว้ก่อน ไม่ให้บล็อกการส่งใบลา
-      }
+            const empSnap = await getDoc(doc(db, "employees", employeeNo));
+            const edata: any = empSnap.exists() ? empSnap.data() : null;
+
+            const name = edata ? `${edata.fname || ""} ${edata.lname || ""}`.trim() : "-";
+            const phone =
+              String(edata?.phone ?? edata?.tel ?? edata?.mobile ?? "").trim() || userPhone || "-";
+
+            return [uid, { name: name || "-", phone, employeeNo }] as const;
+          } catch {
+            return [uid, { name: "-", phone: "-", employeeNo: "" }] as const;
+          }
+        })
+      );
+
+      if (!alive) return;
+      setEmpMap(Object.fromEntries(pairs));
     }
 
-    loadMe();
+    load();
     return () => { alive = false; };
-  }, [user?.uid]);
+  }, [sorted]);
 
+  // lock scroll + ESC close
   useEffect(() => {
-    setSubType("");
-  }, [category]);
+    const anyOpen = rejectOpen || previewOpen;
+    if (!anyOpen) return;
 
-  useEffect(() => {
-    if (mode !== "allDay") return;
-    if (!startDate || !endDate) return;
-    if (new Date(endDate).getTime() < new Date(startDate).getTime()) setEndDate(startDate);
-  }, [mode, startDate, endDate]);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
-  const timedInvalid = mode === "time" && isEndBeforeStart(startDT, endDT);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setRejectOpen(false);
+        setRejectId(null);
+        setRejectReason("");
 
-  const categoryOptions: Option<LeaveCategory>[] = useMemo(
-    () => [
-      { value: "ลากิจ", label: "ลากิจ" },
-      { value: "ลาป่วย", label: "ลาป่วย" },
-      { value: "ลาพักร้อน", label: "ลาพักร้อน" },
-      { value: "ลากรณีพิเศษ", label: "ลากรณีพิเศษ" },
-    ],
-    []
-  );
+        setPreviewOpen(false);
+        setPreviewName("");
+        setPreviewUrl("");
+        setPreviewLoading(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
 
-  const subTypeOptions: Option<LeaveSubType>[] = useMemo(() => {
-    if (!category) return [];
-    return subTypeByCategory[category].map((s) => ({ value: s, label: s }));
-  }, [category]);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [rejectOpen, previewOpen]);
 
-  const resetAll = () => {
-    setCategory("");
-    setSubType("");
-    setMode("allDay");
-    setStartDate(todayISODate());
-    setEndDate(todayISODate());
-    setStartDT(toISODateTimeLocal(new Date()));
-    setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
-    setReason("");
-    setFiles([]);
-    setErrors({});
-    setSuccessMsg("");
-    setSubmitting(false);
-    setUploadPct(0);
+  const onApprove = async (id: string) => {
+    try {
+      setSavingId(id);
+      await updateStatus(id, "อนุมัติ");
+    } finally {
+      setSavingId(null);
+    }
   };
 
-  const validate = () => {
-    const e: Record<string, string> = {};
-    if (!category) e.category = "กรุณาเลือกประเภทการลา";
-    if (!subType) e.subType = "กรุณาเลือกประเภทย่อย";
-
-    if (mode === "allDay") {
-      if (!startDate) e.startDate = "กรุณาเลือกวันเริ่ม";
-      if (!endDate) e.endDate = "กรุณาเลือกวันสิ้นสุด";
-    } else {
-      if (!startDT) e.startDT = "กรุณาเลือกวัน-เวลาเริ่ม";
-      if (!endDT) e.endDT = "กรุณาเลือกวัน-เวลาสิ้นสุด";
-      if (startDT && endDT && isEndBeforeStart(startDT, endDT)) e.endDT = "วัน-เวลาสิ้นสุดต้องไม่น้อยกว่าวัน-เวลาเริ่ม";
-    }
-
-    if (!reason.trim()) e.reason = "กรุณากรอกเหตุผล/รายละเอียด";
-
-    const MAX_FILES = 5;
-    const MAX_MB = 25;
-    if (files.length > MAX_FILES) e.files = `แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`;
-    if (files.some((f) => f.size > MAX_MB * 1024 * 1024)) e.files = `ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`;
-
-    const okTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
-    if (files.some((f) => f.type && !okTypes.has(f.type))) {
-      e.files = "อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)";
-    }
-
-    setErrors(e);
-    return Object.keys(e).length === 0;
+  const onRejectClick = (id: string) => {
+    setRejectId(id);
+    setRejectReason("");
+    setRejectOpen(true);
   };
 
-  const handleSubmit = async (ev: FormEvent<HTMLFormElement>) => {
-    ev.preventDefault();
-    setSuccessMsg("");
-
-    if (!user?.uid) {
-      setSuccessMsg("ส่งไม่สำเร็จ: ยังไม่เข้าสู่ระบบ");
-      return;
-    }
-
-    if (!validate()) return;
-
-    setSubmitting(true);
-    setUploadPct(0);
+  const confirmReject = async () => {
+    if (!rejectId) return;
+    const reason = rejectReason.trim();
+    if (!reason) return;
 
     try {
-      const payload = {
-        uid: user.uid,
-        email: user.email ?? null,
-        category: category as any,
-        subType: subType as any,
-        mode,
-        startAt: mode === "allDay" ? startDate : startDT,
-        endAt: mode === "allDay" ? endDate : endDT,
-        reason,
-
-        // ✅ แปะข้อมูลไว้ใน leave_requests เลย (Admin อ่านง่ายสุด)
-        phone: myPhone || null,
-        employeeNo: myEmployeeNo || null,
-      };
-
-      const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
-
-      setErrors({});
-      setSuccessMsg(`ส่งคำร้องสำเร็จ ✅ เลขคำร้อง: ${created.requestNo ?? created.id ?? "-"}`);
-      setFiles([]);
-      setUploadPct(0);
-    } catch (e: any) {
-      console.error(e);
-      setSuccessMsg(`ส่งไม่สำเร็จ: ${e?.message || e}`);
+      setSavingId(rejectId);
+      await updateStatus(rejectId, "ไม่อนุมัติ", reason);
+      setRejectOpen(false);
+      setRejectId(null);
+      setRejectReason("");
     } finally {
-      setSubmitting(false);
+      setSavingId(null);
     }
   };
 
+  const onDeleteOne = async (id: string) => {
+    const ok = confirm("ลบคำร้องนี้ใช่ไหม?\n(การกระทำนี้ย้อนกลับไม่ได้)");
+    if (!ok) return;
+
+    try {
+      setSavingId(id);
+      await deleteRequest(id);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const onDeleteHistoryByUser = async (uid: string, email?: string) => {
+    const ok = confirm(`ลบประวัติการลาทั้งหมดของ ${email ?? uid} ใช่ไหม?\n(การกระทำนี้ย้อนกลับไม่ได้)`);
+    if (!ok) return;
+
+    try {
+      setSavingId(uid);
+      const count = await deleteRequestsByUid(uid);
+      alert(`ลบประวัติสำเร็จ ${count} รายการ`);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const isImage = (url: string) => /\.(png|jpg|jpeg|webp|gif)$/i.test(url);
+  const isPdf = (url: string) => /\.pdf(\?|$)/i.test(url);
+
+  // ✅ เปิด preview: ไม่ใช้ firebase/storage / ไม่ fetch ไฟล์เอง
+  const openPreview = async (att: AttachItem) => {
+    try {
+      setPreviewLoading(true);
+
+      // 1) ถ้ามี url อยู่แล้ว ใช้เลย
+      let url = String(att?.url || "").trim();
+
+      // 2) ถ้าไม่มี url → ขอ signed url จาก backend ด้วย key/storagePath
+      if (!url) {
+        const key = getAttachmentKey(att); // ใน leaveRequests.ts ของเธอคืน string | null
+        if (!key) {
+          alert("เปิดไฟล์ไม่ได้: ไม่มี url และไม่มี key/storagePath (ข้อมูลเก่า/แนบไม่ครบ)");
+          return;
+        }
+        url = await getSignedUrlForKey(key);
+      }
+
+      setPreviewName(att?.name || "attachment");
+      setPreviewUrl(url);
+      setPreviewOpen(true);
+    } catch (e: any) {
+      console.error(e);
+      alert(`เปิดไฟล์ไม่ได้: ${e?.message || e}`);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  if (loading) return <div className="p-6">กำลังโหลด...</div>;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ยื่นใบลา</h1>
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            <span className="text-teal-600">หน้าหลัก</span> <span className="mx-2">›</span> ยื่นใบลา
+    <div className="p-6">
+      <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">อนุมัติการลา</h1>
+
+      {sorted.length === 0 ? (
+        <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex items-center justify-between">
+            <div className="text-base font-semibold text-gray-900 dark:text-gray-100">รายการคำร้องทั้งหมด</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">0 รายการ</div>
+          </div>
+
+          <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
+            <div className="grid grid-cols-12 bg-gray-50 px-4 py-3 text-xs font-semibold text-gray-600 dark:bg-gray-950 dark:text-gray-300">
+              <div className="col-span-3">ผู้ยื่น</div>
+              <div className="col-span-3">เลขคำร้อง</div>
+              <div className="col-span-3">ช่วงเวลา</div>
+              <div className="col-span-3">สถานะ</div>
+            </div>
+
+            <div className="px-4 py-5 text-sm text-gray-500 dark:text-gray-400">
+              ยังไม่มีคำร้อง
+            </div>
           </div>
         </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {sorted.map((r: any) => {
+            const rowBusy = busy(r.id) || busy(r.uid);
 
-        <button
-          type="button"
-          onClick={resetAll}
-          disabled={submitting}
-          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-        >
-          ล้างฟอร์ม
-        </button>
-      </div>
+            const emp = empMap[r.uid];
+            const empName = emp?.name || r.createdByEmail || r.uid;
+            const empPhone = emp?.phone || "-";
+            const reqNo = r.requestNo || "-";
 
-      {successMsg && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200">
-          {successMsg}
+            const submittedAt = fmtDate(r.submittedAt || r.createdAt || r.updatedAt);
+            const decidedAt = fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt);
+
+            const isDone = r.status === "อนุมัติ" || r.status === "ไม่อนุมัติ";
+            const isPending = r.status === "รอดำเนินการ";
+
+            const statusClass =
+              r.status === "อนุมัติ"
+                ? "text-emerald-600 dark:text-emerald-400"
+                : r.status === "ไม่อนุมัติ"
+                ? "text-red-600 dark:text-red-400"
+                : "text-gray-500 dark:text-gray-400";
+
+            const note = String(r.reason || "").trim();
+            const attachments: AttachItem[] = Array.isArray(r.attachments) ? r.attachments : [];
+
+            return (
+              <div
+                key={r.id}
+                className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      {empName}
+                    </div>
+
+                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      อีเมล: {r.createdByEmail ?? "-"}
+                    </div>
+
+                    <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
+                      เลขคำร้อง: <span className="font-semibold">{reqNo}</span>
+                      <span className="mx-2 text-gray-300 dark:text-gray-700">|</span>
+                      เบอร์โทร: <span className="font-semibold">{empPhone}</span>
+                    </div>
+
+                    <div className="mt-1 text-xs text-gray-700 dark:text-gray-200">
+                      วันที่ยื่นคำร้อง: <span className="font-semibold">{submittedAt}</span>
+                    </div>
+
+                    <div className="mt-1 text-xs text-gray-700 dark:text-gray-200">
+                      วันที่อนุมัติ/ไม่อนุมัติ: <span className="font-semibold">{decidedAt}</span>
+                    </div>
+
+                    <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
+                      หมายเหตุ:{" "}
+                      {note ? (
+                        <span className="font-semibold">{note}</span>
+                      ) : (
+                        <span className="text-gray-400 dark:text-gray-500">-</span>
+                      )}
+                    </div>
+
+                    <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
+                      ไฟล์แนบ:{" "}
+                      {attachments.length === 0 ? (
+                        <span className="text-gray-400 dark:text-gray-500">-</span>
+                      ) : (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {attachments.map((a, idx) => (
+                            <button
+                              key={`${a.name}-${idx}`}
+                              type="button"
+                              disabled={previewLoading}
+                              onClick={() => openPreview(a)}
+                              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800"
+                              title={(a.url || a.storagePath || a.key) ? "กดเพื่อดูไฟล์" : "ยังไม่มี url/key"}
+                            >
+                              📎 {a.name || `ไฟล์แนบ ${idx + 1}`}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className={`mt-3 text-xs font-semibold ${statusClass}`}>
+                      สถานะ: {r.status}
+                      {r.status === "ไม่อนุมัติ" && r.rejectReason ? (
+                        <span className="ml-2 font-normal">• เหตุผล: {r.rejectReason}</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {canApprove && isPending && !isDone && (
+                      <>
+                        <button
+                          disabled={rowBusy}
+                          onClick={() => onApprove(r.id)}
+                          className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          อนุมัติ
+                        </button>
+
+                        <button
+                          disabled={rowBusy}
+                          onClick={() => onRejectClick(r.id)}
+                          className="rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          ไม่อนุมัติ
+                        </button>
+                      </>
+                    )}
+
+                    {isAdmin && (
+                      <>
+                        <button
+                          disabled={rowBusy}
+                          onClick={() => onDeleteOne(r.id)}
+                          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+                        >
+                          ลบคำร้องนี้
+                        </button>
+
+                        <button
+                          disabled={rowBusy}
+                          onClick={() => onDeleteHistoryByUser(r.uid, r.createdByEmail)}
+                          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+                        >
+                          ลบประวัติคนนี้
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {submitting && files.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
-          <div className="font-semibold">กำลังอัปโหลดไฟล์… {uploadPct}%</div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-            <div className="h-full bg-teal-600 transition-all" style={{ width: `${uploadPct}%` }} />
-          </div>
-        </div>
-      )}
+      {/* Reject Modal */}
+      {rejectOpen && (
+        <div className="fixed inset-0 z-[99999]">
+          <div
+            className="absolute inset-0 bg-black/35 backdrop-blur-md"
+            onClick={() => {
+              setRejectOpen(false);
+              setRejectId(null);
+              setRejectReason("");
+            }}
+          />
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-            <div>
-              <SelectBox<LeaveCategory>
-                label="เลือกประเภทการลา"
-                placeholder="ประเภทการลา"
-                value={category}
-                options={categoryOptions}
-                onChange={(v) => setCategory(v as LeaveCategory | "")}
-                disabled={submitting}
-              />
-              {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
-            </div>
+          <div className="relative z-[100000] flex min-h-screen items-center justify-center p-4">
+            <div className="w-[92%] max-w-lg rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                เหตุผลที่ “ไม่อนุมัติ”
+              </h3>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                กรุณากรอกเหตุผลก่อนกดยืนยัน
+              </p>
 
-            <div>
-              <SelectBox<LeaveSubType>
-                label="เลือกประเภทย่อย"
-                placeholder="ประเภทย่อย"
-                value={subType}
-                options={subTypeOptions}
-                onChange={(v) => setSubType(v as LeaveSubType | "")}
-                disabled={!category || submitting}
-              />
-              {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ช่วงเวลาการลา</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">เลือก “ทั้งวัน” หรือ “ระบุเวลา”</div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input type="radio" name="leaveMode" checked={mode === "allDay"} onChange={() => setMode("allDay")} disabled={submitting} />
-                ทั้งวัน
-              </label>
-
-              <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input type="radio" name="leaveMode" checked={mode === "time"} onChange={() => setMode("time")} disabled={submitting} />
-                ระบุเวลา
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {mode === "allDay" ? (
-              <>
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วันเริ่มลา</div>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-                  />
-                  {errors.startDate && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDate}</p>}
-                </div>
-
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วันสิ้นสุดลา</div>
-                  <input
-                    type="date"
-                    value={endDate}
-                    min={startDate || undefined}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-                  />
-                  {errors.endDate && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDate}</p>}
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วัน-เวลาเริ่มลา</div>
-                  <input
-                    type="datetime-local"
-                    value={startDT}
-                    onChange={(e) => setStartDT(e.target.value)}
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-                  />
-                  {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
-                </div>
-
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วัน-เวลาสิ้นสุดลา</div>
-                  <input
-                    type="datetime-local"
-                    value={endDT}
-                    onChange={(e) => setEndDT(e.target.value)}
-                    disabled={submitting}
-                    className={[
-                      "mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none dark:bg-gray-900 dark:border-gray-800",
-                      "focus:ring-2",
-                      timedInvalid ? "border-red-400 focus:border-red-500 focus:ring-red-500/20" : "border-gray-300 focus:border-teal-500 focus:ring-teal-500/20",
-                    ].join(" ")}
-                  />
-                  {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เหตุผล / รายละเอียด</div>
               <textarea
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                rows={6}
-                placeholder="พิมพ์เหตุผลการลา…"
-                disabled={submitting}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-              />
-              {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
-            </div>
-
-            <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">แนบไฟล์ (PDF/รูป)</div>
-              <input
-                type="file"
-                multiple
-                disabled={submitting}
-                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-                className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200 dark:text-gray-200 dark:file:bg-gray-800 dark:file:text-gray-200 dark:hover:file:bg-gray-700"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                rows={4}
+                className="mt-4 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-500/20 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+                placeholder="พิมพ์เหตุผลที่ไม่อนุมัติ..."
               />
 
-              {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRejectOpen(false);
+                    setRejectId(null);
+                    setRejectReason("");
+                  }}
+                  className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+                >
+                  ยกเลิก
+                </button>
 
-              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
-                <div className="font-semibold">ไฟล์ที่เลือก</div>
-                {files.length === 0 ? (
-                  <div className="mt-2 text-gray-500 dark:text-gray-400">ยังไม่ได้เลือกไฟล์</div>
-                ) : (
-                  <ul className="mt-2 list-disc space-y-1 pl-5">
-                    {files.map((f) => (
-                      <li key={`${f.name}-${f.size}`}>
-                        {f.name} <span className="text-gray-500">({Math.ceil(f.size / 1024)} KB)</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                * ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend (ปลอดภัยกว่า และไม่ต้องใช้ Firebase Storage)
+                <button
+                  type="button"
+                  disabled={!rejectReason.trim() || !rejectId}
+                  onClick={confirmReject}
+                  className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  ยืนยันไม่อนุมัติ
+                </button>
               </div>
             </div>
           </div>
         </div>
+      )}
 
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={resetAll}
-            disabled={submitting}
-            className="rounded-lg border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
-            ล้างฟอร์ม
-          </button>
+      {/* Preview Modal */}
+      {previewOpen && (
+        <div className="fixed inset-0 z-[99999]">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-md"
+            onClick={() => {
+              setPreviewOpen(false);
+              setPreviewName("");
+              setPreviewUrl("");
+            }}
+          />
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-teal-600 px-6 py-3 text-sm font-semibold text-white hover:bg-teal-700 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-60"
-          >
-            {submitting ? "กำลังส่ง..." : "ส่งคำร้อง"}
-          </button>
+          <div className="relative z-[100000] flex min-h-screen items-center justify-center p-4">
+            <div className="w-[96%] max-w-4xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl dark:border-gray-800 dark:bg-gray-900">
+              <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    ดูไฟล์แนบ: {previewName}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    * แสดงผลเพื่อดูเท่านั้น (UI ไม่มีปุ่มดาวน์โหลด)
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewOpen(false);
+                    setPreviewName("");
+                    setPreviewUrl("");
+                  }}
+                  className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-black/5 dark:text-gray-300 dark:hover:bg-white/10"
+                >
+                  ปิด ✕
+                </button>
+              </div>
+
+              <div className="h-[70vh] bg-gray-50 dark:bg-gray-950">
+                {!previewUrl ? (
+                  <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                    ไม่มีลิงก์ไฟล์สำหรับแสดงผล
+                  </div>
+                ) : isImage(previewUrl) ? (
+                  <div className="flex h-full items-center justify-center p-4">
+                    <img
+                      src={previewUrl}
+                      alt={previewName}
+                      draggable={false}
+                      onContextMenu={(e) => e.preventDefault()}
+                      className="max-h-full max-w-full rounded-xl border border-gray-200 object-contain dark:border-gray-800"
+                      onError={() => {
+                        if (isFirebaseStorageUrl(previewUrl)) openInNewTab(previewUrl);
+                      }}
+                    />
+                  </div>
+                ) : isPdf(previewUrl) ? (
+                  <iframe
+                    title={previewName}
+                    src={`${previewUrl}#toolbar=0&navpanes=0`}
+                    className="h-full w-full"
+                    sandbox="allow-same-origin allow-scripts"
+                  />
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300">
+                    <div>ไฟล์ชนิดนี้แสดงในหน้าเว็บไม่ได้</div>
+                    <button
+                      type="button"
+                      onClick={() => openInNewTab(previewUrl)}
+                      className="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white dark:bg-white dark:text-gray-900"
+                    >
+                      เปิดดูในแท็บใหม่
+                    </button>
+                  </div>
+                )}
+
+                {previewUrl ? (
+                  <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-800">
+                    <button
+                      type="button"
+                      onClick={() => openInNewTab(previewUrl)}
+                      className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800"
+                    >
+                      เปิดในแท็บใหม่
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </div>
-      </form>
+      )}
     </div>
   );
 }
