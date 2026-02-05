@@ -46,16 +46,19 @@ export type LeaveRequest = {
   requestNo: string;
   category: LeaveCategory;
   subType: LeaveSubType;
-  startAt: string; // "YYYY-MM-DD" หรือ "YYYY-MM-DDTHH:mm"
+  startAt: string;
   endAt: string;
   reason?: string;
-  attachments?: { name: string; size: number }[];
+
+  // ✅ รองรับไฟล์แบบมี url/storagePath
+  attachments?: { name: string; size: number; url?: string; storagePath?: string }[];
 
   status: LeaveStatus;
   createdAt?: any;
   updatedAt?: any;
 
-  rejectReason?: string; // ✅ เหตุผลไม่อนุมัติ
+  rejectReason?: string;
+  decidedAt?: any;
 };
 
 type LeavePayload = {
@@ -64,7 +67,9 @@ type LeavePayload = {
   startAt: string;
   endAt: string;
   reason: string;
-  attachments?: { name: string; size: number }[];
+
+  // ✅ แก้ให้ตรงกับ LeaveRequest.attachments
+  attachments?: { name: string; size: number; url?: string; storagePath?: string }[];
 };
 
 type LeaveCtx = {
@@ -81,14 +86,21 @@ type LeaveCtx = {
 const LeaveContext = createContext<LeaveCtx | undefined>(undefined);
 
 function genRequestNo6() {
-  // 6 หลัก (000000–999999)
   const n = Math.floor(Math.random() * 1_000_000);
   return String(n).padStart(6, "0");
 }
 
+function isApproverRole(role?: string) {
+  const r = (role || "").toUpperCase();
+  return ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(r);
+}
+
 export function LeaveProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const isAdmin = user?.role === "ADMIN";
+
+  const role = (user?.role || "").toUpperCase();
+  const isAdmin = role === "ADMIN";
+  const canApprove = isApproverRole(role);
 
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,10 +116,11 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
     const colRef = collection(db, "leave_requests");
 
-    // ✅ สำคัญ: user ห้าม query ทั้งคอลเลกชัน
-    // - Admin: ดูทั้งหมดได้
-    // - User: ดูเฉพาะของตัวเอง (ไม่ใส่ orderBy กัน index) แล้วค่อย sort ใน JS
-    const qy = isAdmin ? query(colRef) : query(colRef, where("uid", "==", user.uid));
+    // ✅ USER: อ่านของตัวเอง
+    // ✅ Approver: อ่านเฉพาะ "รอดำเนินการ" กัน permission-denied ถ้า rules ไม่ให้ read ทั้ง collection
+    const qy = canApprove
+      ? query(colRef, where("status", "==", "รอดำเนินการ"))
+      : query(colRef, where("uid", "==", user.uid));
 
     const unsub = onSnapshot(
       qy,
@@ -132,10 +145,10 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
             updatedAt: data.updatedAt,
 
             rejectReason: data.rejectReason ?? undefined,
+            decidedAt: data.decidedAt ?? undefined,
           };
         });
 
-        // ✅ sort ล่าสุดก่อน (ทำใน client เพื่อไม่ติด index)
         rows.sort((a, b) => {
           const at = a.createdAt?.seconds ?? 0;
           const bt = b.createdAt?.seconds ?? 0;
@@ -145,15 +158,20 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
         setRequests(rows);
         setLoading(false);
       },
-      (err) => {
+      (err: any) => {
         console.error("LeaveContext onSnapshot error:", err);
+        const msg =
+          err?.code === "permission-denied"
+            ? "ไม่มีสิทธิ์อ่านข้อมูลการลา (permission denied)"
+            : err?.message || "โหลดข้อมูลการลาไม่สำเร็จ";
+        // ✅ ถ้าเธอมี toast ก็เอา msg ไปโชว์ได้
         setRequests([]);
         setLoading(false);
       }
     );
 
     return () => unsub();
-  }, [user?.uid, isAdmin]);
+  }, [user?.uid, canApprove]);
 
   const submitLeave = async (payload: LeavePayload) => {
     if (!user?.uid) throw new Error("UNAUTHORIZED");
@@ -174,6 +192,7 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
       status: "รอดำเนินการ",
       rejectReason: null,
+      decidedAt: null,
 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -183,12 +202,16 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
   };
 
   const updateStatus = async (id: string, status: LeaveStatus, reason?: string) => {
-    if (!isAdmin) throw new Error("FORBIDDEN");
+    if (!canApprove) throw new Error("FORBIDDEN");
 
     const patch: Record<string, any> = {
       status,
       updatedAt: serverTimestamp(),
     };
+
+    if (status === "อนุมัติ" || status === "ไม่อนุมัติ") {
+      patch.decidedAt = serverTimestamp();
+    }
 
     if (status === "ไม่อนุมัติ") {
       patch.rejectReason = (reason ?? "").trim();
@@ -236,7 +259,7 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       deleteRequest,
       deleteRequestsByUid,
     }),
-    [requests, loading, submitLeave, updateStatus, deleteRequest, deleteRequestsByUid]
+    [requests, loading]
   );
 
   return <LeaveContext.Provider value={value}>{children}</LeaveContext.Provider>;

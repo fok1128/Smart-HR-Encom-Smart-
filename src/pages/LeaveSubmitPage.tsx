@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useLeave } from "../context/LeaveContext";
+import { useAuth } from "../context/AuthContext";
+import { createLeaveRequestWithFiles } from "../services/leaveRequests";
 
 // ====== Types ======
 type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
@@ -33,7 +34,7 @@ function XIcon({ className = "" }: { className?: string }) {
   );
 }
 
-/** ✅ Dropdown custom (แก้ไม่ให้ button ซ้อน button แล้ว) */
+/** ✅ Dropdown custom */
 function SelectBox<T extends string>({
   label,
   placeholder,
@@ -198,36 +199,32 @@ function isEndBeforeStart(start: string, end: string) {
 }
 
 export default function LeaveSubmitPage() {
-  const { submitLeave } = useLeave();
+  const { user } = useAuth();
 
-  // dropdown
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
 
-  // mode
   const [mode, setMode] = useState<LeaveMode>("allDay");
 
-  // all-day
   const [startDate, setStartDate] = useState<string>(todayISODate());
   const [endDate, setEndDate] = useState<string>(todayISODate());
 
-  // timed
   const [startDT, setStartDT] = useState<string>(() => toISODateTimeLocal(new Date()));
   const [endDT, setEndDT] = useState<string>(() => toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
 
-  // note + attachments
   const [reason, setReason] = useState<string>("");
   const [files, setFiles] = useState<File[]>([]);
 
-  // ui
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMsg, setSuccessMsg] = useState<string>("");
+
+  const [submitting, setSubmitting] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number>(0);
 
   useEffect(() => {
     setSubType("");
   }, [category]);
 
-  // ถ้า all-day แล้ว end < start ให้ดัน end = start อัตโนมัติ
   useEffect(() => {
     if (mode !== "allDay") return;
     if (!startDate || !endDate) return;
@@ -263,6 +260,8 @@ export default function LeaveSubmitPage() {
     setFiles([]);
     setErrors({});
     setSuccessMsg("");
+    setSubmitting(false);
+    setUploadPct(0);
   };
 
   const validate = () => {
@@ -280,6 +279,12 @@ export default function LeaveSubmitPage() {
     }
 
     if (!reason.trim()) e.reason = "กรุณากรอกเหตุผล/รายละเอียด";
+
+    const MAX_FILES = 5;
+    const MAX_MB = 10;
+    if (files.length > MAX_FILES) e.files = `แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`;
+    if (files.some((f) => f.size > MAX_MB * 1024 * 1024)) e.files = `ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`;
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -288,33 +293,44 @@ export default function LeaveSubmitPage() {
     ev.preventDefault();
     setSuccessMsg("");
 
+    if (!user?.uid) {
+      setSuccessMsg("ส่งไม่สำเร็จ: ยังไม่เข้าสู่ระบบ");
+      return;
+    }
+
     if (!validate()) return;
 
-    const payload = {
-      category: category as LeaveCategory,
-      subType: subType as LeaveSubType,
-      startAt: mode === "allDay" ? startDate : startDT,
-      endAt: mode === "allDay" ? endDate : endDT,
-      reason,
-      attachments: files.map((f) => ({ name: f.name, size: f.size })),
-    };
+    setSubmitting(true);
+    setUploadPct(0);
 
     try {
-      // ✅ แก้แดง created.requestNo
-      type Created = { requestNo?: string; id?: string };
-      const created = (await submitLeave(payload)) as Created;
+      const payload = {
+        uid: user.uid,
+        email: user.email ?? null,
+        category: category as any,
+        subType: subType as any,
+        mode,
+        startAt: mode === "allDay" ? startDate : startDT,
+        endAt: mode === "allDay" ? endDate : endDT,
+        reason,
+      };
+
+      const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
 
       setErrors({});
       setSuccessMsg(`ส่งคำร้องสำเร็จ ✅ เลขคำร้อง: ${created.requestNo ?? created.id ?? "-"}`);
+      setFiles([]);
+      setUploadPct(0);
     } catch (e: any) {
       console.error(e);
       setSuccessMsg(`ส่งไม่สำเร็จ: ${e?.message || e}`);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Header + breadcrumb */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ยื่นใบลา</h1>
@@ -326,21 +342,29 @@ export default function LeaveSubmitPage() {
         <button
           type="button"
           onClick={resetAll}
-          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+          disabled={submitting}
+          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
         >
           ล้างฟอร์ม
         </button>
       </div>
 
-      {/* Success */}
       {successMsg && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200">
           {successMsg}
         </div>
       )}
 
+      {submitting && files.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
+          <div className="font-semibold">กำลังอัปโหลดไฟล์… {uploadPct}%</div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+            <div className="h-full bg-teal-600 transition-all" style={{ width: `${uploadPct}%` }} />
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Card: dropdowns */}
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
             <div>
@@ -350,6 +374,7 @@ export default function LeaveSubmitPage() {
                 value={category}
                 options={categoryOptions}
                 onChange={(v) => setCategory(v as LeaveCategory | "")}
+                disabled={submitting}
               />
               {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
             </div>
@@ -361,14 +386,13 @@ export default function LeaveSubmitPage() {
                 value={subType}
                 options={subTypeOptions}
                 onChange={(v) => setSubType(v as LeaveSubType | "")}
-                disabled={!category}
+                disabled={!category || submitting}
               />
               {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
             </div>
           </div>
         </div>
 
-        {/* Card: time mode + fields */}
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -378,12 +402,12 @@ export default function LeaveSubmitPage() {
 
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input type="radio" name="leaveMode" checked={mode === "allDay"} onChange={() => setMode("allDay")} />
+                <input type="radio" name="leaveMode" checked={mode === "allDay"} onChange={() => setMode("allDay")} disabled={submitting} />
                 ทั้งวัน
               </label>
 
               <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input type="radio" name="leaveMode" checked={mode === "time"} onChange={() => setMode("time")} />
+                <input type="radio" name="leaveMode" checked={mode === "time"} onChange={() => setMode("time")} disabled={submitting} />
                 ระบุเวลา
               </label>
             </div>
@@ -398,6 +422,7 @@ export default function LeaveSubmitPage() {
                     type="date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
+                    disabled={submitting}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
                   />
                   {errors.startDate && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDate}</p>}
@@ -410,6 +435,7 @@ export default function LeaveSubmitPage() {
                     value={endDate}
                     min={startDate || undefined}
                     onChange={(e) => setEndDate(e.target.value)}
+                    disabled={submitting}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
                   />
                   {errors.endDate && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDate}</p>}
@@ -423,6 +449,7 @@ export default function LeaveSubmitPage() {
                     type="datetime-local"
                     value={startDT}
                     onChange={(e) => setStartDT(e.target.value)}
+                    disabled={submitting}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
                   />
                   {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
@@ -434,12 +461,11 @@ export default function LeaveSubmitPage() {
                     type="datetime-local"
                     value={endDT}
                     onChange={(e) => setEndDT(e.target.value)}
+                    disabled={submitting}
                     className={[
                       "mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none dark:bg-gray-900 dark:border-gray-800",
                       "focus:ring-2",
-                      timedInvalid
-                        ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
-                        : "border-gray-300 focus:border-teal-500 focus:ring-teal-500/20",
+                      timedInvalid ? "border-red-400 focus:border-red-500 focus:ring-red-500/20" : "border-gray-300 focus:border-teal-500 focus:ring-teal-500/20",
                     ].join(" ")}
                   />
                   {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
@@ -449,7 +475,6 @@ export default function LeaveSubmitPage() {
           </div>
         </div>
 
-        {/* Card: reason + attachment */}
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div>
@@ -459,6 +484,7 @@ export default function LeaveSubmitPage() {
                 onChange={(e) => setReason(e.target.value)}
                 rows={6}
                 placeholder="พิมพ์เหตุผลการลา…"
+                disabled={submitting}
                 className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
               />
               {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
@@ -469,9 +495,14 @@ export default function LeaveSubmitPage() {
               <input
                 type="file"
                 multiple
+                disabled={submitting}
+                // ✅ แนะนำจำกัดไฟล์ (ปรับได้)
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.zip"
                 onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
                 className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200 dark:text-gray-200 dark:file:bg-gray-800 dark:file:text-gray-200 dark:hover:file:bg-gray-700"
               />
+
+              {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
 
               <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
                 <div className="font-semibold">ไฟล์ที่เลือก</div>
@@ -489,27 +520,28 @@ export default function LeaveSubmitPage() {
               </div>
 
               <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                * ตอนเชื่อม backend ค่อยส่งไฟล์ผ่าน FormData ได้เลย
+                * อัปโหลดด้วย Firebase Storage SDK (Resumable) และเก็บลิงก์ไว้ในคำร้อง
               </div>
             </div>
           </div>
         </div>
 
-        {/* Footer actions */}
         <div className="flex flex-wrap items-center justify-end gap-3">
           <button
             type="button"
             onClick={resetAll}
-            className="rounded-lg border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            disabled={submitting}
+            className="rounded-lg border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
           >
             ล้างฟอร์ม
           </button>
 
           <button
             type="submit"
-            className="rounded-lg bg-teal-600 px-6 py-3 text-sm font-semibold text-white hover:bg-teal-700 focus:ring-2 focus:ring-teal-500/30"
+            disabled={submitting}
+            className="rounded-lg bg-teal-600 px-6 py-3 text-sm font-semibold text-white hover:bg-teal-700 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-60"
           >
-            ส่งคำร้อง
+            {submitting ? "กำลังส่ง..." : "ส่งคำร้อง"}
           </button>
         </div>
       </form>

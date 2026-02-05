@@ -1,4 +1,4 @@
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
 import {
   addDoc,
   collection,
@@ -10,6 +10,7 @@ import {
   doc,
   updateDoc,
 } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytesResumable } from "firebase/storage";
 
 export type Announcement = {
   id: string;
@@ -26,6 +27,44 @@ export type Announcement = {
 };
 
 const COL = "announcements";
+
+/**
+ * ✅ อัปโหลดไฟล์ประกาศด้วย Firebase Storage SDK (แก้ค้าง 0% + CORS)
+ * คืนค่า {url, name} เพื่อเอาไปใส่ fileUrl/fileName ได้เลย
+ */
+export async function uploadAnnouncementFile(
+  uid: string,
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<{ url: string; name: string; path: string }> {
+  if (!uid) throw new Error("MISSING_UID");
+  if (!file) throw new Error("MISSING_FILE");
+
+  const safeName = file.name.replace(/[^\w.\-() ]+/g, "_");
+  const path = `announcement_files/${uid}/${Date.now()}_${safeName}`;
+  const storageRef = ref(storage, path);
+
+  const task = uploadBytesResumable(storageRef, file, {
+    contentType: file.type || undefined,
+  });
+
+  return new Promise((resolve, reject) => {
+    task.on(
+      "state_changed",
+      (snap) => {
+        if (snap.totalBytes > 0) {
+          const percent = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
+          onProgress?.(Math.min(100, Math.max(0, percent)));
+        }
+      },
+      (err) => reject(err),
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref);
+        resolve({ url, name: file.name, path });
+      }
+    );
+  });
+}
 
 export async function createAnnouncement(params: {
   title: string;
@@ -49,6 +88,31 @@ export async function createAnnouncement(params: {
   });
 }
 
+/**
+ * ✅ สะดวกสุด: ถ้ามีไฟล์แนบ ให้เรียกตัวนี้
+ * มันจะอัปโหลดก่อน แล้วค่อย createAnnouncement ให้เอง
+ */
+export async function createAnnouncementWithFile(
+  params: {
+    title: string;
+    body: string;
+    createdBy: { uid: string; email?: string };
+    pinned?: boolean;
+  },
+  file?: File | null,
+  onProgress?: (percent: number) => void
+) {
+  if (file) {
+    const up = await uploadAnnouncementFile(params.createdBy.uid, file, onProgress);
+    return createAnnouncement({
+      ...params,
+      fileUrl: up.url,
+      fileName: up.name,
+    });
+  }
+  return createAnnouncement({ ...params, fileUrl: null, fileName: null });
+}
+
 // ✅ เพิ่ม onError แบบ optional (โค้ดเก่าเรียก listenAnnouncements(cb) ยังใช้ได้เหมือนเดิม)
 export function listenAnnouncements(
   cb: (items: Announcement[]) => void,
@@ -69,9 +133,9 @@ export function listenAnnouncements(
       console.error("listen announcements error:", err);
 
       const msg =
-        err?.code === "permission-denied"
+        (err as any)?.code === "permission-denied"
           ? "ไม่มีสิทธิ์อ่านประกาศ (permission denied)"
-          : err?.message || "โหลดประกาศไม่สำเร็จ";
+          : (err as any)?.message || "โหลดประกาศไม่สำเร็จ";
 
       onError?.(msg);
       cb([]); // ✅ กัน UI พัง

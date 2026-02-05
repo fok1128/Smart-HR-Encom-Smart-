@@ -14,8 +14,8 @@ import ProtectedRoute from "./routes/ProtectedRoute";
 import TitleLock from "./components/common/TitleLock";
 import LeaveSubmitPage from "./pages/LeaveSubmitPage";
 import LeaveStatusPage from "./pages/LeaveStatusPage";
-import RequireAdmin from "./components/auth/RequireAdmin";
 import LeaveApprovePage from "./pages/LeaveApprovePage";
+import RequireRole from "./routes/RequireRole";
 import { ToastCenterProvider } from "./components/common/ToastCenter";
 
 export default function App() {
@@ -45,21 +45,20 @@ export default function App() {
             <Route path="leave/request" element={<LeaveSubmitPage />} />
             <Route path="leave/status" element={<LeaveStatusPage />} />
 
-            {/* ✅ Admin only */}
+            {/* ✅ Approver roles (ADMIN/HR/MANAGER/EXECUTIVE_MANAGER) */}
             <Route
-              path="leave/approve"
               element={
-                <RequireAdmin>
-                  <LeaveApprovePage />
-                </RequireAdmin>
+                <RequireRole allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]} />
               }
-            />
+            >
+              <Route path="leave/approve" element={<LeaveApprovePage />} />
+            </Route>
           </Route>
         </Route>
 
         {/* 404 */}
         <Route path="*" element={<NotFound />} />
       </Routes>
-      </ToastCenterProvider>
+    </ToastCenterProvider>
   );
 }

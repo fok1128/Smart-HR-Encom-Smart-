@@ -29,7 +29,10 @@ const AppSidebar = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isAdmin = String(user?.role || "").toUpperCase() === "ADMIN";
+  const role = String(user?.role || "").toUpperCase();
+  const isAdmin = role === "ADMIN";
+  const canApprove = ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(role);
+
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;
 
   // ✅ ไฮไลต์เมนูให้ติดแม้มี subpath
@@ -53,17 +56,17 @@ const AppSidebar = () => {
       { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" },
     ];
 
-    // ✅ เฉพาะ ADMIN
-    if (isAdmin) {
+    // ✅ ผู้อนุมัติ: ADMIN / HR / MANAGER / EXECUTIVE_MANAGER
+    if (canApprove) {
       base.push({
         icon: <PieChartIcon />,
-        name: "อนุมัติใบลา (ADMIN)",
+        name: "อนุมัติใบลา",
         path: "/leave/approve",
       });
     }
 
     return base;
-  }, [isAdmin]);
+  }, [canApprove]);
 
   return (
     <aside
