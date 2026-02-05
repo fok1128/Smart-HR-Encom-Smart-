@@ -1,3 +1,5 @@
+console.log("✅ REAL LeaveApprovePage loaded");
+
 import { useEffect, useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";
@@ -264,8 +266,8 @@ export default function LeaveApprovePage() {
             const empPhone = emp?.phone || "-";
             const reqNo = r.requestNo || "-";
 
-            const submittedAt = fmtDate(r.createdAt);
-            const decidedAt = fmtDate(r.decidedAt);
+            const submittedAt = fmtDate(r.submittedAt || r.createdAt || r.updatedAt);
+            const decidedAt = fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt);
 
             const isDone = r.status === "อนุมัติ" || r.status === "ไม่อนุมัติ";
             const isPending = r.status === "รอดำเนินการ";
