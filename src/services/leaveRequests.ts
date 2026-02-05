@@ -10,16 +10,23 @@ import {
   doc,
   updateDoc,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytesResumable } from "firebase/storage";
-import { db, storage } from "../firebase";
+import { db } from "../firebase";
+import { getAuth } from "firebase/auth";
 
 export type LeaveMode = "allDay" | "time";
 export type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELED";
 
-// ✅ รองรับแนบไฟล์แบบใหม่ (มี url/path) แต่ยังไม่พังของเดิม
+/**
+ * ✅ แนบไฟล์แบบใหม่ (Supabase ผ่าน Backend)
+ * - storagePath = key ที่ได้จาก /files/upload
+ *
+ * ยังรองรับของเดิม (url/path) ไว้กันพังข้อมูลเก่า
+ */
 export type LeaveAttachment =
   | { name: string; size: number }
-  | { name: string; size: number; url: string; path: string; contentType?: string };
+  | { name: string; size: number; storagePath: string; contentType?: string }
+  | { name: string; size: number; url: string; path?: string; contentType?: string }
+  | { name: string; size: number; key: string; contentType?: string };
 
 export type LeaveRequestDoc = {
   id: string;
@@ -32,14 +39,15 @@ export type LeaveRequestDoc = {
   subType: string;
 
   mode: LeaveMode;
-  startAt: string; // allDay => YYYY-MM-DD, time => YYYY-MM-DDTHH:mm
+  startAt: string;
   endAt: string;
 
   reason: string;
 
-  // เดิม
+  // legacy
   files?: { name: string; size: number }[];
-  // ใหม่ (ยังรับของเดิมได้)
+
+  // new
   attachments?: LeaveAttachment[];
 
   status: LeaveStatus;
@@ -52,6 +60,9 @@ export type LeaveRequestDoc = {
   rejectedBy?: { uid: string; email?: string | null } | null;
   approvedAt?: any;
   rejectedAt?: any;
+
+  // legacy
+  rejectReason?: string | null;
 };
 
 const colRef = collection(db, "leave_requests");
@@ -69,9 +80,70 @@ export function genRequestNo(d = new Date()) {
   return `LV-${y}${m}${day}-${rand4()}`;
 }
 
+export const API_BASE =
+  (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
+
+async function getIdToken() {
+  const auth = getAuth();
+  const u = auth.currentUser;
+  if (!u) throw new Error("UNAUTHORIZED");
+  return u.getIdToken();
+}
+
+/** ✅ helper: ดึง key/storagePath จาก attachment */
+export function getAttachmentKey(att: any): string | null {
+  return String(att?.storagePath || att?.key || "").trim() || null;
+}
+
 /**
- * ✅ อัปโหลดไฟล์แนบด้วย Firebase Storage SDK (แก้ค้าง 0% + CORS)
- * คืนค่าเป็น attachments ที่มี url/path พร้อมบันทึกลง Firestore ได้เลย
+ * ✅ ขอ signed url จาก backend เพื่อใช้เปิดไฟล์บน Supabase
+ */
+export async function getSignedUrlForKey(key: string): Promise<string> {
+  const token = await getIdToken();
+  const url = `${API_BASE}/files/signed-url?key=${encodeURIComponent(key)}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok || !data?.signedUrl) {
+    const msg = data?.error || `SIGNED_URL_FAILED (${res.status})`;
+    throw new Error(msg);
+  }
+
+  return data.signedUrl as string;
+}
+
+/**
+ * ✅ normalize response จาก backend ให้เป็น attachment แบบมาตรฐานเสมอ
+ */
+function normalizeUploadResponse(data: any, f: File): LeaveAttachment {
+  const first =
+    (Array.isArray(data?.attachments) && data.attachments[0]) || null;
+
+  const key =
+    String(first?.storagePath || first?.key || data?.key || "").trim();
+
+  if (!key) throw new Error("UPLOAD_OK_BUT_MISSING_KEY");
+
+  const name = first?.name || data?.name || f.name;
+  const size = first?.size || data?.size || f.size;
+  const contentType = first?.contentType || data?.contentType || f.type || undefined;
+
+  return {
+    name,
+    size,
+    storagePath: key,
+    contentType,
+  };
+}
+
+/**
+ * ✅ อัปโหลดไฟล์แนบไป Supabase Storage ผ่าน Backend (/files/upload)
+ * คืน attachments ที่มี storagePath (key)
+ *
+ * NOTE: ส่ง field เดียวพอ (กันอัปโหลดซ้ำ 2 เท่า)
  */
 export async function uploadLeaveAttachments(
   uid: string,
@@ -80,51 +152,37 @@ export async function uploadLeaveAttachments(
 ): Promise<LeaveAttachment[]> {
   if (!uid || !files?.length) return [];
 
-  // รวม progress แบบง่าย ๆ
-  let doneBytes = 0;
-  const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+  const token = await getIdToken();
+  const total = files.length;
+  const out: LeaveAttachment[] = [];
 
-  const uploads = files.map(
-    (file) =>
-      new Promise<LeaveAttachment>((resolve, reject) => {
-        const safeName = file.name.replace(/[^\w.\-() ]+/g, "_");
-        const path = `leave_attachments/${uid}/${Date.now()}_${safeName}`;
-        const storageRef = ref(storage, path);
+  for (let i = 0; i < total; i++) {
+    const f = files[i];
 
-        const task = uploadBytesResumable(storageRef, file, {
-          contentType: file.type || undefined,
-        });
+    const fd = new FormData();
+    fd.append("file", f);          // ✅ ส่งแค่อันเดียวพอ
+    fd.append("folder", "leave");
 
-        let lastBytes = 0;
+    const res = await fetch(`${API_BASE}/files/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    });
 
-        task.on(
-          "state_changed",
-          (snap) => {
-            const inc = snap.bytesTransferred - lastBytes;
-            lastBytes = snap.bytesTransferred;
-            doneBytes += Math.max(0, inc);
+    const data = await res.json().catch(() => null);
 
-            if (totalBytes > 0) {
-              const percent = Math.round((doneBytes / totalBytes) * 100);
-              onProgress?.(Math.min(100, Math.max(0, percent)));
-            }
-          },
-          (err) => reject(err),
-          async () => {
-            const url = await getDownloadURL(task.snapshot.ref);
-            resolve({
-              name: file.name,
-              size: file.size,
-              url,
-              path,
-              contentType: file.type || undefined,
-            });
-          }
-        );
-      })
-  );
+    if (!res.ok || !data?.ok) {
+      const msg = data?.error || `UPLOAD_FAILED (${res.status})`;
+      throw new Error(msg);
+    }
 
-  return Promise.all(uploads);
+    out.push(normalizeUploadResponse(data, f));
+
+    const pct = Math.round(((i + 1) / total) * 100);
+    onProgress?.(pct);
+  }
+
+  return out;
 }
 
 export async function createLeaveRequest(payload: {
@@ -137,9 +195,10 @@ export async function createLeaveRequest(payload: {
   endAt: string;
   reason: string;
 
-  // เดิม
+  // legacy
   files?: { name: string; size: number }[];
-  // ใหม่ (รองรับทั้งแบบเดิมและแบบมี url/path)
+
+  // new
   attachments?: LeaveAttachment[];
 }) {
   const requestNo = genRequestNo();
@@ -153,10 +212,6 @@ export async function createLeaveRequest(payload: {
   return { id: docRef.id, requestNo };
 }
 
-/**
- * ✅ สะดวกสุด: อัปโหลดไฟล์ก่อน แล้วค่อยสร้างใบลา
- * ใช้แทน createLeaveRequest ได้เลย (ถ้าหน้า UI มี File[])
- */
 export async function createLeaveRequestWithFiles(
   payload: Omit<Parameters<typeof createLeaveRequest>[0], "attachments" | "files">,
   files: File[],
@@ -165,13 +220,11 @@ export async function createLeaveRequestWithFiles(
   const attachments = await uploadLeaveAttachments(payload.uid, files, onProgress);
   return createLeaveRequest({
     ...payload,
-    // เผื่อหน้าเดิมยังโชว์รายชื่อไฟล์จาก files/attachments
-    files: files.map((f) => ({ name: f.name, size: f.size })),
-    attachments,
+    files: files.map((f) => ({ name: f.name, size: f.size })), // legacy เผื่อใช้
+    attachments, // ✅ สำคัญ: admin ต้องใช้ตัวนี้
   });
 }
 
-// ✅ เพิ่ม onError optional + กัน uid ว่าง + ใส่ error callback ให้ onSnapshot
 export function listenMyLeaveRequests(
   uid: string,
   cb: (rows: LeaveRequestDoc[]) => void,
@@ -182,7 +235,6 @@ export function listenMyLeaveRequests(
     return () => {};
   }
 
-  // ✅ ใช้ where อย่างเดียว ไม่ orderBy -> ไม่ต้องสร้าง composite index
   const qy = query(colRef, where("uid", "==", uid));
 
   return onSnapshot(
@@ -190,7 +242,6 @@ export function listenMyLeaveRequests(
     (snap) => {
       const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LeaveRequestDoc[];
 
-      // ✅ sort ฝั่ง client แทน (submittedAt อาจเป็น Timestamp)
       rows.sort((a, b) => {
         const ams = a.submittedAt?.toDate?.()?.getTime?.() ?? 0;
         const bms = b.submittedAt?.toDate?.()?.getTime?.() ?? 0;
@@ -211,7 +262,6 @@ export function listenMyLeaveRequests(
   );
 }
 
-/** ✅ สำหรับหน้าอนุมัติ (PENDING) */
 export function listenPendingLeaveRequests(
   cb: (rows: LeaveRequestDoc[]) => void,
   onError?: (message: string) => void
@@ -235,7 +285,6 @@ export function listenPendingLeaveRequests(
   );
 }
 
-/** ✅ Admin แก้ไข */
 export async function adminUpdateLeaveRequest(id: string, patch: Partial<LeaveRequestDoc>) {
   await updateDoc(doc(db, "leave_requests", id), {
     ...patch,
@@ -243,12 +292,10 @@ export async function adminUpdateLeaveRequest(id: string, patch: Partial<LeaveRe
   });
 }
 
-/** ✅ Admin ลบ */
 export async function adminDeleteLeaveRequest(id: string) {
   await deleteDoc(doc(db, "leave_requests", id));
 }
 
-/** ✅ อนุมัติ/ปฏิเสธ */
 export async function approveLeaveRequest(
   id: string,
   by: { uid: string; email?: string | null },

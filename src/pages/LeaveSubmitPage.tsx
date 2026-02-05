@@ -204,7 +204,7 @@ export default function LeaveSubmitPage() {
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
 
-  const [mode, setMode] = useState<LeaveMode>("allDay");
+  const [mode, setMode] = useState<"allDay" | "time">("allDay");
 
   const [startDate, setStartDate] = useState<string>(todayISODate());
   const [endDate, setEndDate] = useState<string>(todayISODate());
@@ -281,9 +281,15 @@ export default function LeaveSubmitPage() {
     if (!reason.trim()) e.reason = "กรุณากรอกเหตุผล/รายละเอียด";
 
     const MAX_FILES = 5;
-    const MAX_MB = 10;
+    const MAX_MB = 25; // ✅ ให้ตรงกับ backend จำกัด 25MB
     if (files.length > MAX_FILES) e.files = `แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`;
     if (files.some((f) => f.size > MAX_MB * 1024 * 1024)) e.files = `ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`;
+
+    // ✅ จำกัดประเภทไฟล์: PDF + รูป
+    const okTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+    if (files.some((f) => f.type && !okTypes.has(f.type))) {
+      e.files = "อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)";
+    }
 
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -491,13 +497,12 @@ export default function LeaveSubmitPage() {
             </div>
 
             <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">แนบไฟล์ (ถ้ามี)</div>
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">แนบไฟล์ (PDF/รูป)</div>
               <input
                 type="file"
                 multiple
                 disabled={submitting}
-                // ✅ แนะนำจำกัดไฟล์ (ปรับได้)
-                accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.zip"
+                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
                 onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
                 className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200 dark:text-gray-200 dark:file:bg-gray-800 dark:file:text-gray-200 dark:hover:file:bg-gray-700"
               />
@@ -511,7 +516,7 @@ export default function LeaveSubmitPage() {
                 ) : (
                   <ul className="mt-2 list-disc space-y-1 pl-5">
                     {files.map((f) => (
-                      <li key={f.name}>
+                      <li key={`${f.name}-${f.size}`}>
                         {f.name} <span className="text-gray-500">({Math.ceil(f.size / 1024)} KB)</span>
                       </li>
                     ))}
@@ -520,7 +525,7 @@ export default function LeaveSubmitPage() {
               </div>
 
               <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                * อัปโหลดด้วย Firebase Storage SDK (Resumable) และเก็บลิงก์ไว้ในคำร้อง
+                * ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend (ปลอดภัยกว่า และไม่ต้องใช้ Firebase Storage)
               </div>
             </div>
           </div>

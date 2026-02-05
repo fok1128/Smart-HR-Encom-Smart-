@@ -22,7 +22,7 @@ import {
 import { db } from "../firebase";
 import { useAuth } from "./AuthContext";
 
-/** สถานะ */
+/** สถานะ (หน้าเว็บใช้ไทย) */
 export type LeaveStatus = "รอดำเนินการ" | "อนุมัติ" | "ไม่อนุมัติ";
 
 /** ประเภท (ให้ตรงกับหน้า Submit/Calendar) */
@@ -51,14 +51,23 @@ export type LeaveRequest = {
   reason?: string;
 
   // ✅ รองรับไฟล์แบบมี url/storagePath
-  attachments?: { name: string; size: number; url?: string; storagePath?: string }[];
+  attachments?: { name: string; size: number; url?: string; storagePath?: string; key?: string }[];
+
+  // เผื่อของเก่า
+  files?: { name: string; size: number }[];
 
   status: LeaveStatus;
+
+  // รองรับของเก่า/ใหม่
   createdAt?: any;
+  submittedAt?: any;
   updatedAt?: any;
 
   rejectReason?: string;
+  decisionNote?: string;
   decidedAt?: any;
+  approvedAt?: any;
+  rejectedAt?: any;
 };
 
 type LeavePayload = {
@@ -68,8 +77,7 @@ type LeavePayload = {
   endAt: string;
   reason: string;
 
-  // ✅ แก้ให้ตรงกับ LeaveRequest.attachments
-  attachments?: { name: string; size: number; url?: string; storagePath?: string }[];
+  attachments?: { name: string; size: number; url?: string; storagePath?: string; key?: string }[];
 };
 
 type LeaveCtx = {
@@ -95,6 +103,37 @@ function isApproverRole(role?: string) {
   return ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(r);
 }
 
+/** ✅ normalize สถานะจากของใหม่/ของเก่าให้เป็นไทย */
+function normalizeStatusToThai(s: any): LeaveStatus {
+  const v = String(s || "").trim();
+
+  // ของใหม่ (EN)
+  if (v === "PENDING") return "รอดำเนินการ";
+  if (v === "APPROVED") return "อนุมัติ";
+  if (v === "REJECTED") return "ไม่อนุมัติ";
+
+  // ของเก่า (TH)
+  if (v === "รอดำเนินการ") return "รอดำเนินการ";
+  if (v === "อนุมัติ") return "อนุมัติ";
+  if (v === "ไม่อนุมัติ") return "ไม่อนุมัติ";
+
+  return "รอดำเนินการ";
+}
+
+/** ✅ เอาไว้ sort โดยไม่ต้อง orderBy ใน query (กันเรื่อง index) */
+function tsToMs(ts: any): number {
+  try {
+    // Firestore Timestamp
+    if (ts?.toDate) return ts.toDate().getTime();
+    if (typeof ts?.seconds === "number") return ts.seconds * 1000;
+    // string / Date
+    const d = ts instanceof Date ? ts : ts ? new Date(ts) : null;
+    return d ? d.getTime() : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function LeaveProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
 
@@ -116,10 +155,14 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
     const colRef = collection(db, "leave_requests");
 
-    // ✅ USER: อ่านของตัวเอง
-    // ✅ Approver: อ่านเฉพาะ "รอดำเนินการ" กัน permission-denied ถ้า rules ไม่ให้ read ทั้ง collection
+    /**
+     * ✅ USER: อ่านของตัวเองทั้งหมด
+     * ✅ Approver: อ่านเฉพาะ pending แต่ครอบทั้งของใหม่/ของเก่า
+     *
+     * 🔥 สำคัญ: ไม่ใช้ orderBy เพื่อไม่ต้องสร้าง composite index
+     */
     const qy = canApprove
-      ? query(colRef, where("status", "==", "รอดำเนินการ"))
+      ? query(colRef, where("status", "in", ["รอดำเนินการ", "PENDING"]))
       : query(colRef, where("uid", "==", user.uid));
 
     const unsub = onSnapshot(
@@ -130,7 +173,7 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
           return {
             id: d.id,
             uid: data.uid,
-            createdByEmail: data.createdByEmail,
+            createdByEmail: data.createdByEmail ?? data.email ?? undefined,
 
             requestNo: data.requestNo,
             category: data.category,
@@ -138,20 +181,29 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
             startAt: data.startAt,
             endAt: data.endAt,
             reason: data.reason ?? "",
-            attachments: data.attachments ?? [],
 
-            status: data.status as LeaveStatus,
+            attachments: data.attachments ?? [],
+            files: data.files ?? [],
+
+            status: normalizeStatusToThai(data.status),
+
             createdAt: data.createdAt,
+            submittedAt: data.submittedAt,
             updatedAt: data.updatedAt,
 
             rejectReason: data.rejectReason ?? undefined,
+            decisionNote: data.decisionNote ?? undefined,
+
             decidedAt: data.decidedAt ?? undefined,
+            approvedAt: data.approvedAt ?? undefined,
+            rejectedAt: data.rejectedAt ?? undefined,
           };
         });
 
+        // ✅ sort ฝั่ง client (แทน orderBy)
         rows.sort((a, b) => {
-          const at = a.createdAt?.seconds ?? 0;
-          const bt = b.createdAt?.seconds ?? 0;
+          const at = tsToMs(a.submittedAt) || tsToMs(a.createdAt) || tsToMs(a.updatedAt);
+          const bt = tsToMs(b.submittedAt) || tsToMs(b.createdAt) || tsToMs(b.updatedAt);
           return bt - at;
         });
 
@@ -159,12 +211,8 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       },
       (err: any) => {
+        // ถ้าเจอ error จะเห็นใน console ชัด ๆ
         console.error("LeaveContext onSnapshot error:", err);
-        const msg =
-          err?.code === "permission-denied"
-            ? "ไม่มีสิทธิ์อ่านข้อมูลการลา (permission denied)"
-            : err?.message || "โหลดข้อมูลการลาไม่สำเร็จ";
-        // ✅ ถ้าเธอมี toast ก็เอา msg ไปโชว์ได้
         setRequests([]);
         setLoading(false);
       }
@@ -188,12 +236,15 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       startAt: payload.startAt,
       endAt: payload.endAt,
       reason: payload.reason ?? "",
+
       attachments: payload.attachments ?? [],
 
       status: "รอดำเนินการ",
       rejectReason: null,
       decidedAt: null,
 
+      // ✅ มี submittedAt ไว้ด้วย
+      submittedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -213,10 +264,15 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       patch.decidedAt = serverTimestamp();
     }
 
+    if (status === "อนุมัติ") patch.approvedAt = serverTimestamp();
+    if (status === "ไม่อนุมัติ") patch.rejectedAt = serverTimestamp();
+
     if (status === "ไม่อนุมัติ") {
       patch.rejectReason = (reason ?? "").trim();
+      patch.decisionNote = (reason ?? "").trim() || null;
     } else {
       patch.rejectReason = null;
+      patch.decisionNote = null;
     }
 
     await updateDoc(doc(db, "leave_requests", id), patch);
