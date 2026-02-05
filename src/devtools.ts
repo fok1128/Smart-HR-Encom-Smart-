@@ -1,9 +1,6 @@
 // src/devtools.ts
 import { getAuth } from "firebase/auth";
 
-/**
- * 1) testMe
- */
 export async function testMe() {
   try {
     const auth = getAuth();
@@ -28,36 +25,58 @@ export async function testMe() {
   }
 }
 
-/**
- * 2) Network Spy
- */
-function isStorageUrl(url: any) {
-  return typeof url === "string" && url.includes("firebasestorage.googleapis.com");
+function envOn(v: any) {
+  return String(v ?? "").trim() === "1" || String(v ?? "").toLowerCase() === "true";
+}
+
+// ✅ storage detector: ถ้าอยากเพิ่มโดเมนอื่นค่อยเติม
+function isStorageLikeUrl(url: any) {
+  if (typeof url !== "string") return false;
+  const s = url.toLowerCase();
+  return (
+    s.includes("firebasestorage.googleapis.com") ||
+    s.includes("supabase.co/storage") ||
+    s.includes("/storage/v1/")
+  );
 }
 
 export function installNetworkSpy() {
   if ((window as any).__NET_SPY_INSTALLED__) return;
+
+  const DISABLE = envOn(import.meta.env.VITE_NET_SPY_DISABLE);
+
+  // ✅ ค่า default: ไม่ยุ่ง storage เสมอ (แก้ปัญหา preflight / log รก)
+  const IGNORE_STORAGE =
+    envOn(import.meta.env.VITE_NET_SPY_IGNORE_STORAGE) || true;
+
+  if (DISABLE) {
+    console.log("🟡 NET-SPY disabled by env: VITE_NET_SPY_DISABLE");
+    return;
+  }
+
   (window as any).__NET_SPY_INSTALLED__ = true;
 
-  // ---- spy fetch ----
   const origFetch: typeof window.fetch = window.fetch.bind(window);
+  const OrigXHR = window.XMLHttpRequest;
+
+  (window as any).__NET_SPY_ORIG_FETCH__ = origFetch;
+  (window as any).__NET_SPY_ORIG_XHR__ = OrigXHR;
 
   window.fetch = (async (...args: Parameters<typeof fetch>) => {
     const url = args?.[0] as any;
-    if (isStorageUrl(url)) {
-      console.warn("[NET-SPY][fetch] storage url =", url);
+    const urlStr = typeof url === "string" ? url : String(url?.url ?? "");
+
+    if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
+      console.warn("[NET-SPY][fetch] storage-ish url =", urlStr);
       console.trace("[NET-SPY][fetch] stack");
     }
+
     return origFetch(...args);
   }) as typeof window.fetch;
-
-  // ---- spy XHR ----
-  const OrigXHR = window.XMLHttpRequest;
 
   class SpyXHR extends OrigXHR {
     private __url: any;
 
-    // ให้ signature ตรงกับ XHR จริง (ไม่ใช้ ...rest แล้ว)
     open(
       method: string,
       url: string | URL,
@@ -66,8 +85,10 @@ export function installNetworkSpy() {
       password?: string | null
     ) {
       this.__url = url;
-      if (isStorageUrl(String(url))) {
-        console.warn("[NET-SPY][xhr.open] method =", method, "url =", url);
+      const urlStr = String(url);
+
+      if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
+        console.warn("[NET-SPY][xhr.open] method =", method, "url =", urlStr);
         console.trace("[NET-SPY][xhr.open] stack");
       }
 
@@ -81,27 +102,41 @@ export function installNetworkSpy() {
     }
 
     send(body?: any) {
-      if (isStorageUrl(String(this.__url))) {
-        console.warn("[NET-SPY][xhr.send] url =", this.__url);
+      const urlStr = String(this.__url ?? "");
+
+      if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
+        console.warn("[NET-SPY][xhr.send] url =", urlStr);
         console.trace("[NET-SPY][xhr.send] stack");
       }
+
       return super.send(body);
     }
   }
 
   window.XMLHttpRequest = SpyXHR as any;
 
-  console.log("✅ NET-SPY installed (fetch + XHR)");
+  (window as any).disableNetSpy = () => {
+    try {
+      const f = (window as any).__NET_SPY_ORIG_FETCH__;
+      const x = (window as any).__NET_SPY_ORIG_XHR__;
+      if (f) window.fetch = f;
+      if (x) window.XMLHttpRequest = x;
+      (window as any).__NET_SPY_INSTALLED__ = false;
+      console.log("✅ NET-SPY disabled (restored original fetch + XHR)");
+    } catch (e) {
+      console.error("disableNetSpy error:", e);
+    }
+  };
+
+  console.log(`✅ NET-SPY installed | IGNORE_STORAGE=${IGNORE_STORAGE ? "ON" : "OFF"}`);
 }
 
-/**
- * 3) installDevTools (export ชื่อให้ตรง!)
- */
 export function installDevTools() {
   if (!import.meta.env.DEV) return;
 
   (window as any).testMe = testMe;
+
   installNetworkSpy();
 
-  console.log("✅ DevTools installed: window.testMe(), NET-SPY");
+  console.log("✅ DevTools installed: window.testMe(), window.disableNetSpy()");
 }

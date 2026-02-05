@@ -1,7 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -18,7 +17,6 @@ if (!firebaseConfig.apiKey) {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-
-// ✅ เพิ่ม 2 บรรทัดนี้
 export const db = getFirestore(app);
-export const storage = getStorage(app);
+
+// ✅ ไม่ export storage แล้ว (ตัด Firebase Storage ออก)

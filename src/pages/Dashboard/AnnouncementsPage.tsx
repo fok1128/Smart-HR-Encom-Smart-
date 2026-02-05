@@ -3,10 +3,13 @@ import PageMeta from "../../components/common/PageMeta";
 import { useAuth } from "../../context/AuthContext";
 import {
   createAnnouncement,
+  createAnnouncementWithFile,
   listenAnnouncements,
   deleteAnnouncement,
   updateAnnouncement,
   setAnnouncementPinned,
+  uploadAnnouncementFile,
+  getAnnouncementSignedUrl,
   Announcement,
 } from "../../services/announcements";
 
@@ -37,6 +40,10 @@ function formatTs(ts: any) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(
     d.getHours()
   )}:${pad(d.getMinutes())}`;
+}
+
+function openInNewTab(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /* ---------------- UI: Modal ---------------- */
@@ -156,20 +163,30 @@ export default function AnnouncementsPage() {
   // create
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [pinnedNew, setPinnedNew] = useState(false);
+  const [posting, setPosting] = useState(false);
+
+  // ✅ new: file upload (Supabase)
+  const [file, setFile] = useState<File | null>(null);
+  const [uploadPct, setUploadPct] = useState(0);
+
+  // legacy: link attach (ยังให้ใช้ได้ ถ้าจะวางลิงก์)
   const [fileUrl, setFileUrl] = useState("");
   const [fileName, setFileName] = useState("");
-  const [pinnedNew, setPinnedNew] = useState(false); // ✅ NEW
-  const [posting, setPosting] = useState(false);
 
   // edit modal
   const [editOpen, setEditOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editBody, setEditBody] = useState("");
-  const [editFileUrl, setEditFileUrl] = useState("");
-  const [editFileName, setEditFileName] = useState("");
-  const [editPinned, setEditPinned] = useState(false); // ✅ NEW
+  const [editFileUrl, setEditFileUrl] = useState(""); // legacy link
+  const [editFileName, setEditFileName] = useState(""); // show name
+  const [editPinned, setEditPinned] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // ✅ new: replace file in edit
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [editUploadPct, setEditUploadPct] = useState(0);
 
   // delete modal
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -201,7 +218,7 @@ export default function AnnouncementsPage() {
     return () => unsub();
   }, []);
 
-  // ✅ Sort pinned first, then latest (client-side, no index)
+  // ✅ Sort pinned first, then latest
   const sortedItems = useMemo(() => {
     const arr = [...items];
     arr.sort((a, b) => {
@@ -220,10 +237,33 @@ export default function AnnouncementsPage() {
       if (onlyPinned && !a.pinned) return false;
       if (!keyword) return true;
       const hay =
-        `${a.title || ""} ${a.body || ""} ${a.createdBy?.email || ""}`.toLowerCase();
+        `${a.title || ""} ${a.body || ""} ${a.createdBy?.email || ""} ${a.fileName || ""}`.toLowerCase();
       return hay.includes(keyword);
     });
   }, [sortedItems, q, onlyPinned]);
+
+  async function openAttachment(a: Announcement) {
+    try {
+      // legacy url
+      if (a.fileUrl && isValidUrl(a.fileUrl)) {
+        openInNewTab(a.fileUrl);
+        return;
+      }
+
+      // new supabase key
+      const key = (a as any)?.fileKey as string | undefined | null;
+      if (key) {
+        const signed = await getAnnouncementSignedUrl(key);
+        openInNewTab(signed);
+        return;
+      }
+
+      showNotice({ type: "info", title: "ไม่มีไฟล์แนบ" });
+    } catch (e: any) {
+      console.error("openAttachment error:", e);
+      showNotice({ type: "error", title: "เปิดไฟล์ไม่ได้", message: e?.message || "ลองใหม่อีกครั้ง" });
+    }
+  }
 
   async function onPost() {
     if (!user) {
@@ -234,6 +274,8 @@ export default function AnnouncementsPage() {
       showNotice({ type: "error", title: "กรอกหัวเรื่องและเนื้อหาให้ครบ" });
       return;
     }
+
+    // ถ้าจะใช้ link (legacy) ต้องเป็น url ถูกต้อง
     if (fileUrl.trim() && !isValidUrl(fileUrl.trim())) {
       showNotice({
         type: "error",
@@ -245,20 +287,40 @@ export default function AnnouncementsPage() {
 
     setPosting(true);
     try {
-      await createAnnouncement({
-        title: title.trim(),
-        body: body.trim(),
-        fileUrl: fileUrl.trim() || null,
-        fileName: fileName.trim() || null,
-        pinned: pinnedNew, // ✅ NEW
-        createdBy: { uid: user.uid, email: user.email || undefined },
-      });
+      setUploadPct(0);
+
+      // ✅ กรณีแนบไฟล์จริง -> อัปโหลดผ่าน backend แล้วค่อยสร้างประกาศ
+      if (file) {
+        await createAnnouncementWithFile(
+          {
+            title: title.trim(),
+            body: body.trim(),
+            pinned: pinnedNew,
+            createdBy: { uid: user.uid, email: user.email || undefined },
+          },
+          file,
+          (p) => setUploadPct(p)
+        );
+      } else {
+        // ✅ ไม่มีไฟล์จริง -> ยังอนุญาตให้แนบ link ได้ (หรือไม่แนบก็ได้)
+        await createAnnouncement({
+          title: title.trim(),
+          body: body.trim(),
+          pinned: pinnedNew,
+          createdBy: { uid: user.uid, email: user.email || undefined },
+          fileUrl: fileUrl.trim() || null,
+          fileName: fileName.trim() || null,
+          // fileKey จะถูก set ใน service เป็น null ถ้าไม่ได้ส่ง
+        } as any);
+      }
 
       setTitle("");
       setBody("");
+      setPinnedNew(false);
+      setFile(null);
+      setUploadPct(0);
       setFileUrl("");
       setFileName("");
-      setPinnedNew(false);
 
       showNotice({ type: "success", title: "โพสประกาศแล้ว ✅" });
     } catch (e: any) {
@@ -281,6 +343,10 @@ export default function AnnouncementsPage() {
     setEditFileUrl(a.fileUrl || "");
     setEditFileName(a.fileName || "");
     setEditPinned(!!a.pinned);
+
+    setEditFile(null);
+    setEditUploadPct(0);
+
     setEditOpen(true);
   }
 
@@ -293,10 +359,12 @@ export default function AnnouncementsPage() {
     setEditFileUrl("");
     setEditFileName("");
     setEditPinned(false);
+    setEditFile(null);
+    setEditUploadPct(0);
   }
 
   async function onSaveEdit() {
-    if (!isAdmin || !editId) return;
+    if (!isAdmin || !editId || !user) return;
 
     if (!editTitle.trim() || !editBody.trim()) {
       showNotice({ type: "error", title: "กรอกหัวเรื่องและเนื้อหาให้ครบ" });
@@ -313,13 +381,29 @@ export default function AnnouncementsPage() {
 
     setSavingEdit(true);
     try {
-      await updateAnnouncement(editId, {
-        title: editTitle.trim(),
-        body: editBody.trim(),
-        fileUrl: editFileUrl.trim() || null,
-        fileName: editFileName.trim() || null,
-        pinned: editPinned,
-      });
+      // ✅ ถ้าเลือกไฟล์ใหม่ -> อัปโหลดแล้วแทนไฟล์เดิม (set fileUrl = null)
+      if (editFile) {
+        setEditUploadPct(1);
+        const up = await uploadAnnouncementFile(user.uid, editFile, (p) => setEditUploadPct(p));
+        await updateAnnouncement(editId, {
+          title: editTitle.trim(),
+          body: editBody.trim(),
+          pinned: editPinned,
+          fileKey: up.key,
+          fileName: up.name,
+          fileUrl: null,
+        } as any);
+      } else {
+        // ✅ ไม่อัปโหลดไฟล์ใหม่ -> update ตามข้อมูลที่กรอก (อนุญาต link legacy)
+        await updateAnnouncement(editId, {
+          title: editTitle.trim(),
+          body: editBody.trim(),
+          pinned: editPinned,
+          fileUrl: editFileUrl.trim() || null,
+          fileName: editFileName.trim() || null,
+          // ไม่แตะ fileKey ถ้าไม่อัปไฟล์ใหม่ (กันหาย)
+        } as any);
+      }
 
       showNotice({ type: "success", title: "แก้ไขประกาศแล้ว ✅" });
       closeEdit();
@@ -332,6 +416,7 @@ export default function AnnouncementsPage() {
       });
     } finally {
       setSavingEdit(false);
+      setEditUploadPct(0);
     }
   }
 
@@ -489,27 +574,65 @@ export default function AnnouncementsPage() {
                 ปักหมุดประกาศนี้ (แสดงบนสุด)
               </label>
 
-              {/* Link attach (pretty) */}
+              {/* ✅ File upload (Supabase) */}
               <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                      เอกสารแนบ (ลิงก์)
+                      เอกสารแนบ (อัปโหลดไฟล์)
                     </div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                      วางลิงก์ Google Drive / OneDrive / PDF URL ได้ (ไม่จำเป็น)
+                      แนบไฟล์ PDF/รูป/เอกสาร เพื่อเก็บใน Supabase Storage ผ่าน Backend
                     </div>
                   </div>
 
-                  {fileUrl.trim() ? (
+                  {file ? (
                     <span className="inline-flex items-center rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-200 dark:bg-cyan-900/20 dark:text-cyan-200 dark:ring-cyan-900/40">
-                      มีลิงก์แนบแล้ว
+                      เลือกไฟล์แล้ว
                     </span>
                   ) : (
                     <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600 ring-1 ring-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
-                      ยังไม่แนบ
+                      ยังไม่เลือกไฟล์
                     </span>
                   )}
+                </div>
+
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <input
+                    type="file"
+                    onChange={(e) => setFile(e.target.files?.[0] || null)}
+                    className="block w-full text-sm"
+                  />
+
+                  {file ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFile(null);
+                        setUploadPct(0);
+                        showNotice({ type: "info", title: "ล้างไฟล์แนบแล้ว" });
+                      }}
+                      className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
+                    >
+                      ล้างไฟล์
+                    </button>
+                  ) : null}
+                </div>
+
+                {posting && file ? (
+                  <div className="mt-3 text-xs text-gray-600 dark:text-gray-300">
+                    กำลังอัปโหลด: {uploadPct}%
+                  </div>
+                ) : null}
+              </div>
+
+              {/* legacy link attach (optional) */}
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                  แนบลิงก์ (ตัวเลือกเสริม/ข้อมูลเก่า)
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  ใช้ได้ แต่แนะนำอัปโหลดไฟล์ด้านบนเพื่อมาตรฐานเดียวกัน
                 </div>
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -570,98 +693,91 @@ export default function AnnouncementsPage() {
 
         {/* Feed */}
         <div className="space-y-4">
-          {filteredItems.map((a) => (
-        <div
-            key={a.id}
-            className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800"
-        >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            {/* ✅ จากเดิมเป็น <button> ครอบทั้งหมด -> เปลี่ยนเป็น <div> */}
-            <div className="min-w-0 text-left">
-                <div className="flex items-center gap-2">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-                    {a.title}
-                </h3>
-                {a.pinned ? (
-                    <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-900/40">
-                    📌 ปักหมุด
-                    </span>
-                ) : null}
-                </div>
+          {filteredItems.map((a) => {
+            const hasAttach = !!(a.fileUrl || (a as any).fileKey);
+            return (
+              <div
+                key={a.id}
+                className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 text-left">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                        {a.title}
+                      </h3>
+                      {a.pinned ? (
+                        <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-900/40">
+                          📌 ปักหมุด
+                        </span>
+                      ) : null}
+                    </div>
 
-                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {a.createdAt ? `โพสเมื่อ ${formatTs(a.createdAt)}` : ""}
-                {a.updatedAt ? ` • แก้ไขล่าสุด ${formatTs(a.updatedAt)}` : ""}
-                </div>
+                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {a.createdAt ? `โพสเมื่อ ${formatTs(a.createdAt)}` : ""}
+                      {a.updatedAt ? ` • แก้ไขล่าสุด ${formatTs(a.updatedAt)}` : ""}
+                    </div>
 
-                <p className="mt-2 line-clamp-3 text-sm leading-6 text-gray-700 dark:text-gray-200">
-                {a.body}
-                </p>
-               {a.fileUrl ? (
-                <div className="mt-3">
-                    {isValidUrl(a.fileUrl) ? (
-                    <a
-                        href={a.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-                        title="คลิกเพื่อเปิดลิงก์"
+                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-gray-700 dark:text-gray-200">
+                      {a.body}
+                    </p>
+
+                    {hasAttach ? (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={() => openAttachment(a)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-700"
+                          title="คลิกเพื่อเปิดไฟล์แนบ"
+                        >
+                          📎 ไฟล์แนบ: {a.fileName || "เปิดไฟล์"}
+                        </button>
+                      </div>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => openView(a)}
+                      className="mt-3 inline-flex items-center text-xs font-semibold text-cyan-700 hover:underline dark:text-cyan-200"
+                      title="คลิกเพื่อดูรายละเอียด"
                     >
-                        แนบลิงก์: {a.fileName || "ลิงก์ดาวน์โหลด"}
-                    </a>
-                    ) : (
-                    <span className="inline-flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40">
-                        ลิงก์ไม่ถูกต้อง
-                    </span>
+                      คลิกเพื่ออ่านรายละเอียด →
+                    </button>
+                  </div>
+
+                  {/* Admin actions */}
+                  <div className="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
+                    <div>{a.createdBy?.email || "Admin"}</div>
+
+                    {isAdmin && (
+                      <div className="mt-2 flex justify-end gap-2">
+                        <button
+                          onClick={() => togglePin(a)}
+                          className="rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-900/40 dark:hover:bg-amber-900/30"
+                        >
+                          {a.pinned ? "Unpin" : "Pin"}
+                        </button>
+
+                        <button
+                          onClick={() => openEdit(a)}
+                          className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          onClick={() => openDelete(a)}
+                          className="rounded-xl bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-900/30"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     )}
+                  </div>
                 </div>
-                ) : null}
-
-
-                {/* ✅ คลิกได้เฉพาะตรงนี้ (ปากกาสีเขียว) */}
-                <button
-                type="button"
-                onClick={() => openView(a)}
-                className="mt-3 inline-flex items-center text-xs font-semibold text-cyan-700 hover:underline dark:text-cyan-200"
-                title="คลิกเพื่อดูรายละเอียด"
-                >
-                คลิกเพื่ออ่านรายละเอียด →
-                </button>
-            </div>
-
-            {/* Admin actions */}
-            <div className="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
-                <div>{a.createdBy?.email || "Admin"}</div>
-
-                {isAdmin && (
-                <div className="mt-2 flex justify-end gap-2">
-                    <button
-                    onClick={() => togglePin(a)}
-                    className="rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-900/40 dark:hover:bg-amber-900/30"
-                    >
-                    {a.pinned ? "Unpin" : "Pin"}
-                    </button>
-
-                    <button
-                    onClick={() => openEdit(a)}
-                    className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
-                    >
-                    Edit
-                    </button>
-
-                    <button
-                    onClick={() => openDelete(a)}
-                    className="rounded-xl bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-900/30"
-                    >
-                    Delete
-                    </button>
-                </div>
-                )}
-            </div>
-            </div>
-        </div>
-        ))}
-
+              </div>
+            );
+          })}
 
           {!filteredItems.length && (
             <div className="rounded-2xl bg-white p-8 text-center text-sm text-gray-500 ring-1 ring-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:ring-gray-800">
@@ -691,19 +807,18 @@ export default function AnnouncementsPage() {
               {viewItem.body}
             </div>
 
-            {viewItem.fileUrl ? (
+            {(viewItem.fileUrl || (viewItem as any).fileKey) ? (
               <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200 dark:bg-gray-950/30 dark:ring-gray-800">
                 <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
                   เอกสารแนบ
                 </div>
-                <a
-                  href={viewItem.fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  onClick={() => openAttachment(viewItem)}
                   className="mt-2 inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-800"
                 >
-                  เปิดลิงก์: {viewItem.fileName || viewItem.fileUrl}
-                </a>
+                  เปิดไฟล์: {viewItem.fileName || "ไฟล์แนบ"}
+                </button>
               </div>
             ) : null}
           </div>
@@ -714,7 +829,7 @@ export default function AnnouncementsPage() {
       <Modal
         open={editOpen}
         title="แก้ไขประกาศ"
-        subtitle="แก้เรื่อง/เนื้อหา/ลิงก์เอกสาร แล้วกดบันทึก"
+        subtitle="แก้เรื่อง/เนื้อหา/ไฟล์แนบ แล้วกดบันทึก"
         onClose={closeEdit}
         disableClose={savingEdit}
         footer={
@@ -761,9 +876,47 @@ export default function AnnouncementsPage() {
             ปักหมุดประกาศนี้
           </label>
 
+          {/* ✅ replace file (Supabase) */}
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
             <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-              เอกสารแนบ (ลิงก์)
+              อัปโหลดไฟล์ใหม่แทน (Supabase)
+            </div>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <input
+                type="file"
+                onChange={(e) => setEditFile(e.target.files?.[0] || null)}
+                className="block w-full text-sm"
+              />
+              {editFile ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditFile(null);
+                    setEditUploadPct(0);
+                    showNotice({ type: "info", title: "ล้างไฟล์ใหม่แล้ว" });
+                  }}
+                  className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
+                >
+                  ล้างไฟล์
+                </button>
+              ) : null}
+            </div>
+
+            {savingEdit && editFile ? (
+              <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">
+                กำลังอัปโหลด: {editUploadPct}%
+              </div>
+            ) : null}
+
+            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              * ถ้าอัปโหลดไฟล์ใหม่ ระบบจะล้างลิงก์เดิม (fileUrl) ให้เอง
+            </div>
+          </div>
+
+          {/* legacy link (optional) */}
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
+            <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+              เอกสารแนบ (ลิงก์) - ตัวเลือกเสริม
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <input

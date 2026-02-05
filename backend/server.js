@@ -68,7 +68,7 @@ async function requireAuth(req, res, next) {
     const authHeader = req.headers.authorization || "";
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
 
-    // ✅ DEV BYPASS
+    // ✅ DEV BYPASS (ห้ามเปิดในโปรดักชัน)
     if (!match && process.env.DEV_BYPASS_AUTH === "true") {
       const devUid = req.query.devUid || req.headers["x-dev-uid"];
       if (!devUid) {
@@ -179,12 +179,40 @@ function safeFileName(name = "file") {
   return String(name).replace(/[^\w.\-() ]+/g, "_");
 }
 
-// ✅ helper: รวม req.files (array) + req.file (single) ให้เป็น array เดียว
-function collectFiles(req) {
-  const out = [];
-  if (Array.isArray(req.files) && req.files.length) out.push(...req.files);
-  if (req.file) out.push(req.file);
-  return out;
+function isAllowedMime(mime) {
+  return mime === "application/pdf" || String(mime).startsWith("image/");
+}
+
+function isBadKey(key) {
+  return key.includes("..") || key.includes("\\") || key.includes("//");
+}
+
+// ✅ allowlist folder จาก client -> map เป็น prefix ที่เราคุมเอง
+function mapFolderToPrefix(folderRaw) {
+  const folder = String(folderRaw || "").trim().toLowerCase();
+
+  if (folder === "leave") return "leave_attachments";
+  if (folder === "announcement") return "announcement";
+  if (folder === "profile") return "profile";
+
+  return null;
+}
+
+async function getMyRole(uid) {
+  const snap = await db.collection("users").doc(uid).get();
+  return String(snap.data()?.role || "").toUpperCase();
+}
+
+function isApprover(role) {
+  return ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(role);
+}
+
+function isAllowedPrefix(key) {
+  return (
+    key.startsWith("leave_attachments/") ||
+    key.startsWith("announcement/") ||
+    key.startsWith("profile/")
+  );
 }
 
 /**
@@ -193,25 +221,23 @@ function collectFiles(req) {
  * - single: field "file"
  * - multi : field "files"
  *
- * Response: ส่ง 2 แบบเพื่อกันพังของหน้าเก่า
- * - { ok:true, key, name, size, contentType }  (ถ้าอัปไฟล์เดียว)
- * - { ok:true, attachments:[...] }            (ถ้าอัปหลายไฟล์)
+ * Response:
+ * - { ok:true, key, name, size, contentType, attachments:[...] }  (ถ้าอัปไฟล์เดียว)
+ * - { ok:true, attachments:[...] }                                (ถ้าอัปหลายไฟล์)
  */
 app.post(
   "/files/upload",
   requireAuth,
-  // รับได้ทั้ง file + files ในคำขอเดียวกัน
   upload.fields([
     { name: "file", maxCount: 1 },
     { name: "files", maxCount: 5 },
   ]),
   async (req, res) => {
     try {
-      const uid = req.user?.uid;
+      const uid = String(req.user?.uid || "");
       if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
 
-      // multer.fields จะเอาไว้ใน req.files เป็น object: { file:[...], files:[...] }
-      // แต่บาง env อาจเป็น array ด้วย → จัดการให้หมด
+      // multer.fields -> req.files เป็น object: { file:[...], files:[...] }
       let files = [];
       if (Array.isArray(req.files)) {
         files = req.files;
@@ -223,17 +249,27 @@ app.post(
 
       if (!files.length) return res.status(400).json({ ok: false, error: "NO_FILES" });
 
+      // ✅ allowlist folder
+      const prefix = mapFolderToPrefix(req.body?.folder);
+      if (!prefix) return res.status(400).json({ ok: false, error: "FOLDER_NOT_ALLOWED" });
+
       const bucket = process.env.SUPABASE_BUCKET || "smart-hr-files";
       const supabase = getSupabase();
-
-      const folder = String(req.body?.folder || "leave").trim() || "leave";
-      const basePrefix = folder === "leave" ? "leave_attachments" : folder; // กันคนส่ง folder แปลกๆ
 
       const attachments = [];
 
       for (const f of files) {
+        // ✅ จำกัดชนิดไฟล์ (pdf + image เท่านั้น)
+        if (!isAllowedMime(f.mimetype)) {
+          return res.status(400).json({ ok: false, error: "FILE_TYPE_NOT_ALLOWED" });
+        }
+
         const original = safeFileName(f.originalname || "file");
-        const key = `${basePrefix}/${uid}/${Date.now()}_${original}`;
+        const key = `${prefix}/${uid}/${Date.now()}_${original}`;
+
+        if (isBadKey(key)) {
+          return res.status(400).json({ ok: false, error: "INVALID_KEY" });
+        }
 
         const { error: upErr } = await supabase.storage.from(bucket).upload(key, f.buffer, {
           contentType: f.mimetype || "application/octet-stream",
@@ -252,7 +288,7 @@ app.post(
         });
       }
 
-      // ✅ ถ้าอัป 1 ไฟล์: คืน key แบบตรงๆ ด้วย (หน้าเก่าจะชอบ)
+      // ✅ ถ้าอัป 1 ไฟล์: คืน key แบบตรงๆ ด้วย (กันพังหน้าเก่า)
       if (attachments.length === 1) {
         const a = attachments[0];
         return res.json({
@@ -261,7 +297,7 @@ app.post(
           name: a.name,
           size: a.size,
           contentType: a.contentType,
-          attachments, // เผื่อหน้าใหม่ใช้
+          attachments,
         });
       }
 
@@ -278,6 +314,40 @@ app.get("/files/signed-url", requireAuth, async (req, res) => {
   try {
     const key = String(req.query.key || "").trim();
     if (!key) return res.status(400).json({ ok: false, error: "MISSING_KEY" });
+
+    if (isBadKey(key)) {
+      return res.status(400).json({ ok: false, error: "INVALID_KEY" });
+    }
+
+    // ✅ allowlist prefix กันขอของนอกระบบ
+    if (!isAllowedPrefix(key)) {
+      return res.status(403).json({ ok: false, error: "KEY_NOT_ALLOWED" });
+    }
+
+    const uid = String(req.user?.uid || "");
+    if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+
+    const role = await getMyRole(uid);
+
+    // ----------------- POLICY ตาม prefix -----------------
+    const isOwner = key.includes(`/${uid}/`);
+
+    // 1) ✅ Announcement: ให้ทุกคนที่ login แล้วเปิดได้
+    if (key.startsWith("announcement/")) {
+      // ผ่านเลย
+    }
+    // 2) ✅ Leave attachments: owner หรือ approver เท่านั้น
+    else if (key.startsWith("leave_attachments/")) {
+      if (!isOwner && !isApprover(role)) {
+        return res.status(403).json({ ok: false, error: "FORBIDDEN" });
+      }
+    }
+    // 3) ✅ Profile: owner เท่านั้น
+    else if (key.startsWith("profile/")) {
+      if (!isOwner) {
+        return res.status(403).json({ ok: false, error: "FORBIDDEN" });
+      }
+    }
 
     const bucket = process.env.SUPABASE_BUCKET || "smart-hr-files";
     const supabase = getSupabase();

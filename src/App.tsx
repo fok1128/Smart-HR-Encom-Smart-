@@ -45,14 +45,18 @@ export default function App() {
             <Route path="leave/request" element={<LeaveSubmitPage />} />
             <Route path="leave/status" element={<LeaveStatusPage />} />
 
-            {/* ✅ Approver roles (ADMIN/HR/MANAGER/EXECUTIVE_MANAGER) */}
+            {/* ✅ อนุมัติใบลา (ห่อเฉพาะ route นี้ให้ชัวร์) */}
             <Route
+              path="leave/approve"
               element={
                 <RequireRole allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]} />
               }
             >
-              <Route path="leave/approve" element={<LeaveApprovePage />} />
+              <Route index element={<LeaveApprovePage />} />
             </Route>
+
+            {/* ✅ กันหลง: ถ้าพิมพ์ /leave เฉยๆ ให้ไป submit */}
+            <Route path="leave" element={<Navigate to="/leave/submit" replace />} />
           </Route>
         </Route>
 
