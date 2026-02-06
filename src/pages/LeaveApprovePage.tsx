@@ -1,5 +1,3 @@
-console.log("✅ REAL LeaveApprovePage loaded");
-
 import { useEffect, useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";

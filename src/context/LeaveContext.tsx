@@ -50,15 +50,11 @@ export type LeaveRequest = {
   endAt: string;
   reason?: string;
 
-  // ✅ รองรับไฟล์แบบมี url/storagePath
   attachments?: { name: string; size: number; url?: string; storagePath?: string; key?: string }[];
-
-  // เผื่อของเก่า
   files?: { name: string; size: number }[];
 
   status: LeaveStatus;
 
-  // รองรับของเก่า/ใหม่
   createdAt?: any;
   submittedAt?: any;
   updatedAt?: any;
@@ -76,7 +72,6 @@ type LeavePayload = {
   startAt: string;
   endAt: string;
   reason: string;
-
   attachments?: { name: string; size: number; url?: string; storagePath?: string; key?: string }[];
 };
 
@@ -98,8 +93,12 @@ function genRequestNo6() {
   return String(n).padStart(6, "0");
 }
 
+function normRole(role?: string) {
+  return String(role || "").trim().toUpperCase();
+}
+
 function isApproverRole(role?: string) {
-  const r = (role || "").toUpperCase();
+  const r = normRole(role);
   return ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(r);
 }
 
@@ -120,13 +119,10 @@ function normalizeStatusToThai(s: any): LeaveStatus {
   return "รอดำเนินการ";
 }
 
-/** ✅ เอาไว้ sort โดยไม่ต้อง orderBy ใน query (กันเรื่อง index) */
 function tsToMs(ts: any): number {
   try {
-    // Firestore Timestamp
     if (ts?.toDate) return ts.toDate().getTime();
     if (typeof ts?.seconds === "number") return ts.seconds * 1000;
-    // string / Date
     const d = ts instanceof Date ? ts : ts ? new Date(ts) : null;
     return d ? d.getTime() : 0;
   } catch {
@@ -137,7 +133,7 @@ function tsToMs(ts: any): number {
 export function LeaveProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
 
-  const role = (user?.role || "").toUpperCase();
+  const role = normRole(user?.role);
   const isAdmin = role === "ADMIN";
   const canApprove = isApproverRole(role);
 
@@ -152,15 +148,10 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     }
 
     setLoading(true);
-
     const colRef = collection(db, "leave_requests");
 
-    /**
-     * ✅ USER: อ่านของตัวเองทั้งหมด
-     * ✅ Approver: อ่านเฉพาะ pending แต่ครอบทั้งของใหม่/ของเก่า
-     *
-     * 🔥 สำคัญ: ไม่ใช้ orderBy เพื่อไม่ต้องสร้าง composite index
-     */
+    // ✅ Approver: อ่านเฉพาะ pending (TH/EN)
+    // ✅ User: อ่านของตัวเองทั้งหมด
     const qy = canApprove
       ? query(colRef, where("status", "in", ["รอดำเนินการ", "PENDING"]))
       : query(colRef, where("uid", "==", user.uid));
@@ -187,8 +178,9 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
             status: normalizeStatusToThai(data.status),
 
-            createdAt: data.createdAt,
+            // ✅ จุดสำคัญ: ใช้ submittedAt เป็นหลัก
             submittedAt: data.submittedAt,
+            createdAt: data.createdAt,
             updatedAt: data.updatedAt,
 
             rejectReason: data.rejectReason ?? undefined,
@@ -200,7 +192,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
           };
         });
 
-        // ✅ sort ฝั่ง client (แทน orderBy)
         rows.sort((a, b) => {
           const at = tsToMs(a.submittedAt) || tsToMs(a.createdAt) || tsToMs(a.updatedAt);
           const bt = tsToMs(b.submittedAt) || tsToMs(b.createdAt) || tsToMs(b.updatedAt);
@@ -211,7 +202,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       },
       (err: any) => {
-        // ถ้าเจอ error จะเห็นใน console ชัด ๆ
         console.error("LeaveContext onSnapshot error:", err);
           err?.code === "permission-denied"
             ? "ไม่มีสิทธิ์อ่านข้อมูลการลา (permission denied)"
@@ -245,9 +235,9 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
       status: "รอดำเนินการ",
       rejectReason: null,
+      decisionNote: null,
       decidedAt: null,
 
-      // ✅ มี submittedAt ไว้ด้วย
       submittedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -272,8 +262,9 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     if (status === "ไม่อนุมัติ") patch.rejectedAt = serverTimestamp();
 
     if (status === "ไม่อนุมัติ") {
-      patch.rejectReason = (reason ?? "").trim();
-      patch.decisionNote = (reason ?? "").trim() || null;
+      const note = (reason ?? "").trim();
+      patch.rejectReason = note || null;
+      patch.decisionNote = note || null;
     } else {
       patch.rejectReason = null;
       patch.decisionNote = null;
@@ -287,27 +278,47 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     await deleteDoc(doc(db, "leave_requests", id));
   };
 
+  // ✅ ลบประวัติของ user 1 คน (รองรับ field เก่า/ใหม่ + กันซ้ำ)
   const deleteRequestsByUid = async (uid: string) => {
     if (!isAdmin) throw new Error("FORBIDDEN");
 
-    const colRef = collection(db, "leave_requests");
-    const qy = query(colRef, where("uid", "==", uid));
-    const snap = await getDocs(qy);
+    try {
+      const colRef = collection(db, "leave_requests");
 
-    if (snap.empty) return 0;
+      const qList = [
+        query(colRef, where("uid", "==", uid)),
+        query(colRef, where("createdByUid", "==", uid)),
+        query(colRef, where("userId", "==", uid)),
+      ];
 
-    const docs = snap.docs;
-    const BATCH_LIMIT = 450;
+      const uniq = new Map<string, any>();
+      for (const qy of qList) {
+        const snap = await getDocs(qy);
+        snap.docs.forEach((d) => uniq.set(d.id, d));
+      }
 
-    let deleted = 0;
-    for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
-      const chunk = docs.slice(i, i + BATCH_LIMIT);
-      const batch = writeBatch(db);
-      chunk.forEach((d) => batch.delete(d.ref));
-      await batch.commit();
-      deleted += chunk.length;
+      if (uniq.size === 0) return 0;
+
+      const docs = Array.from(uniq.values());
+      const BATCH_LIMIT = 450;
+
+      let deleted = 0;
+      for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
+        const chunk = docs.slice(i, i + BATCH_LIMIT);
+        const batch = writeBatch(db);
+        chunk.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        deleted += chunk.length;
+      }
+
+      return deleted;
+    } catch (err: any) {
+      console.error("deleteRequestsByUid error:", err);
+      if (String(err?.code || "").includes("permission-denied")) {
+        throw new Error("permission-denied: rules ไม่อนุญาตให้ลบ (Missing or insufficient permissions)");
+      }
+      throw err;
     }
-    return deleted;
   };
 
   const value: LeaveCtx = useMemo(

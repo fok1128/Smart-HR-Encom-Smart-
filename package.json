@@ -4,11 +4,11 @@
   "version": "2.0.2",
   "type": "module",
   "scripts": {
-  "dev": "vite",
-  "typecheck": "tsc -p tsconfig.app.json --noEmit",
-  "build": "npm run typecheck && vite build",
-  "lint": "eslint .",
-  "preview": "vite preview"
+    "dev": "vite",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "build": "npm run typecheck && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.15",
@@ -23,6 +23,8 @@
     "clsx": "^2.1.1",
     "firebase": "^12.8.0",
     "flatpickr": "^4.6.13",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
     "react": "^19.2.3",
     "react-apexcharts": "^1.7.0",
     "react-dnd": "^16.0.1",

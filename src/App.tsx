@@ -19,8 +19,6 @@ import LeaveApproveHistoryPage from "./pages/LeaveApproveHistoryPage"; // ✅ �
 import RequireRole from "./routes/RequireRole";
 import { ToastCenterProvider } from "./components/common/ToastCenter";
 
-const APPROVER_ROLES = ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"];
-
 export default function App() {
   return (
     <ToastCenterProvider>
@@ -48,24 +46,20 @@ export default function App() {
             <Route path="leave/request" element={<LeaveSubmitPage />} />
             <Route path="leave/status" element={<LeaveStatusPage />} />
 
-            {/* ✅ อนุมัติใบลา */}
+            {/* ✅ Approver roles (ADMIN/HR/MANAGER/EXECUTIVE_MANAGER) */}
             <Route
-              path="leave/approve"
-              element={<RequireRole allow={APPROVER_ROLES} />}
+              element={
+                <RequireRole
+                  allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]}
+                />
+              }
             >
-              <Route index element={<LeaveApprovePage />} />
+              <Route path="leave/approve" element={<LeaveApprovePage />} />
+              <Route
+                path="leave/approve-history"
+                element={<LeaveApproveHistoryPage />}
+              />
             </Route>
-
-            {/* ✅ ประวัติการอนุมัติใบลา */}
-            <Route
-              path="leave/approve-history"
-              element={<RequireRole allow={APPROVER_ROLES} />}
-            >
-              <Route index element={<LeaveApproveHistoryPage />} />
-            </Route>
-
-            {/* ✅ กันหลง: ถ้าพิมพ์ /leave เฉยๆ ให้ไป submit */}
-            <Route path="leave" element={<Navigate to="/leave/submit" replace />} />
           </Route>
         </Route>
 
