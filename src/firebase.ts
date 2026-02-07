@@ -1,3 +1,4 @@
+// firebase.ts
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
@@ -19,6 +20,5 @@ if (!firebaseConfig.apiKey) {
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// ✅ เพิ่ม 2 บรรทัดนี้
 export const db = getFirestore(app);
 export const storage = getStorage(app);

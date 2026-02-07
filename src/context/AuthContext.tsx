@@ -1,3 +1,4 @@
+// src/context/AuthContext.tsx
 import {
   createContext,
   useContext,
@@ -14,6 +15,7 @@ import {
   setPersistence,
   signInWithEmailAndPassword,
   signOut,
+  type User as FirebaseUser,
 } from "firebase/auth";
 
 type ApiUser = {
@@ -23,6 +25,10 @@ type ApiUser = {
   fname?: string;
   lname?: string;
   avatarUrl?: string;
+
+  // ✅ เพิ่ม
+  employeeNo?: string;
+  phone?: string;
 };
 
 type Employee = {
@@ -30,6 +36,16 @@ type Employee = {
   lname?: string;
   position?: string;
   avatarUrl?: string;
+
+  // ✅ เพิ่ม
+  employeeNo?: string;
+  phone?: string;
+};
+
+type ClaimSync = {
+  ok?: boolean;
+  changed?: boolean;
+  role?: string;
 };
 
 type MeResponseRaw = {
@@ -40,14 +56,20 @@ type MeResponseRaw = {
   user?: ApiUser | null;
   employee?: Employee | null;
   projectId?: string;
+
+  claimSync?: ClaimSync;
 };
 
-// ✅ ตัวที่ UI ใช้จริง: มี field แบบ "top-level" ให้เรียกได้เลย
+// ✅ ตัวที่ UI ใช้จริง
 export type MeResponse = MeResponseRaw & {
   fname?: string;
   lname?: string;
   position?: string;
   avatarUrl?: string;
+
+  // ✅ เพิ่มให้หน้าอื่นๆ ใช้ได้เลย
+  employeeNo?: string;
+  phone?: string;
 };
 
 type AuthContextType = {
@@ -62,6 +84,14 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
 
+function pickStr(...vals: any[]) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
 // ✅ map ข้อมูลจาก backend ให้เป็นรูปเดียวกับที่ UI อ่านง่าย
 function normalizeMe(raw: MeResponseRaw): MeResponse {
   const fname = raw.employee?.fname ?? raw.user?.fname;
@@ -69,12 +99,18 @@ function normalizeMe(raw: MeResponseRaw): MeResponse {
   const position = raw.employee?.position;
   const avatarUrl = raw.employee?.avatarUrl ?? raw.user?.avatarUrl;
 
+  // ✅ เพิ่ม: employeeNo/phone (พยายามหยิบจาก employee ก่อน)
+  const employeeNo = pickStr(raw.employee?.employeeNo, raw.user?.employeeNo);
+  const phone = pickStr(raw.employee?.phone, raw.user?.phone);
+
   return {
     ...raw,
     fname,
     lname,
     position,
     avatarUrl,
+    employeeNo: employeeNo || undefined,
+    phone: phone || undefined,
   };
 }
 
@@ -93,6 +129,20 @@ async function fetchMe(idToken: string): Promise<MeResponse> {
   return normalizeMe(data as MeResponseRaw);
 }
 
+async function fetchMeWithClaimsRefresh(fbUser: FirebaseUser): Promise<MeResponse> {
+  const token1 = await fbUser.getIdToken();
+  const me1 = await fetchMe(token1);
+
+  if (me1?.claimSync?.changed) {
+    await fbUser.getIdToken(true);
+    const token2 = await fbUser.getIdToken();
+    const me2 = await fetchMe(token2);
+    return me2;
+  }
+
+  return me1;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,8 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const token = await fbUser.getIdToken();
-        const me = await fetchMe(token);
+        const me = await fetchMeWithClaimsRefresh(fbUser);
         setUser(me);
       } catch (e) {
         console.error("Auth bootstrap error:", e);
@@ -135,16 +184,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const cred = await signInWithEmailAndPassword(auth, email, password);
+      const fbUser = cred.user;
 
-      const fbEmail = cred.user?.email ?? auth.currentUser?.email ?? null;
-      if (!fbEmail) {
-        throw new Error("FIREBASE_NO_CURRENT_USER");
-      }
+      const fbEmail = fbUser?.email ?? auth.currentUser?.email ?? null;
+      if (!fbEmail) throw new Error("FIREBASE_NO_CURRENT_USER");
 
-      const token = await cred.user.getIdToken();
-      const me = await fetchMe(token);
+      const me = await fetchMeWithClaimsRefresh(fbUser);
       setUser(me);
-
       return me;
     } finally {
       setLoading(false);

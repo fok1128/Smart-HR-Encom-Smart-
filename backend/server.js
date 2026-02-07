@@ -62,6 +62,42 @@ function initFirebaseAdmin() {
 initFirebaseAdmin();
 const db = admin.firestore();
 
+// ----------------- ✅ CLAIMS HELPERS -----------------
+function normalizeRole(r) {
+  const role = String(r || "USER").trim().toUpperCase();
+  const allowed = ["USER", "ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"];
+  return allowed.includes(role) ? role : "USER";
+}
+
+/**
+ * ✅ Sync custom claims role ให้ตรงกับ Firestore users/{uid}.role
+ * - merge claims เดิม (ไม่ทับของอื่น)
+ * - ถ้า role ตรงอยู่แล้ว จะไม่ set ซ้ำ
+ */
+async function syncRoleClaimFromFirestore(uid) {
+  const userRef = db.collection("users").doc(uid);
+  const userSnap = await userRef.get();
+  if (!userSnap.exists) {
+    return { ok: false, changed: false, role: "USER", error: "USER_DOC_NOT_FOUND" };
+  }
+
+  const userData = userSnap.data() || {};
+  const roleFs = normalizeRole(userData.role);
+
+  const authUser = await admin.auth().getUser(uid);
+  const currentClaims = authUser.customClaims || {};
+  const roleClaim = normalizeRole(currentClaims.role);
+
+  if (roleClaim === roleFs) {
+    return { ok: true, changed: false, role: roleFs };
+  }
+
+  const nextClaims = { ...currentClaims, role: roleFs };
+  await admin.auth().setCustomUserClaims(uid, nextClaims);
+
+  return { ok: true, changed: true, role: roleFs };
+}
+
 // ----------------- Auth Middleware -----------------
 async function requireAuth(req, res, next) {
   try {
@@ -77,7 +113,8 @@ async function requireAuth(req, res, next) {
           error: "DEV_BYPASS_AUTH is on. Provide ?devUid=XXX or header x-dev-uid",
         });
       }
-      req.user = { uid: String(devUid), email: null, dev: true };
+      // DEV ให้เป็น ADMIN ไว้ก่อน (ช่วยเทส)
+      req.user = { uid: String(devUid), email: null, dev: true, role: "ADMIN" };
       return next();
     }
 
@@ -85,7 +122,11 @@ async function requireAuth(req, res, next) {
 
     const idToken = match[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    req.user = decoded;
+
+    // ✅ role จาก claim (ถ้ามี)
+    const role = normalizeRole(decoded?.role);
+
+    req.user = { ...decoded, role };
     return next();
   } catch (err) {
     console.error("requireAuth error:", err);
@@ -120,6 +161,7 @@ app.get("/me", requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
 
+    // ✅ 1) อ่าน user doc ก่อน
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
     if (!userSnap.exists) {
@@ -132,8 +174,9 @@ app.get("/me", requireAuth, async (req, res) => {
     }
 
     const userData = userSnap.data() || {};
-    const role = userData.role || "USER";
+    const roleFs = normalizeRole(userData.role || "USER");
     const employeeNo = userData.employeeNo;
+
     if (!employeeNo) {
       return res.status(400).json({
         ok: false,
@@ -143,6 +186,10 @@ app.get("/me", requireAuth, async (req, res) => {
       });
     }
 
+    // ✅ 2) Sync custom claims role ให้ตรงกับ Firestore (ทาง A)
+    const claimSync = await syncRoleClaimFromFirestore(uid);
+
+    // ✅ 3) โหลด employee
     const empRef = db.collection("employees").doc(employeeNo);
     const empSnap = await empRef.get();
     if (!empSnap.exists) {
@@ -154,17 +201,55 @@ app.get("/me", requireAuth, async (req, res) => {
       });
     }
 
+    // ✅ หมายเหตุ: ถ้า claim ถูกเปลี่ยน (changed=true) ฝั่ง client ต้อง getIdToken(true) หรือ logout/login
     return res.json({
       ok: true,
       projectId: admin.app().options.projectId || null,
       uid,
       email: req.user.email || null,
-      role,
+
+      // ✅ role ที่เชื่อถือได้ = จาก Firestore (และกำลัง sync ไป claim)
+      role: roleFs,
+
+      claimSync, // { ok, changed, role } ช่วย debug
+
       user: { id: userSnap.id, ...userData },
       employee: { id: empSnap.id, ...empSnap.data() },
     });
   } catch (err) {
     console.error("/me error:", err);
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * ✅ endpoint สำหรับ admin ตั้ง role ให้ user คนอื่น
+ * POST /admin/set-role  body: { uid, role }
+ * ต้องเป็น ADMIN (จาก claim) เท่านั้น
+ */
+app.post("/admin/set-role", requireAuth, async (req, res) => {
+  try {
+    if (normalizeRole(req.user?.role) !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_ADMIN_ONLY" });
+    }
+
+    const uid = String(req.body?.uid || "").trim();
+    const role = normalizeRole(req.body?.role);
+
+    if (!uid) return res.status(400).json({ ok: false, error: "MISSING_UID" });
+
+    // 1) update Firestore
+    await db.collection("users").doc(uid).set(
+      { role, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+
+    // 2) sync claim
+    const claimSync = await syncRoleClaimFromFirestore(uid);
+
+    return res.json({ ok: true, uid, role, claimSync });
+  } catch (err) {
+    console.error("/admin/set-role error:", err);
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
@@ -179,28 +264,9 @@ function safeFileName(name = "file") {
   return String(name).replace(/[^\w.\-() ]+/g, "_");
 }
 
-// ✅ helper: รวม req.files (array) + req.file (single) ให้เป็น array เดียว
-function collectFiles(req) {
-  const out = [];
-  if (Array.isArray(req.files) && req.files.length) out.push(...req.files);
-  if (req.file) out.push(req.file);
-  return out;
-}
-
-/**
- * ✅ POST /files/upload
- * รองรับ:
- * - single: field "file"
- * - multi : field "files"
- *
- * Response: ส่ง 2 แบบเพื่อกันพังของหน้าเก่า
- * - { ok:true, key, name, size, contentType }  (ถ้าอัปไฟล์เดียว)
- * - { ok:true, attachments:[...] }            (ถ้าอัปหลายไฟล์)
- */
 app.post(
   "/files/upload",
   requireAuth,
-  // รับได้ทั้ง file + files ในคำขอเดียวกัน
   upload.fields([
     { name: "file", maxCount: 1 },
     { name: "files", maxCount: 5 },
@@ -210,8 +276,6 @@ app.post(
       const uid = req.user?.uid;
       if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
 
-      // multer.fields จะเอาไว้ใน req.files เป็น object: { file:[...], files:[...] }
-      // แต่บาง env อาจเป็น array ด้วย → จัดการให้หมด
       let files = [];
       if (Array.isArray(req.files)) {
         files = req.files;
@@ -227,7 +291,7 @@ app.post(
       const supabase = getSupabase();
 
       const folder = String(req.body?.folder || "leave").trim() || "leave";
-      const basePrefix = folder === "leave" ? "leave_attachments" : folder; // กันคนส่ง folder แปลกๆ
+      const basePrefix = folder === "leave" ? "leave_attachments" : folder;
 
       const attachments = [];
 
@@ -252,7 +316,6 @@ app.post(
         });
       }
 
-      // ✅ ถ้าอัป 1 ไฟล์: คืน key แบบตรงๆ ด้วย (หน้าเก่าจะชอบ)
       if (attachments.length === 1) {
         const a = attachments[0];
         return res.json({
@@ -261,7 +324,7 @@ app.post(
           name: a.name,
           size: a.size,
           contentType: a.contentType,
-          attachments, // เผื่อหน้าใหม่ใช้
+          attachments,
         });
       }
 
@@ -273,7 +336,6 @@ app.post(
   }
 );
 
-// ✅ GET /files/signed-url?key=...
 app.get("/files/signed-url", requireAuth, async (req, res) => {
   try {
     const key = String(req.query.key || "").trim();
