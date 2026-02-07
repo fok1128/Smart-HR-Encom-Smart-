@@ -21,6 +21,7 @@
     "@react-jvectormap/world": "^1.1.2",
     "apexcharts": "^4.1.0",
     "clsx": "^2.1.1",
+    "date-holidays": "^3.26.8",
     "firebase": "^12.8.0",
     "flatpickr": "^4.6.13",
     "jspdf": "^4.1.0",

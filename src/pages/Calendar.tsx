@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
+import { buildThaiHolidayMapAround } from "../services/utils/thHolidays";
 
 // ===== Types (ทำให้ไฟล์นี้ไม่พึ่ง type ที่ export จาก context) =====
 type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
@@ -17,26 +18,23 @@ type LeaveSubType =
 type LeaveStatus = "อนุมัติ" | "ไม่อนุมัติ" | "รอดำเนินการ";
 
 // ✅ รองรับรายวัน/หลายวัน + รายชั่วโมง/รายนาที
-// - all-day: "YYYY-MM-DD" (ไม่มี T)
-// - timed:   "YYYY-MM-DDTHH:mm"
 type LeaveEvent = {
-  id: string; // ใช้เป็น key ภายใน
+  id: string;
   requestNo: string;
   category: LeaveCategory;
   subType: LeaveSubType;
   status: LeaveStatus;
   startAt: string;
   endAt: string;
-  note?: string; // reason/หมายเหตุ
+  note?: string;
 };
 
-// สำหรับรายการใน “วันนั้น”
 type DayOccurrence = {
   event: LeaveEvent;
   date: string; // YYYY-MM-DD
   allDay: boolean;
-  startMin?: number; // timed only
-  endMin?: number; // timed only
+  startMin?: number;
+  endMin?: number;
 };
 
 type BarSeg = {
@@ -64,15 +62,14 @@ const addMonths = (d: Date, m: number) => new Date(d.getFullYear(), d.getMonth()
 function parseLocalDateTime(input: string): Date {
   const [dPart, tPartRaw] = input.split("T");
   const [y, m, d] = dPart.split("-").map(Number);
-  let hh = 0,
-    mm = 0;
+  let hh = 0, mm = 0;
   if (tPartRaw) {
-    const t = tPartRaw.slice(0, 5); // HH:mm
+    const t = tPartRaw.slice(0, 5);
     const parts = t.split(":").map(Number);
     hh = parts[0] ?? 0;
     mm = parts[1] ?? 0;
   }
-  return new Date(y, m - 1, d, hh, mm, 0, 0); // local time
+  return new Date(y, m - 1, d, hh, mm, 0, 0);
 }
 
 function parseISODateOnly(iso: string): Date {
@@ -128,7 +125,6 @@ function eachDayISOInRange(startISO: string, endISO: string) {
   return days;
 }
 
-// ✅ แตก event เป็น occurrence รายวัน (สำหรับตารางรายละเอียดด้านขวา)
 function splitEventByDay(ev: LeaveEvent): DayOccurrence[] {
   const start = parseLocalDateTime(ev.startAt);
   const end = parseLocalDateTime(ev.endAt);
@@ -147,7 +143,6 @@ function splitEventByDay(ev: LeaveEvent): DayOccurrence[] {
     return days.map((d) => ({ event: ev, date: d, allDay: true }));
   }
 
-  // timed: ตัดเป็น segment ต่อวัน
   const sDateOnly = parseISODateOnly(sISO).getTime();
   const eDateOnly = parseISODateOnly(eISO).getTime();
 
@@ -172,12 +167,7 @@ function splitEventByDay(ev: LeaveEvent): DayOccurrence[] {
 // ---------- Styles ----------
 const catStyle: Record<
   LeaveCategory,
-  {
-    dot: string;
-    barBg: string;
-    barText: string;
-    border: string;
-  }
+  { dot: string; barBg: string; barText: string; border: string }
 > = {
   ลาป่วย: {
     dot: "bg-red-500",
@@ -216,7 +206,7 @@ function leaveLabel(ev: LeaveEvent) {
   return `${ev.category} • ${ev.subType}`;
 }
 
-// ===== helpers for mapping requests (รองรับ schema ใหม่/เก่า) =====
+// ===== helpers for mapping requests =====
 type RequestLike = {
   id?: string;
   requestNo?: string;
@@ -227,21 +217,17 @@ type RequestLike = {
   endAt?: any;
   reason?: string;
 
-  // schema เก่า (ที่เจอบ่อย)
   type?: string;
   startDate?: any;
   endDate?: any;
-  startTime?: string; // "HH:mm"
-  endTime?: string; // "HH:mm"
+  startTime?: string;
+  endTime?: string;
   note?: string;
 };
 
 function toISODateFromAny(v: any): string {
   if (!v) return toISODate(new Date());
-  if (typeof v === "string") {
-    // "YYYY-MM-DD" หรือ "YYYY-MM-DDTHH:mm"
-    return v.includes("T") ? v.slice(0, 10) : v;
-  }
+  if (typeof v === "string") return v.includes("T") ? v.slice(0, 10) : v;
   if (typeof v?.toDate === "function") return toISODate(v.toDate());
   if (v instanceof Date) return toISODate(v);
   const d = new Date(v);
@@ -249,13 +235,12 @@ function toISODateFromAny(v: any): string {
 }
 
 function toTimedISO(dateISO: string, hhmm?: string) {
-  if (!hhmm) return dateISO; // ถ้าไม่มีเวลา -> ถือว่า all-day
+  if (!hhmm) return dateISO;
   return `${dateISO}T${hhmm.slice(0, 5)}`;
 }
 
 function normalizeCategory(x?: string): LeaveCategory {
   if (x === "ลากิจ" || x === "ลาป่วย" || x === "ลาพักร้อน" || x === "ลากรณีพิเศษ") return x;
-  // fallback จาก schema เก่า: type อาจเป็น category
   if (x === "ลาคลอด" || x === "ลาราชการทหาร") return "ลากรณีพิเศษ";
   return "ลากิจ";
 }
@@ -274,7 +259,6 @@ function normalizeSubType(x?: string, cat?: LeaveCategory): LeaveSubType {
   ];
   if (x && all.includes(x as LeaveSubType)) return x as LeaveSubType;
 
-  // ถ้าไม่เจอ ให้ default ตาม category
   if (cat === "ลาป่วย") return "ลาป่วยทั่วไป";
   if (cat === "ลาพักร้อน") return "ลาพักร้อน";
   if (cat === "ลากรณีพิเศษ") return "อื่นๆ";
@@ -283,21 +267,36 @@ function normalizeSubType(x?: string, cat?: LeaveCategory): LeaveSubType {
 
 function normalizeStatus(x?: string): LeaveStatus {
   if (x === "อนุมัติ" || x === "ไม่อนุมัติ" || x === "รอดำเนินการ") return x;
+  // เผื่อหลุด EN
+  if (x === "APPROVED") return "อนุมัติ";
+  if (x === "REJECTED") return "ไม่อนุมัติ";
+  if (x === "PENDING") return "รอดำเนินการ";
   return "รอดำเนินการ";
 }
 
 export default function Calendar() {
-  const { requests } = useLeave();
+  const { calendarRequests, loadingCalendar } = useLeave();
 
-  // ✅ ดึงจากคำร้องจริงทั้งหมด -> แปลงเป็น event ใช้ในปฏิทิน
+  // ✅ holiday map (ปีก่อน/ปีนี้/ปีหน้า)
+  const today = new Date();
+  const [currentMonth, setCurrentMonth] = useState<Date>(startOfMonth(today));
+  const [selectedDate, setSelectedDate] = useState<Date>(today);
+
+  const holidayMap = useMemo(() => {
+    return buildThaiHolidayMapAround(currentMonth.getFullYear());
+  }, [currentMonth]);
+
+  const selectedISO = toISODate(selectedDate);
+  const selectedHolidays = holidayMap.get(selectedISO) ?? [];
+
+  // ✅ แปลงคำร้อง -> event ใช้ในปฏิทิน
   const leaveEvents: LeaveEvent[] = useMemo(() => {
-    return ((requests ?? []) as unknown as RequestLike[]).map((r) => {
+    return ((calendarRequests ?? []) as unknown as RequestLike[]).map((r) => {
       const requestNo = r.requestNo ?? r.id ?? "-";
       const category = normalizeCategory(r.category ?? r.type);
       const subType = normalizeSubType(r.subType, category);
       const status = normalizeStatus(r.status);
 
-      // รองรับทั้ง startAt/endAt (ใหม่) และ startDate/endDate + startTime/endTime (เก่า)
       const startDateISO = toISODateFromAny(r.startAt ?? r.startDate);
       const endDateISO = toISODateFromAny(r.endAt ?? r.endDate);
 
@@ -326,17 +325,11 @@ export default function Calendar() {
         note: r.reason ?? r.note ?? "",
       };
     });
-  }, [requests]);
+  }, [calendarRequests]);
 
-  const weekStartsOn: 0 | 1 = 1; // จันทร์เริ่มสัปดาห์
-  const today = new Date();
-
-  const [currentMonth, setCurrentMonth] = useState<Date>(startOfMonth(today));
-  const [selectedDate, setSelectedDate] = useState<Date>(today);
-
+  const weekStartsOn: 0 | 1 = 1;
   const cells = useMemo(() => buildCalendarCells(currentMonth, weekStartsOn), [currentMonth]);
 
-  // ✅ occurrence map (ตารางด้านขวา)
   const occMap = useMemo(() => {
     const m = new Map<string, DayOccurrence[]>();
 
@@ -347,7 +340,6 @@ export default function Calendar() {
       }
     }
 
-    // sort: all-day ก่อน แล้ว timed ตามเวลาเริ่ม
     for (const [k, list] of m.entries()) {
       list.sort((a, b) => {
         if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
@@ -359,7 +351,6 @@ export default function Calendar() {
     return m;
   }, [leaveEvents]);
 
-  // ✅ bar map: ทำ “แถบต่อเนื่อง” สำหรับ "ลาหลายวัน" (ทั้ง all-day และ timed)
   const barMap = useMemo(() => {
     const m = new Map<string, BarSeg[]>();
 
@@ -371,7 +362,6 @@ export default function Calendar() {
       const hasTimeEnd = ev.endAt.includes("T");
       const allDay = !(hasTimeStart && hasTimeEnd);
 
-      // ✅ เคสลาทั้งวัน "วันเดียว" ให้ทำเป็น bar 1 วัน
       if (allDay && sISO === eISO) {
         const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
         if (!m.has(sISO)) m.set(sISO, []);
@@ -379,17 +369,11 @@ export default function Calendar() {
         continue;
       }
 
-      // ✅ ทำแถบต่อเนื่องเฉพาะเคสข้ามวัน
       if (sISO === eISO) continue;
 
       const days = eachDayISOInRange(sISO, eISO);
       for (const d of days) {
-        const seg: BarSeg = {
-          event: ev,
-          date: d,
-          isStart: d === sISO,
-          isEnd: d === eISO,
-        };
+        const seg: BarSeg = { event: ev, date: d, isStart: d === sISO, isEnd: d === eISO };
         if (!m.has(d)) m.set(d, []);
         m.get(d)!.push(seg);
       }
@@ -412,7 +396,6 @@ export default function Calendar() {
     return new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric" }).format(currentMonth);
   }, [currentMonth]);
 
-  const selectedISO = toISODate(selectedDate);
   const selectedOccs = occMap.get(selectedISO) ?? [];
 
   const goToday = () => {
@@ -420,7 +403,6 @@ export default function Calendar() {
     setSelectedDate(today);
   };
 
-  // รายการในเดือนนี้
   const monthEvents = useMemo(() => {
     const monthStart = startOfMonth(currentMonth);
     const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59);
@@ -440,7 +422,8 @@ export default function Calendar() {
         <div>
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">ปฏิทินวันลา</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            ข้อมูลจาก “คำร้องที่ยื่นจริง” • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
+            วันหยุดไทย + วันลา • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
+            {loadingCalendar ? " • กำลังโหลด..." : ""}
           </p>
         </div>
 
@@ -482,7 +465,6 @@ export default function Calendar() {
             </div>
 
             <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{monthTitle}</div>
-
             <div className="text-sm text-gray-500 dark:text-gray-400">เลือกวันเพื่อดูรายละเอียด</div>
           </div>
 
@@ -504,7 +486,8 @@ export default function Calendar() {
               const iso = toISODate(d);
 
               const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-              const dimWeekend = inMonth && isWeekend;
+              const holidays = holidayMap.get(iso) ?? [];
+              const isHoliday = holidays.length > 0;
 
               const barSegs = barMap.get(iso) ?? [];
               const occs = occMap.get(iso) ?? [];
@@ -516,22 +499,25 @@ export default function Calendar() {
               const showBars = barSegs.slice(0, maxBars);
               const moreBars = barSegs.length - showBars.length;
 
+              const holidayTitle = isHoliday ? holidays.map((h) => h.name).join(", ") : "";
+
               return (
                 <button
                   key={iso}
                   type="button"
                   onClick={() => setSelectedDate(d)}
+                  title={holidayTitle}
                   className={[
                     "relative h-20 rounded-xl border text-left transition dark:border-gray-800",
                     "overflow-visible",
                     inMonth
                       ? "border-gray-200 bg-white hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800"
                       : "border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-400 dark:hover:bg-gray-800/80",
-                    dimWeekend ? "opacity-70" : "",
                     isSelected ? "ring-3 ring-brand-500/20 border-brand-300 dark:border-brand-800" : "",
+                    isHoliday ? "bg-red-50/60 dark:bg-red-900/10" : "",
                   ].join(" ")}
                 >
-                  {/* Bars (ลาหลายวัน) — ด้านล่าง */}
+                  {/* Bars */}
                   <div className="pointer-events-none absolute inset-0">
                     {showBars.map((seg, i) => {
                       const ev = seg.event;
@@ -563,18 +549,28 @@ export default function Calendar() {
                     })}
                   </div>
 
-                  {/* เลขวันที่: มุมซ้ายบน */}
+                  {/* Date number */}
                   <div
                     className={[
                       "absolute top-2 left-2 z-20 text-sm font-semibold leading-none",
                       isToday ? "text-brand-500" : "text-gray-900 dark:text-gray-100",
                       !inMonth ? "text-gray-600 dark:text-gray-400" : "",
+                      isHoliday ? "text-red-600 dark:text-red-300" : "",
+                      !isHoliday && inMonth && isWeekend ? "text-red-600/80 dark:text-red-300/80" : "",
                     ].join(" ")}
                   >
                     {d.getDate()}
                   </div>
 
-                  {/* จุดสี: มุมขวาบน */}
+                  {/* Holiday badge (สั้น ๆ) */}
+                  {isHoliday && (
+                    <div className="absolute left-2 top-7 z-20 max-w-[75%] truncate rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-200">
+                      {holidays[0].name}
+                      {holidays.length > 1 ? ` +${holidays.length - 1}` : ""}
+                    </div>
+                  )}
+
+                  {/* Dot categories */}
                   {(timedOccs.length > 0 || barSegs.length > 0) && (
                     <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
                       {Array.from(new Set([...barSegs.map((b) => b.event.category), ...timedOccs.map((o) => o.event.category)]))
@@ -589,8 +585,8 @@ export default function Calendar() {
                     </div>
                   )}
 
-                  {/* timed hint */}
-                  {timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
+                  {/* timed hint (ถ้าไม่มี holiday badge จะโชว์ตรงนี้พอดี) */}
+                  {!isHoliday && timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
                     <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
                       {formatTimeFromMinutes(timedOccs[0].startMin)}–{formatTimeFromMinutes(timedOccs[0].endMin)}
                     </div>
@@ -608,6 +604,10 @@ export default function Calendar() {
                 <span className="text-gray-600 dark:text-gray-300">{c}</span>
               </div>
             ))}
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-2 w-2 rounded-full bg-red-500" />
+              <span className="text-gray-600 dark:text-gray-300">วันหยุดไทย</span>
+            </div>
           </div>
         </div>
 
@@ -627,8 +627,22 @@ export default function Calendar() {
             </div>
 
             <span className="rounded-full border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 dark:border-gray-800 dark:text-gray-200">
-              {selectedOccs.length} รายการ
+              {selectedOccs.length} รายการลา
             </span>
+          </div>
+
+          {/* ✅ Holidays */}
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/15 dark:text-red-200">
+            <div className="font-semibold">วันหยุด / วันสำคัญ</div>
+            {selectedHolidays.length === 0 ? (
+              <div className="mt-1 text-red-700/80 dark:text-red-200/80">ไม่มีวันหยุดในวันนี้</div>
+            ) : (
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {selectedHolidays.map((h, idx) => (
+                  <li key={`${h.dateISO}-${idx}`}>{h.name}</li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {/* Table */}

@@ -1,19 +1,18 @@
+// LeaveApprovePage.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";
 import { db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
-// ✅ ใช้ Supabase signed-url ผ่าน backend (มาจาก leaveRequests.ts ของเธอ)
+// ✅ Supabase signed-url ผ่าน backend
 import { getAttachmentKey, getSignedUrlForKey } from "../services/leaveRequests";
 
 function fmtDate(ts: any) {
   const d =
-    ts?.toDate?.() ? ts.toDate() :
-    ts instanceof Date ? ts :
-    ts ? new Date(ts) : null;
+    ts?.toDate?.() ? ts.toDate() : ts instanceof Date ? ts : ts ? new Date(ts) : null;
 
-  if (!d) return "-";
+  if (!d || isNaN(d.getTime())) return "-";
   return d.toLocaleString("th-TH", {
     year: "numeric",
     month: "short",
@@ -28,9 +27,9 @@ const APPROVER_ROLES = ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"];
 type AttachItem = {
   name: string;
   size: number;
-  url?: string;          // legacy/signed url
-  storagePath?: string;  // supabase key (บางระบบใช้ชื่อนี้)
-  key?: string;          // supabase key (บางระบบใช้ชื่อนี้)
+  url?: string;
+  storagePath?: string;
+  key?: string;
   contentType?: string;
 };
 
@@ -42,18 +41,51 @@ function openInNewTab(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function pickStr(...vals: any[]) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function getRowEmployeeNo(r: any) {
+  return pickStr(
+    r?.employeeNo,
+    r?.empNo,
+    r?.employee_id,
+    r?.employeeId,
+    r?.createdByEmployeeNo,
+    r?.userEmployeeNo
+  );
+}
+
+function getEmbeddedName(r: any) {
+  const n = pickStr(r?.employeeName, r?.requesterName, r?.createdByName);
+  if (n) return n;
+
+  const fname = pickStr(r?.fname, r?.firstName, r?.requesterFName);
+  const lname = pickStr(r?.lname, r?.lastName, r?.requesterLName);
+  const full = `${fname} ${lname}`.trim();
+  return full;
+}
+
+function getEmbeddedPhone(r: any) {
+  return pickStr(r?.phone, r?.createdByPhone, r?.tel, r?.mobile);
+}
+
 export default function LeaveApprovePage() {
   const { requests, loading, updateStatus, deleteRequest, deleteRequestsByUid } = useLeave();
-
   const { user } = useAuth();
-  const role = (user?.role || "").toUpperCase();
+
+  const role = String(user?.role || "").toUpperCase();
   const isAdmin = role === "ADMIN";
   const canApprove = APPROVER_ROLES.includes(role);
 
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // uid -> employee data
-  const [empMap, setEmpMap] = useState<Record<string, { name: string; phone: string; employeeNo: string }>>({});
+  // ✅ map: employeeNo -> employee data (อ่านจาก employees เท่านั้น)
+  const [empNoMap, setEmpNoMap] = useState<Record<string, { name: string; phone: string }>>({});
 
   // reject modal
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -66,50 +98,52 @@ export default function LeaveApprovePage() {
   const [previewUrl, setPreviewUrl] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  const sorted = useMemo(() => requests, [requests]);
+  const sorted = useMemo(() => (Array.isArray(requests) ? requests : []), [requests]);
   const busy = (key: string) => savingId === key;
 
-  // load employees info
+  // ✅ โหลด employees info ตาม employeeNo ที่พบใน requests (doc id = employeeNo)
   useEffect(() => {
     let alive = true;
 
     async function load() {
-      const uids = Array.from(new Set((sorted || []).map((r: any) => r.uid).filter(Boolean)));
-      if (uids.length === 0) return;
+      const empNos = Array.from(new Set(sorted.map((r: any) => getRowEmployeeNo(r)).filter(Boolean)));
+
+      if (empNos.length === 0) {
+        if (alive) setEmpNoMap({});
+        return;
+      }
 
       const pairs = await Promise.all(
-        uids.map(async (uid) => {
+        empNos.map(async (employeeNo) => {
           try {
-            const userSnap = await getDoc(doc(db, "users", uid));
-            const udata: any = userSnap.exists() ? userSnap.data() : null;
-
-            const employeeNo = String(udata?.employeeNo ?? "").trim();
-            const userPhone = String(udata?.phone ?? udata?.tel ?? udata?.mobile ?? "").trim() || "-";
-
-            if (!employeeNo) {
-              return [uid, { name: "-", phone: userPhone, employeeNo: "" }] as const;
-            }
-
             const empSnap = await getDoc(doc(db, "employees", employeeNo));
             const edata: any = empSnap.exists() ? empSnap.data() : null;
 
-            const name = edata ? `${edata.fname || ""} ${edata.lname || ""}`.trim() : "-";
-            const phone =
-              String(edata?.phone ?? edata?.tel ?? edata?.mobile ?? "").trim() || userPhone || "-";
+            const name = edata
+              ? `${pickStr(edata?.fname, edata?.firstName, edata?.first_name)} ${pickStr(
+                  edata?.lname,
+                  edata?.lastName,
+                  edata?.last_name
+                )}`.trim()
+              : "";
 
-            return [uid, { name: name || "-", phone, employeeNo }] as const;
+            const phone = pickStr(edata?.phone, edata?.tel, edata?.mobile, edata?.phones?.[0]);
+
+            return [employeeNo, { name: name || "-", phone: phone || "-" }] as const;
           } catch {
-            return [uid, { name: "-", phone: "-", employeeNo: "" }] as const;
+            return [employeeNo, { name: "-", phone: "-" }] as const;
           }
         })
       );
 
       if (!alive) return;
-      setEmpMap(Object.fromEntries(pairs));
+      setEmpNoMap(Object.fromEntries(pairs));
     }
 
     load();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [sorted]);
 
   // lock scroll + ESC close
@@ -199,17 +233,14 @@ export default function LeaveApprovePage() {
   const isImage = (url: string) => /\.(png|jpg|jpeg|webp|gif)$/i.test(url);
   const isPdf = (url: string) => /\.pdf(\?|$)/i.test(url);
 
-  // ✅ เปิด preview: ไม่ใช้ firebase/storage / ไม่ fetch ไฟล์เอง
   const openPreview = async (att: AttachItem) => {
     try {
       setPreviewLoading(true);
 
-      // 1) ถ้ามี url อยู่แล้ว ใช้เลย
-      let url = String(att?.url || "").trim();
+      let url = pickStr(att?.url);
 
-      // 2) ถ้าไม่มี url → ขอ signed url จาก backend ด้วย key/storagePath
       if (!url) {
-        const key = getAttachmentKey(att); // ใน leaveRequests.ts ของเธอคืน string | null
+        const key = getAttachmentKey(att);
         if (!key) {
           alert("เปิดไฟล์ไม่ได้: ไม่มี url และไม่มี key/storagePath (ข้อมูลเก่า/แนบไม่ครบ)");
           return;
@@ -249,9 +280,7 @@ export default function LeaveApprovePage() {
               <div className="col-span-3">สถานะ</div>
             </div>
 
-            <div className="px-4 py-5 text-sm text-gray-500 dark:text-gray-400">
-              ยังไม่มีคำร้อง
-            </div>
+            <div className="px-4 py-5 text-sm text-gray-500 dark:text-gray-400">ยังไม่มีคำร้อง</div>
           </div>
         </div>
       ) : (
@@ -259,16 +288,23 @@ export default function LeaveApprovePage() {
           {sorted.map((r: any) => {
             const rowBusy = busy(r.id) || busy(r.uid);
 
-            const emp = empMap[r.uid];
-            const empName = emp?.name || r.createdByEmail || r.uid;
-            const empPhone = emp?.phone || "-";
-            const reqNo = r.requestNo || "-";
+            const employeeNo = getRowEmployeeNo(r);
+            const embeddedName = getEmbeddedName(r);
+            const embeddedPhone = getEmbeddedPhone(r);
 
+            const emp = employeeNo ? empNoMap[employeeNo] : undefined;
+
+            const createdEmail = pickStr(r.createdByEmail, r.email, r.userEmail);
+
+            const empName = embeddedName || emp?.name || createdEmail || r.uid || "-";
+            const empPhone = embeddedPhone || emp?.phone || "-";
+
+            const reqNo = r.requestNo || "-";
             const submittedAt = fmtDate(r.submittedAt || r.createdAt || r.updatedAt);
             const decidedAt = fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt);
 
             const isDone = r.status === "อนุมัติ" || r.status === "ไม่อนุมัติ";
-            const isPending = r.status === "รอดำเนินการ";
+            const isPending = r.status === "รอดำเนินการ"; // ✅ normalize แล้วจะเป็นไทยเสมอ
 
             const statusClass =
               r.status === "อนุมัติ"
@@ -281,24 +317,23 @@ export default function LeaveApprovePage() {
             const attachments: AttachItem[] = Array.isArray(r.attachments) ? r.attachments : [];
 
             return (
-              <div
-                key={r.id}
-                className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
-              >
+              <div key={r.id} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      {empName}
-                    </div>
+                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{empName}</div>
 
-                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      อีเมล: {r.createdByEmail ?? "-"}
-                    </div>
+                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">อีเมล: {createdEmail || "-"}</div>
 
                     <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
                       เลขคำร้อง: <span className="font-semibold">{reqNo}</span>
                       <span className="mx-2 text-gray-300 dark:text-gray-700">|</span>
                       เบอร์โทร: <span className="font-semibold">{empPhone}</span>
+                      {employeeNo ? (
+                        <>
+                          <span className="mx-2 text-gray-300 dark:text-gray-700">|</span>
+                          รหัสพนักงาน: <span className="font-semibold">{employeeNo}</span>
+                        </>
+                      ) : null}
                     </div>
 
                     <div className="mt-1 text-xs text-gray-700 dark:text-gray-200">
@@ -311,11 +346,7 @@ export default function LeaveApprovePage() {
 
                     <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
                       หมายเหตุ:{" "}
-                      {note ? (
-                        <span className="font-semibold">{note}</span>
-                      ) : (
-                        <span className="text-gray-400 dark:text-gray-500">-</span>
-                      )}
+                      {note ? <span className="font-semibold">{note}</span> : <span className="text-gray-400 dark:text-gray-500">-</span>}
                     </div>
 
                     <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
@@ -381,7 +412,7 @@ export default function LeaveApprovePage() {
 
                         <button
                           disabled={rowBusy}
-                          onClick={() => onDeleteHistoryByUser(r.uid, r.createdByEmail)}
+                          onClick={() => onDeleteHistoryByUser(r.uid, createdEmail)}
                           className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
                         >
                           ลบประวัติคนนี้
@@ -410,12 +441,8 @@ export default function LeaveApprovePage() {
 
           <div className="relative z-[100000] flex min-h-screen items-center justify-center p-4">
             <div className="w-[92%] max-w-lg rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                เหตุผลที่ “ไม่อนุมัติ”
-              </h3>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                กรุณากรอกเหตุผลก่อนกดยืนยัน
-              </p>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">เหตุผลที่ “ไม่อนุมัติ”</h3>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">กรุณากรอกเหตุผลก่อนกดยืนยัน</p>
 
               <textarea
                 value={rejectReason}
@@ -491,9 +518,7 @@ export default function LeaveApprovePage() {
 
               <div className="h-[70vh] bg-gray-50 dark:bg-gray-950">
                 {!previewUrl ? (
-                  <div className="flex h-full items-center justify-center text-sm text-gray-500">
-                    ไม่มีลิงก์ไฟล์สำหรับแสดงผล
-                  </div>
+                  <div className="flex h-full items-center justify-center text-sm text-gray-500">ไม่มีลิงก์ไฟล์สำหรับแสดงผล</div>
                 ) : isImage(previewUrl) ? (
                   <div className="flex h-full items-center justify-center p-4">
                     <img

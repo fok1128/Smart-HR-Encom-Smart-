@@ -5,14 +5,14 @@ import Label from "../form/Label";
 import Input from "../form/input/InputField";
 import Checkbox from "../form/input/Checkbox";
 import { useAuth } from "../../context/AuthContext";
-import { auth } from "../../firebase"; // ✅ ใช้ auth ตัวเดียวกับ AuthContext
+import { auth } from "../../firebase";
+import { signOut } from "firebase/auth";
 
 type LocationState = {
   from?: { pathname?: string };
 };
 
 function mapAuthError(err: unknown) {
-  // รองรับ Firebase error ที่มี code
   const anyErr = err as any;
   const code = anyErr?.code as string | undefined;
   const msg =
@@ -23,26 +23,20 @@ function mapAuthError(err: unknown) {
   if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
     return "Email หรือ Password ไม่ถูกต้อง";
   }
-  if (code === "auth/user-not-found") {
-    return "ไม่พบบัญชีผู้ใช้นี้";
-  }
-  if (code === "auth/too-many-requests") {
-    return "ลองใหม่อีกครั้งภายหลัง (พยายามล็อกอินหลายครั้งเกินไป)";
-  }
+  if (code === "auth/user-not-found") return "ไม่พบบัญชีผู้ใช้นี้";
+  if (code === "auth/too-many-requests") return "ลองใหม่อีกครั้งภายหลัง (พยายามล็อกอินหลายครั้งเกินไป)";
 
-  // เผื่อบางที message เป็น auth/...
   if (msg.includes("auth/invalid-credential") || msg.includes("auth/wrong-password")) {
     return "Email หรือ Password ไม่ถูกต้อง";
   }
   if (msg.includes("auth/user-not-found")) return "ไม่พบบัญชีผู้ใช้นี้";
   if (msg.includes("auth/too-many-requests")) return "ลองใหม่อีกครั้งภายหลัง";
 
-  // errors ที่เราสร้างเอง
   if (msg === "FIREBASE_NOT_SIGNED_IN") {
     return "ระบบไม่ได้ sign-in Firebase จริง (มีโค้ด/ไฟล์เก่าทับ หรือ auth ถูกสร้างคนละตัว)";
   }
   if (msg === "FIREBASE_EMAIL_MISMATCH") {
-    return "Firebase session ไม่ตรงกับอีเมลที่กรอก (มี session เก่าคาอยู่)";
+    return "มี session เก่าคาอยู่ ทำให้บัญชีที่ได้จาก Firebase ไม่ตรงกับที่กรอก (ลองล็อกเอาท์แล้วล็อกอินใหม่)";
   }
 
   return msg;
@@ -62,7 +56,6 @@ export default function SignInForm() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ✅ กันคนล็อกอินแล้วกลับมา /signin
   useEffect(() => {
     if (!authLoading && user) navigate("/", { replace: true });
   }, [user, authLoading, navigate]);
@@ -72,6 +65,7 @@ export default function SignInForm() {
     setError(null);
 
     const emailTrim = email.trim();
+    const emailNorm = emailTrim.toLowerCase(); // ✅ normalize
     const passRaw = password; // ❌ อย่า trim password
 
     if (!emailTrim || !passRaw) {
@@ -82,28 +76,36 @@ export default function SignInForm() {
     try {
       setLoading(true);
 
-      // Debug ให้เห็นชัด
-      console.log("[SignIn] submit", { email: emailTrim, hasPwd: passRaw.length > 0 });
+      console.log("[SignIn] submit", { email: emailNorm, hasPwd: passRaw.length > 0 });
       console.log("[SignIn] BEFORE login currentUser =", auth.currentUser?.email ?? "(none)");
 
-      // ✅ ต้องเป็น Firebase sign-in ของจริง ถ้ารหัสมั่วต้อง throw
-      await login(emailTrim, passRaw, remember);
+      // ✅ ถ้ามี session ค้างอยู่เป็นคนละเมล -> เคลียร์ก่อน (กัน mismatch แปลก ๆ)
+      const before = auth.currentUser?.email?.toLowerCase();
+      if (before && before !== emailNorm) {
+        console.log("[SignIn] signOut old session:", before);
+        await signOut(auth);
+      }
 
-      // ✅ จุดสำคัญ: ถ้า Firebase ไม่ได้ sign-in จริง → ห้ามไปต่อ
+      await login(emailNorm, passRaw, remember);
+
       const cu = auth.currentUser;
       console.log("[SignIn] AFTER login currentUser =", cu?.email ?? "(none)");
 
       if (!cu) throw new Error("FIREBASE_NOT_SIGNED_IN");
-      if (cu.email && cu.email !== emailTrim) throw new Error("FIREBASE_EMAIL_MISMATCH");
 
-      // ✅ ไปหน้าที่ตั้งใจจะไป
+      // ✅ เทียบแบบ normalize (กันเคสตัวพิมพ์เล็ก/ใหญ่)
+      const cuEmail = (cu.email ?? "").toLowerCase();
+      if (cuEmail && cuEmail !== emailNorm) {
+        // แปลว่า auth state ไม่ตรงจริง ๆ → เคลียร์แล้วให้ลองใหม่
+        await signOut(auth);
+        throw new Error("FIREBASE_EMAIL_MISMATCH");
+      }
+
       const state = location.state as LocationState | null;
       const from = state?.from?.pathname;
 
       const target =
-        from && from !== "/signin" && from !== "/signup" && from !== "/reset-password"
-          ? from
-          : "/";
+        from && from !== "/signin" && from !== "/signup" && from !== "/reset-password" ? from : "/";
 
       navigate(target, { replace: true });
     } catch (err: unknown) {
@@ -136,7 +138,6 @@ export default function SignInForm() {
         )}
 
         <form onSubmit={handleSubmit} className="mt-10 space-y-6 2xl:space-y-7">
-          {/* Email */}
           <div>
             <div className="text-base xl:text-lg 2xl:text-xl">
               <Label>
@@ -154,7 +155,6 @@ export default function SignInForm() {
             </div>
           </div>
 
-          {/* Password */}
           <div>
             <div className="text-base xl:text-lg 2xl:text-xl">
               <Label>
@@ -177,16 +177,11 @@ export default function SignInForm() {
                 className="absolute -translate-y-1/2 right-4 top-1/2 text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-white"
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
-                {showPassword ? (
-                  <EyeIcon className="w-5 h-5 xl:w-6 xl:h-6" />
-                ) : (
-                  <EyeCloseIcon className="w-5 h-5 xl:w-6 xl:h-6" />
-                )}
+                {showPassword ? <EyeIcon className="w-5 h-5 xl:w-6 xl:h-6" /> : <EyeCloseIcon className="w-5 h-5 xl:w-6 xl:h-6" />}
               </button>
             </div>
           </div>
 
-          {/* Keep me logged in */}
           <div className="flex items-center">
             <label className="flex items-center gap-3 text-sm xl:text-base 2xl:text-lg text-gray-700 dark:text-gray-300">
               <Checkbox
@@ -199,7 +194,6 @@ export default function SignInForm() {
             </label>
           </div>
 
-          {/* Submit */}
           <div className="pt-2">
             <button
               type="submit"

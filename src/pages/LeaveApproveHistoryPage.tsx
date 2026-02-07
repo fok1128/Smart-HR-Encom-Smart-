@@ -1,3 +1,4 @@
+// LeaveApproveHistoryPage.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
   collection,
@@ -32,9 +33,7 @@ function tsToMs(ts: any): number {
 
 function fmtDate(ts: any) {
   const d =
-    ts?.toDate?.() ? ts.toDate() :
-    ts instanceof Date ? ts :
-    ts ? new Date(ts) : null;
+    ts?.toDate?.() ? ts.toDate() : ts instanceof Date ? ts : ts ? new Date(ts) : null;
 
   if (!d || isNaN(d.getTime())) return "-";
   return d.toLocaleString("th-TH", {
@@ -50,16 +49,17 @@ function showStatus(raw: any) {
   const s = String(raw || "").trim().toUpperCase();
   if (s === "APPROVED" || s === "อนุมัติ".toUpperCase()) return "อนุมัติ";
   if (s === "REJECTED" || s === "ไม่อนุมัติ".toUpperCase()) return "ไม่อนุมัติ";
-  if (s === "PENDING") return "รอดำเนินการ";
+  if (s === "PENDING" || s === "รอดำเนินการ".toUpperCase()) return "รอดำเนินการ";
   return String(raw || "").trim() || "-";
 }
 
-// ✅ logic เดียวกับ PDF/ตาราง (เอาไปนับ summary)
 function statusTH(status: any) {
   const s = String(status ?? "").trim().toUpperCase();
   if (s.includes("APPROV") || s.includes("อนุมัติ".toUpperCase())) return "อนุมัติ";
-  if (s.includes("REJECT") || s.includes("DENY") || s.includes("ไม่อนุมัติ".toUpperCase())) return "ไม่อนุมัติ";
-  if (s.includes("PEND") || s.includes("WAIT")) return "รออนุมัติ";
+  if (s.includes("REJECT") || s.includes("DENY") || s.includes("ไม่อนุมัติ".toUpperCase()))
+    return "ไม่อนุมัติ";
+  if (s.includes("PEND") || s.includes("WAIT") || s.includes("รอดำเนินการ".toUpperCase()))
+    return "รอดำเนินการ";
   return String(status ?? "").trim() || "-";
 }
 
@@ -93,23 +93,35 @@ function decidedAtMs(r: any) {
   );
 }
 
-// ✅ uid/email/employeeNo ใน leave_requests บางทีใช้ field คนละชื่อ
+// ✅ ครอบคลุมหลายชื่อ field เก่า/ใหม่
+function pickStr(...vals: any[]) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
 function getRowUid(r: any) {
-  return String(r?.uid || r?.createdByUid || r?.userUid || r?.userId || "").trim();
+  return pickStr(r?.uid, r?.createdByUid, r?.userUid, r?.userId);
 }
 function getRowEmail(r: any) {
-  return String(r?.createdByEmail || r?.email || r?.userEmail || "").trim().toLowerCase();
+  return pickStr(r?.createdByEmail, r?.email, r?.userEmail).toLowerCase();
 }
 function getRowEmployeeNo(r: any) {
-  return String(
-    r?.employeeNo ||
-    r?.empNo ||
-    r?.employee_id ||
-    r?.employeeId ||
-    r?.createdByEmployeeNo ||
-    r?.userEmployeeNo ||
-    ""
-  ).trim();
+  return pickStr(
+    r?.employeeNo,
+    r?.empNo,
+    r?.employee_id,
+    r?.employeeId,
+    r?.createdByEmployeeNo,
+    r?.userEmployeeNo
+  );
+}
+function getRowEmployeeNameSnapshot(r: any) {
+  return pickStr(r?.employeeName, r?.createdByName, r?.fullName, r?.requesterName);
+}
+function getRowPhoneSnapshot(r: any) {
+  return pickStr(r?.phone, r?.createdByPhone, r?.tel, r?.mobile);
 }
 
 type ConfirmModalProps = {
@@ -176,7 +188,7 @@ function ConfirmModal({
   );
 }
 
-async function batchDeleteByDocs(refs: Array<{ ref: any }>) {
+async function batchDeleteByRefs(refs: Array<{ ref: any }>) {
   const BATCH_LIMIT = 450;
   let deleted = 0;
 
@@ -192,34 +204,11 @@ async function batchDeleteByDocs(refs: Array<{ ref: any }>) {
 
 type AccountOption = { uid: string; label: string };
 
-// ✅ ดึงข้อมูล "ผู้ออกรายงาน" จาก user ให้ครอบคลุมหลายโครงสร้าง
+// ✅ ดึงข้อมูล "ผู้ออกรายงาน" ให้แน่น: fname/lname/position top-level ก่อน
 function getExporterProfile(u: any) {
-  const fname = String(
-    u?.fname ||
-      u?.firstName ||
-      u?.profile?.fname ||
-      u?.profile?.firstName ||
-      u?.profile?.first_name ||
-      ""
-  ).trim();
-
-  const lname = String(
-    u?.lname ||
-      u?.lastName ||
-      u?.profile?.lname ||
-      u?.profile?.lastName ||
-      u?.profile?.last_name ||
-      ""
-  ).trim();
-
-  const position = String(
-    u?.position ||
-      u?.profile?.position ||
-      u?.jobTitle ||
-      u?.profile?.jobTitle ||
-      ""
-  ).trim();
-
+  const fname = pickStr(u?.fname, u?.firstName, u?.profile?.fname, u?.user?.fname, u?.employee?.fname);
+  const lname = pickStr(u?.lname, u?.lastName, u?.profile?.lname, u?.user?.lname, u?.employee?.lname);
+  const position = pickStr(u?.position, u?.profile?.position, u?.employee?.position, u?.jobTitle);
   return { fname, lname, position };
 }
 
@@ -261,95 +250,50 @@ export default function LeaveApproveHistoryPage() {
   const [deletePhrase, setDeletePhrase] = useState("");
   const deletePhraseOk = deletePhrase.trim().toUpperCase() === "DELETE";
 
-  // ✅ map ชื่อ: employeeNo / uid / email + bridge uid -> employeeNo
-  const [nameByEmpNo, setNameByEmpNo] = useState<Record<string, string>>({});
-  const [nameByUid, setNameByUid] = useState<Record<string, string>>({});
-  const [nameByEmail, setNameByEmail] = useState<Record<string, string>>({});
-  const [empNoByUid, setEmpNoByUid] = useState<Record<string, string>>({});
-  const [accountOptions, setAccountOptions] = useState<AccountOption[]>([]);
-  const [accountsLoading, setAccountsLoading] = useState(false);
+  // ✅ employees map: employeeNo -> {name, phone}
+  // หมายเหตุ: history ห้ามอ่าน users ของคนอื่น -> ใช้ employees หรือ snapshot เท่านั้น
+  const [empMap, setEmpMap] = useState<Record<string, { name: string; phone: string }>>({});
+  const [empLoading, setEmpLoading] = useState(false);
 
-  // ✅ โหลด users + employees แล้วสร้าง name maps (รองรับ employees ใช้ doc.id = EMP002)
-  const fetchNameMaps = async () => {
-    const usersSnap = await getDocs(collection(db, "users"));
-    const users = usersSnap.docs.map((d) => ({ uid: d.id, ...(d.data() as any) }));
-
-    let employees: any[] = [];
-    try {
-      const empSnap = await getDocs(collection(db, "employees"));
-      employees = empSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    } catch {}
-
-    const empNoToName: Record<string, string> = {};
-    employees.forEach((e) => {
-      const no = String(e?.employeeNo || e?.empNo || e?.employee_id || e?.id || "").trim();
-      if (!no) return;
-
-      const fname = String(e?.fname || e?.firstName || e?.first_name || "").trim();
-      const lname = String(e?.lname || e?.lastName || e?.last_name || "").trim();
-      const fullName = `${fname} ${lname}`.trim();
-
-      if (fullName) empNoToName[no] = fullName;
-    });
-
-    const uidToName: Record<string, string> = {};
-    const emailToName: Record<string, string> = {};
-    const uidToEmpNo: Record<string, string> = {};
-    const opts: AccountOption[] = [];
-
-    users.forEach((u: any) => {
-      const uid = String(u?.uid || "").trim(); // ✅ doc.id
-      if (!uid) return;
-
-      const email = String(u?.email || u?.profile?.email || "").trim().toLowerCase();
-      const empNo = String(u?.employeeNo || u?.empNo || "").trim();
-
-      if (empNo) uidToEmpNo[uid] = empNo;
-
-      // ชื่อเอาจาก employees ก่อน (เพราะ users บางตัวไม่มี fname/lname)
-      const empName = empNo ? String(empNoToName[empNo] || "").trim() : "";
-
-      const uf = String(u?.fname || u?.firstName || u?.profile?.fname || "").trim();
-      const ul = String(u?.lname || u?.lastName || u?.profile?.lname || "").trim();
-      const userName = `${uf} ${ul}`.trim();
-
-      const fullName = empName || userName;
-
-      if (fullName) uidToName[uid] = fullName;
-      if (email && fullName) emailToName[email] = fullName;
-
-      opts.push({ uid, label: fullName || email || uid });
-    });
-
-    opts.sort((a, b) => a.label.localeCompare(b.label, "th"));
-    return { uidToName, emailToName, empNoToName, uidToEmpNo, opts };
-  };
-
-  // ✅ 1) โหลด name maps ครั้งเดียว (ไม่ซ้ำ)
+  // ✅ โหลด employees ทั้งหมดครั้งเดียว (สำหรับ approver)
+  // ถ้า collection ใหญ่จริง ค่อย optimize ภายหลังเป็น "โหลดเฉพาะ empNo ที่ต้องใช้"
   useEffect(() => {
     let alive = true;
 
     const run = async () => {
       if (!canView) {
-        setAccountOptions([]);
-        setNameByUid({});
-        setNameByEmail({});
-        setNameByEmpNo({});
-        setEmpNoByUid({});
+        setEmpMap({});
         return;
       }
 
-      setAccountsLoading(true);
+      setEmpLoading(true);
       try {
-        const { uidToName, emailToName, empNoToName, uidToEmpNo, opts } = await fetchNameMaps();
+        const empSnap = await getDocs(collection(db, "employees"));
+        const out: Record<string, { name: string; phone: string }> = {};
+
+        empSnap.docs.forEach((d) => {
+          const e: any = d.data();
+
+          // ✅ key: เอา doc.id เป็นหลัก (employees/{EMPxxx}) + fallback field ใน doc
+          const no = pickStr(d.id, e?.employeeNo, e?.empNo, e?.employee_id, e?.employeeId);
+          if (!no) return;
+
+          const fname = pickStr(e?.fname, e?.firstName, e?.first_name);
+          const lname = pickStr(e?.lname, e?.lastName, e?.last_name);
+          const name = `${fname} ${lname}`.trim();
+
+          const phone = pickStr(e?.phone, e?.tel, e?.mobile, e?.phones?.[0]);
+
+          out[no] = { name: name || "-", phone: phone || "-" };
+        });
+
         if (!alive) return;
-        setNameByUid(uidToName);
-        setNameByEmail(emailToName);
-        setNameByEmpNo(empNoToName);
-        setEmpNoByUid(uidToEmpNo);
-        setAccountOptions(opts);
+        setEmpMap(out);
+      } catch (e) {
+        console.error("LeaveApproveHistoryPage load employees error:", e);
+        if (alive) setEmpMap({});
       } finally {
-        if (alive) setAccountsLoading(false);
+        if (alive) setEmpLoading(false);
       }
     };
 
@@ -357,7 +301,6 @@ export default function LeaveApproveHistoryPage() {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canView]);
 
   // ✅ 2) โหลด history
@@ -394,59 +337,57 @@ export default function LeaveApproveHistoryPage() {
     return () => unsub();
   }, [user?.uid, canView]);
 
+  // ✅ options สำหรับลบประวัติ “คนนี้”
   const accountOptionsFallback = useMemo(() => {
     const map = new Map<string, AccountOption>();
     rows.forEach((r: any) => {
       const uid = getRowUid(r);
       if (!uid) return;
-      const email = String(r?.createdByEmail || r?.email || "").trim();
-      if (!map.has(uid)) map.set(uid, { uid, label: email || uid });
+
+      const snapName = getRowEmployeeNameSnapshot(r);
+      const email = pickStr(r?.createdByEmail, r?.email);
+      const label = pickStr(snapName, email, uid);
+
+      if (!map.has(uid)) map.set(uid, { uid, label });
     });
-    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, "th"));
   }, [rows]);
 
-  const finalAccountOptions = accountOptions.length > 0 ? accountOptions : accountOptionsFallback;
+  // ✅ ชื่อ: snapshot -> employees -> fallback (empNo/email/uid)
+  const fullNameOf = (r: any) => {
+    const snapName = getRowEmployeeNameSnapshot(r);
+    if (snapName) return snapName;
 
-  // ✅ แปลงชื่อด้วยสะพาน uid -> employeeNo -> employees
-  const fullNameOf = (
-    r: any,
-    localUidMap?: Record<string, string>,
-    localEmailMap?: Record<string, string>,
-    localEmpNoMap?: Record<string, string>,
-    localEmpNoByUid?: Record<string, string>
-  ) => {
-    const uid = getRowUid(r);
-    const email = getRowEmail(r);
     const empNo = getRowEmployeeNo(r);
-
-    const byEmp = String(localEmpNoMap?.[empNo] ?? nameByEmpNo?.[empNo] ?? "").trim();
+    const byEmp = empNo ? pickStr(empMap?.[empNo]?.name) : "";
     if (byEmp) return byEmp;
 
-    const bridgedEmpNo = String(localEmpNoByUid?.[uid] ?? empNoByUid?.[uid] ?? "").trim();
-    const byBridgedEmp = String(localEmpNoMap?.[bridgedEmpNo] ?? nameByEmpNo?.[bridgedEmpNo] ?? "").trim();
-    if (byBridgedEmp) return byBridgedEmp;
+    const email = getRowEmail(r);
+    const uid = getRowUid(r);
+    return pickStr(empNo, email, uid, "-");
+  };
 
-    const byUid = String(localUidMap?.[uid] ?? nameByUid?.[uid] ?? "").trim();
-    if (byUid) return byUid;
+  // ✅ เบอร์: snapshot -> employees -> "-"
+  const phoneOf = (r: any) => {
+    const snapPhone = getRowPhoneSnapshot(r);
+    if (snapPhone) return snapPhone;
 
-    const byEmail = String(localEmailMap?.[email] ?? nameByEmail?.[email] ?? "").trim();
-    if (byEmail) return byEmail;
-
-    return bridgedEmpNo || empNo || email || uid || "-";
+    const empNo = getRowEmployeeNo(r);
+    const byEmp = empNo ? pickStr(empMap?.[empNo]?.phone) : "";
+    return byEmp || "-";
   };
 
   const filtered = useMemo(() => {
     const q = qText.trim().toLowerCase();
 
     return (Array.isArray(rows) ? rows : []).filter((r: any) => {
-      const sUp = String(r?.status || "").trim().toUpperCase();
-
+      const st = showStatus(r?.status);
       const okStatus =
         statusFilter === "ALL"
           ? true
           : statusFilter === "APPROVED"
-          ? sUp === "APPROVED" || sUp === "อนุมัติ".toUpperCase()
-          : sUp === "REJECTED" || sUp === "ไม่อนุมัติ".toUpperCase();
+          ? st === "อนุมัติ"
+          : st === "ไม่อนุมัติ";
 
       if (!okStatus) return false;
       if (!q) return true;
@@ -454,20 +395,14 @@ export default function LeaveApproveHistoryPage() {
       const uid = getRowUid(r);
       const email = getRowEmail(r);
       const empNo = getRowEmployeeNo(r);
-      const bridgedEmpNo = empNoByUid?.[uid] || "";
 
-      const fullName = String(
-        nameByEmpNo[empNo] ||
-          nameByEmpNo[bridgedEmpNo] ||
-          nameByUid[uid] ||
-          nameByEmail[email] ||
-          ""
-      ).trim();
+      const fullName = fullNameOf(r);
+      const phone = phoneOf(r);
 
       const hay = [
         fullName,
+        phone,
         empNo,
-        bridgedEmpNo,
         email,
         r?.requestNo,
         uid,
@@ -481,7 +416,7 @@ export default function LeaveApproveHistoryPage() {
 
       return hay.includes(q);
     });
-  }, [rows, qText, statusFilter, nameByUid, nameByEmail, nameByEmpNo, empNoByUid]);
+  }, [rows, qText, statusFilter, empMap]);
 
   const exportRows = useMemo(() => {
     const fromMs = startOfDayMs(dateFrom);
@@ -548,7 +483,7 @@ export default function LeaveApproveHistoryPage() {
         return;
       }
 
-      const deleted = await batchDeleteByDocs(refs);
+      const deleted = await batchDeleteByRefs(refs);
 
       alert(`ลบประวัติสำเร็จ ${deleted} รายการ`);
       setAccountUid("");
@@ -572,7 +507,7 @@ export default function LeaveApproveHistoryPage() {
     setBusy(true);
     try {
       const refs = ids.map((id) => ({ ref: doc(db, "leave_requests", id) }));
-      const deleted = await batchDeleteByDocs(refs);
+      const deleted = await batchDeleteByRefs(refs);
 
       alert(`ลบรายการที่เลือกสำเร็จ ${deleted} รายการ`);
       setSelectedIds(new Set());
@@ -620,64 +555,36 @@ export default function LeaveApproveHistoryPage() {
     const fromLabel = dateFrom ? dateFrom : "-";
     const toLabel = dateTo ? dateTo : "-";
 
-    let uidToNameLocal = nameByUid;
-    let emailToNameLocal = nameByEmail;
-    let empNoToNameLocal = nameByEmpNo;
-    let empNoByUidLocal = empNoByUid;
-
-    // ✅ กันกรณี maps ยังโหลดไม่ทัน
-    if (
-      (!uidToNameLocal || Object.keys(uidToNameLocal).length === 0) &&
-      !accountsLoading
-    ) {
-      try {
-        const { uidToName, emailToName, empNoToName, uidToEmpNo } = await fetchNameMaps();
-        uidToNameLocal = uidToName;
-        emailToNameLocal = emailToName;
-        empNoToNameLocal = empNoToName;
-        empNoByUidLocal = uidToEmpNo;
-
-        setNameByUid(uidToName);
-        setNameByEmail(emailToName);
-        setNameByEmpNo(empNoToName);
-        setEmpNoByUid(uidToEmpNo);
-      } catch {}
-    }
-
-    const exportRowsWithName = exportRows.map((r: any) => ({
+    // ✅ ใส่ employeeName/phone ให้ PDF ใช้แบบชัวร์ (ไม่ต้องไปอ่าน users)
+    const exportRowsWithSnapshot = exportRows.map((r: any) => ({
       ...r,
-      employeeName: fullNameOf(r, uidToNameLocal, emailToNameLocal, empNoToNameLocal, empNoByUidLocal),
+      employeeName: fullNameOf(r),
+      phone: getRowPhoneSnapshot(r) || phoneOf(r),
     }));
 
-    const approvedCount = exportRowsWithName.filter((r: any) => statusTH(r.status) === "อนุมัติ").length;
-    const rejectedCount = exportRowsWithName.filter((r: any) => statusTH(r.status) === "ไม่อนุมัติ").length;
+    const approvedCount = exportRowsWithSnapshot.filter((r: any) => statusTH(r.status) === "อนุมัติ").length;
+    const rejectedCount = exportRowsWithSnapshot.filter((r: any) => statusTH(r.status) === "ไม่อนุมัติ").length;
 
-    // ✅ ผู้ออกรายงาน: ดึงจาก user แล้วส่งให้ PDF ใช้ (แทน email)
     const exporter = getExporterProfile(user);
 
-    await exportApprovalHistoryPdf(exportRowsWithName, {
+    await exportApprovalHistoryPdf(exportRowsWithSnapshot, {
       title: "รายงานประวัติการอนุมัติใบลา",
       orgLine1: "Smart Leave System",
       orgLine2: "ฝ่ายทรัพยากรบุคคล (HR)",
 
-      // ✅ ตัวใหม่: ให้ PDF ใช้ fname/lname ก่อน
       exportedByProfile: exporter,
-
-      // ✅ เผื่อ fallback (ถ้าไม่มีชื่อจริง)
-      exportedBy: user?.email || user?.uid || "-",
-
+      exportedBy: `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() || user?.email || user?.uid || "-",
       exportedAt: new Date(),
+
       filtersText: `ค้นหา: ${qText?.trim() || "-"} | สถานะ: ${statusLabel}`,
       dateRangeText: `อ้างอิงวันอนุมัติ/อัปเดต: ${fromLabel} ถึง ${toLabel}`,
       summary: {
-        total: exportRowsWithName.length,
+        total: exportRowsWithSnapshot.length,
         approved: approvedCount,
         rejected: rejectedCount,
       },
 
-      // ✅ public ต้องเรียกแบบนี้ (ห้ามใส่ /public)
       logoUrl: "/company-logo2.png",
-
       signatureTitle: "รักษาการกรรมการผู้จัดการใหญ่",
       signatureName: "นายจิรศักดิ์ บุญนาค",
     });
@@ -707,6 +614,7 @@ export default function LeaveApproveHistoryPage() {
           </h1>
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             แสดงเฉพาะรายการ “อนุมัติ/ไม่อนุมัติ”
+            {empLoading ? " • กำลังโหลดรายชื่อพนักงาน..." : ""}
           </div>
         </div>
 
@@ -714,8 +622,8 @@ export default function LeaveApproveHistoryPage() {
           <input
             value={qText}
             onChange={(e) => setQText(e.target.value)}
-            placeholder="ค้นหา: ชื่อ/อีเมล/เลขคำร้อง/รหัสพนักงาน"
-            className="h-10 w-[340px] rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+            placeholder="ค้นหา: ชื่อ/เบอร์/อีเมล/เลขคำร้อง/รหัสพนักงาน"
+            className="h-10 w-[360px] rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
           />
 
           <select
@@ -747,7 +655,10 @@ export default function LeaveApproveHistoryPage() {
 
             <button
               type="button"
-              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+              }}
               className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
             >
               ล้างช่วงวันที่
@@ -775,10 +686,8 @@ export default function LeaveApproveHistoryPage() {
               onChange={(e) => setAccountUid(e.target.value)}
               className="h-10 min-w-[360px] rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold outline-none dark:border-amber-900/40 dark:bg-gray-900 dark:text-gray-100"
             >
-              <option value="">
-                {accountsLoading ? "กำลังโหลดรายชื่อ..." : "เลือกบัญชีเพื่อ “ลบประวัติ”"}
-              </option>
-              {finalAccountOptions.map((o) => (
+              <option value="">เลือกบัญชีเพื่อ “ลบประวัติ”</option>
+              {accountOptionsFallback.map((o) => (
                 <option key={o.uid} value={o.uid}>
                   {o.label}
                 </option>
@@ -788,7 +697,11 @@ export default function LeaveApproveHistoryPage() {
             <button
               type="button"
               disabled={!accountUid || busy}
-              onClick={() => { setModalMode("DEL_UID"); setM1Open(true); setDeletePhrase(""); }}
+              onClick={() => {
+                setModalMode("DEL_UID");
+                setM1Open(true);
+                setDeletePhrase("");
+              }}
               className="h-10 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-60"
             >
               ลบประวัติคนนี้
@@ -846,12 +759,22 @@ export default function LeaveApproveHistoryPage() {
             const st = showStatus(r.status);
             const checked = selectedIds.has(r.id);
 
+            const email = pickStr(r?.createdByEmail, r?.email);
+            const empNo = getRowEmployeeNo(r);
+            const phone = phoneOf(r);
+
             return (
               <div key={r.id} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
                       {fullNameOf(r)}
+                    </div>
+
+                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      อีเมล: {email || "-"}
+                      <span className="ml-2">• เบอร์: {phone}</span>
+                      {empNo ? <span className="ml-2">• รหัสพนักงาน: {empNo}</span> : null}
                     </div>
 
                     <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
@@ -882,7 +805,12 @@ export default function LeaveApproveHistoryPage() {
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => { setDeleteOneTarget(r); setModalMode("DEL_ONE"); setDeletePhrase(""); setM1Open(true); }}
+                          onClick={() => {
+                            setDeleteOneTarget(r);
+                            setModalMode("DEL_ONE");
+                            setDeletePhrase("");
+                            setM1Open(true);
+                          }}
                           className="rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
                         >
                           ลบรายการนี้

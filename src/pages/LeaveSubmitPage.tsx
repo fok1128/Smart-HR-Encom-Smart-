@@ -1,3 +1,4 @@
+// LeaveSubmitPage.tsx
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "../context/AuthContext";
 import { createLeaveRequestWithFiles } from "../services/leaveRequests";
@@ -32,6 +33,14 @@ function XIcon({ className = "" }: { className?: string }) {
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
+}
+
+function pickStr(...vals: any[]) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
 }
 
 /** ✅ Dropdown custom */
@@ -204,7 +213,7 @@ export default function LeaveSubmitPage() {
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
 
-  const [mode, setMode] = useState<"allDay" | "time">("allDay");
+  const [mode, setMode] = useState<LeaveMode>("allDay");
 
   const [startDate, setStartDate] = useState<string>(todayISODate());
   const [endDate, setEndDate] = useState<string>(todayISODate());
@@ -310,9 +319,26 @@ export default function LeaveSubmitPage() {
     setUploadPct(0);
 
     try {
-      const payload = {
+      // ✅ snapshot โปรไฟล์ผู้ยื่น เพื่อให้หน้า Approve/History โชว์ชื่อ+เบอร์ได้
+      const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
+      const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
+        (user as any)?.lname,
+        (user as any)?.lastName
+      )}`.trim();
+      const phone = pickStr((user as any)?.phone, (user as any)?.tel, (user as any)?.mobile);
+
+      const payload: any = {
         uid: user.uid,
+
+        // ✅ field เดิมของ service
         email: user.email ?? null,
+
+        // ✅ snapshot fields (เอาไว้ใช้โชว์ ไม่ต้องอ่าน users ของคนอื่น)
+        createdByEmail: user.email ?? null,
+        employeeNo: employeeNo || null,
+        employeeName: employeeName || null,
+        phone: phone || null,
+
         category: category as any,
         subType: subType as any,
         mode,
@@ -471,7 +497,9 @@ export default function LeaveSubmitPage() {
                     className={[
                       "mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none dark:bg-gray-900 dark:border-gray-800",
                       "focus:ring-2",
-                      timedInvalid ? "border-red-400 focus:border-red-500 focus:ring-red-500/20" : "border-gray-300 focus:border-teal-500 focus:ring-teal-500/20",
+                      timedInvalid
+                        ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
+                        : "border-gray-300 focus:border-teal-500 focus:ring-teal-500/20",
                     ].join(" ")}
                   />
                   {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}

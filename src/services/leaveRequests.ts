@@ -1,3 +1,4 @@
+// src/services/leaveRequests.ts
 import {
   addDoc,
   collection,
@@ -61,6 +62,8 @@ export type LeaveRequestDoc = {
   approvedAt?: any;
   rejectedAt?: any;
 
+  decidedAt?: any;
+
   // legacy
   rejectReason?: string | null;
 };
@@ -119,12 +122,9 @@ export async function getSignedUrlForKey(key: string): Promise<string> {
  * ✅ normalize response จาก backend ให้เป็น attachment แบบมาตรฐานเสมอ
  */
 function normalizeUploadResponse(data: any, f: File): LeaveAttachment {
-  const first =
-    (Array.isArray(data?.attachments) && data.attachments[0]) || null;
+  const first = (Array.isArray(data?.attachments) && data.attachments[0]) || null;
 
-  const key =
-    String(first?.storagePath || first?.key || data?.key || "").trim();
-
+  const key = String(first?.storagePath || first?.key || data?.key || "").trim();
   if (!key) throw new Error("UPLOAD_OK_BUT_MISSING_KEY");
 
   const name = first?.name || data?.name || f.name;
@@ -160,7 +160,7 @@ export async function uploadLeaveAttachments(
     const f = files[i];
 
     const fd = new FormData();
-    fd.append("file", f);          // ✅ ส่งแค่อันเดียวพอ
+    fd.append("file", f);
     fd.append("folder", "leave");
 
     const res = await fetch(`${API_BASE}/files/upload`, {
@@ -188,6 +188,13 @@ export async function uploadLeaveAttachments(
 export async function createLeaveRequest(payload: {
   uid: string;
   email?: string | null;
+
+  // ✅ เพิ่ม snapshot fields (optional)
+  createdByEmail?: string | null;
+  employeeNo?: string | null;
+  employeeName?: string | null;
+  phone?: string | null;
+
   category: string;
   subType: string;
   mode: LeaveMode;
@@ -195,10 +202,7 @@ export async function createLeaveRequest(payload: {
   endAt: string;
   reason: string;
 
-  // legacy
   files?: { name: string; size: number }[];
-
-  // new
   attachments?: LeaveAttachment[];
 }) {
   const requestNo = genRequestNo();
@@ -212,16 +216,22 @@ export async function createLeaveRequest(payload: {
   return { id: docRef.id, requestNo };
 }
 
+/**
+ * ✅ FIX สำคัญ:
+ * ให้ signature ตรงกับหน้า LeaveSubmitPage.tsx ที่เรียก
+ * createLeaveRequestWithFiles(payload, files, onProgress)
+ */
 export async function createLeaveRequestWithFiles(
   payload: Omit<Parameters<typeof createLeaveRequest>[0], "attachments" | "files">,
   files: File[],
   onProgress?: (percent: number) => void
 ) {
   const attachments = await uploadLeaveAttachments(payload.uid, files, onProgress);
+
   return createLeaveRequest({
     ...payload,
-    files: files.map((f) => ({ name: f.name, size: f.size })), // legacy เผื่อใช้
-    attachments, // ✅ สำคัญ: admin ต้องใช้ตัวนี้
+    files: (files || []).map((f) => ({ name: f.name, size: f.size })), // legacy เผื่อใช้
+    attachments,
   });
 }
 
@@ -266,12 +276,14 @@ export function listenPendingLeaveRequests(
   cb: (rows: LeaveRequestDoc[]) => void,
   onError?: (message: string) => void
 ) {
+  // ✅ ใบที่รออนุมัติ
   const qy = query(colRef, where("status", "==", "PENDING"), orderBy("submittedAt", "desc"));
+
   return onSnapshot(
     qy,
     (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      cb(rows as LeaveRequestDoc[]);
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LeaveRequestDoc[];
+      cb(rows);
     },
     (err) => {
       console.error("listenPendingLeaveRequests error:", err);
@@ -285,9 +297,37 @@ export function listenPendingLeaveRequests(
   );
 }
 
+/**
+ * ✅ IMPORTANT:
+ * rules ของคุณอนุญาต Approver update ได้เฉพาะคีย์เหล่านี้เท่านั้น
+ * (กัน permission-denied จาก patch เกิน)
+ */
+const APPROVER_ALLOWED_KEYS = new Set([
+  "status",
+  "rejectReason",
+  "decisionNote",
+  "decidedAt",
+  "approvedAt",
+  "rejectedAt",
+  "approvedBy",
+  "rejectedBy",
+  "updatedAt",
+]);
+
+function pickAllowedApproverPatch(patch: any) {
+  const out: any = {};
+  if (!patch || typeof patch !== "object") return out;
+
+  for (const k of Object.keys(patch)) {
+    if (APPROVER_ALLOWED_KEYS.has(k)) out[k] = patch[k];
+  }
+  return out;
+}
+
 export async function adminUpdateLeaveRequest(id: string, patch: Partial<LeaveRequestDoc>) {
+  const safe = pickAllowedApproverPatch(patch);
   await updateDoc(doc(db, "leave_requests", id), {
-    ...patch,
+    ...safe,
     updatedAt: serverTimestamp(),
   });
 }
@@ -305,6 +345,7 @@ export async function approveLeaveRequest(
     status: "APPROVED",
     approvedBy: by,
     approvedAt: serverTimestamp(),
+    decidedAt: serverTimestamp(),
     decisionNote: note || null,
     updatedAt: serverTimestamp(),
   });
@@ -319,6 +360,7 @@ export async function rejectLeaveRequest(
     status: "REJECTED",
     rejectedBy: by,
     rejectedAt: serverTimestamp(),
+    decidedAt: serverTimestamp(),
     decisionNote: note || null,
     updatedAt: serverTimestamp(),
   });

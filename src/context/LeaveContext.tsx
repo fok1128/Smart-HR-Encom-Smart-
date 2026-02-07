@@ -1,3 +1,4 @@
+// LeaveContext.tsx
 import {
   createContext,
   useContext,
@@ -22,10 +23,7 @@ import {
 import { db } from "../firebase";
 import { useAuth } from "./AuthContext";
 
-/** สถานะ (หน้าเว็บใช้ไทย) */
 export type LeaveStatus = "รอดำเนินการ" | "อนุมัติ" | "ไม่อนุมัติ";
-
-/** ประเภท (ให้ตรงกับหน้า Submit/Calendar) */
 export type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
 export type LeaveSubType =
   | "ลากิจปกติ"
@@ -42,6 +40,11 @@ export type LeaveRequest = {
   id: string;
   uid: string;
   createdByEmail?: string;
+
+  // ✅ snapshot ผู้ยื่น
+  employeeNo?: string;
+  employeeName?: string;
+  phone?: string;
 
   requestNo: string;
   category: LeaveCategory;
@@ -79,6 +82,9 @@ type LeaveCtx = {
   requests: LeaveRequest[];
   loading: boolean;
 
+  calendarRequests: LeaveRequest[];
+  loadingCalendar: boolean;
+
   submitLeave: (payload: LeavePayload) => Promise<{ id: string; requestNo: string }>;
   updateStatus: (id: string, status: LeaveStatus, reason?: string) => Promise<void>;
 
@@ -96,26 +102,19 @@ function genRequestNo6() {
 function normRole(role?: string) {
   return String(role || "").trim().toUpperCase();
 }
-
 function isApproverRole(role?: string) {
   const r = normRole(role);
   return ["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"].includes(r);
 }
 
-/** ✅ normalize สถานะจากของใหม่/ของเก่าให้เป็นไทย */
 function normalizeStatusToThai(s: any): LeaveStatus {
   const v = String(s || "").trim();
-
-  // ของใหม่ (EN)
   if (v === "PENDING") return "รอดำเนินการ";
   if (v === "APPROVED") return "อนุมัติ";
   if (v === "REJECTED") return "ไม่อนุมัติ";
-
-  // ของเก่า (TH)
   if (v === "รอดำเนินการ") return "รอดำเนินการ";
   if (v === "อนุมัติ") return "อนุมัติ";
   if (v === "ไม่อนุมัติ") return "ไม่อนุมัติ";
-
   return "รอดำเนินการ";
 }
 
@@ -130,6 +129,56 @@ function tsToMs(ts: any): number {
   }
 }
 
+function sortLatestFirst(a: LeaveRequest, b: LeaveRequest) {
+  const at = tsToMs(a.submittedAt) || tsToMs(a.createdAt) || tsToMs(a.updatedAt);
+  const bt = tsToMs(b.submittedAt) || tsToMs(b.createdAt) || tsToMs(b.updatedAt);
+  return bt - at;
+}
+
+function pickStr(...vals: any[]) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function mapDocToLeaveRequest(d: any): LeaveRequest {
+  const data: any = d.data();
+  return {
+    id: d.id,
+    uid: data.uid,
+    createdByEmail: pickStr(data.createdByEmail, data.email, data.userEmail) || undefined,
+
+    employeeNo: pickStr(data.employeeNo, data.empNo, data.createdByEmployeeNo) || undefined,
+    employeeName: pickStr(data.employeeName, data.createdByName, data.requesterName) || undefined,
+    phone: pickStr(data.phone, data.createdByPhone, data.tel, data.mobile) || undefined,
+
+    requestNo: data.requestNo,
+    category: data.category,
+    subType: data.subType,
+    startAt: data.startAt,
+    endAt: data.endAt,
+    reason: data.reason ?? "",
+
+    attachments: data.attachments ?? [],
+    files: data.files ?? [],
+
+    status: normalizeStatusToThai(data.status),
+
+    submittedAt: data.submittedAt,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+
+    rejectReason: data.rejectReason ?? undefined,
+    decisionNote: data.decisionNote ?? undefined,
+
+    decidedAt: data.decidedAt ?? undefined,
+    approvedAt: data.approvedAt ?? undefined,
+    rejectedAt: data.rejectedAt ?? undefined,
+  };
+}
+
 export function LeaveProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
 
@@ -140,6 +189,10 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [calendarRequests, setCalendarRequests] = useState<LeaveRequest[]>([]);
+  const [loadingCalendar, setLoadingCalendar] = useState(true);
+
+  // 1) Stream หน้า Approve
   useEffect(() => {
     if (!user?.uid) {
       setRequests([]);
@@ -150,8 +203,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const colRef = collection(db, "leave_requests");
 
-    // ✅ Approver: อ่านเฉพาะ pending (TH/EN)
-    // ✅ User: อ่านของตัวเองทั้งหมด
     const qy = canApprove
       ? query(colRef, where("status", "in", ["รอดำเนินการ", "PENDING"]))
       : query(colRef, where("uid", "==", user.uid));
@@ -159,45 +210,8 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     const unsub = onSnapshot(
       qy,
       (snap) => {
-        const rows: LeaveRequest[] = snap.docs.map((d) => {
-          const data: any = d.data();
-          return {
-            id: d.id,
-            uid: data.uid,
-            createdByEmail: data.createdByEmail ?? data.email ?? undefined,
-
-            requestNo: data.requestNo,
-            category: data.category,
-            subType: data.subType,
-            startAt: data.startAt,
-            endAt: data.endAt,
-            reason: data.reason ?? "",
-
-            attachments: data.attachments ?? [],
-            files: data.files ?? [],
-
-            status: normalizeStatusToThai(data.status),
-
-            // ✅ จุดสำคัญ: ใช้ submittedAt เป็นหลัก
-            submittedAt: data.submittedAt,
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt,
-
-            rejectReason: data.rejectReason ?? undefined,
-            decisionNote: data.decisionNote ?? undefined,
-
-            decidedAt: data.decidedAt ?? undefined,
-            approvedAt: data.approvedAt ?? undefined,
-            rejectedAt: data.rejectedAt ?? undefined,
-          };
-        });
-
-        rows.sort((a, b) => {
-          const at = tsToMs(a.submittedAt) || tsToMs(a.createdAt) || tsToMs(a.updatedAt);
-          const bt = tsToMs(b.submittedAt) || tsToMs(b.createdAt) || tsToMs(b.updatedAt);
-          return bt - at;
-        });
-
+        const rows = snap.docs.map((d) => mapDocToLeaveRequest(d));
+        rows.sort(sortLatestFirst);
         setRequests(rows);
         setLoading(false);
       },
@@ -215,14 +229,58 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, [user?.uid, canApprove]);
 
+  // 2) Stream หน้า Calendar
+  useEffect(() => {
+    if (!user?.uid) {
+      setCalendarRequests([]);
+      setLoadingCalendar(false);
+      return;
+    }
+
+    setLoadingCalendar(true);
+    const colRef = collection(db, "leave_requests");
+
+    const qy = canApprove ? query(colRef) : query(colRef, where("uid", "==", user.uid));
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        const rows = snap.docs.map((d) => mapDocToLeaveRequest(d));
+        rows.sort(sortLatestFirst);
+        setCalendarRequests(rows);
+        setLoadingCalendar(false);
+      },
+      (err: any) => {
+        console.error("LeaveContext calendar onSnapshot error:", err);
+        setCalendarRequests([]);
+        setLoadingCalendar(false);
+      }
+    );
+
+    return () => unsub();
+  }, [user?.uid, canApprove]);
+
   const submitLeave = async (payload: LeavePayload) => {
     if (!user?.uid) throw new Error("UNAUTHORIZED");
 
     const requestNo = genRequestNo6();
 
+    // ✅ เอาจาก AuthContext ที่ normalize แล้ว (สำคัญมาก)
+    const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo, (user as any)?.employee?.employeeNo) || null;
+    const uf = pickStr((user as any)?.fname, (user as any)?.user?.fname, (user as any)?.employee?.fname);
+    const ul = pickStr((user as any)?.lname, (user as any)?.user?.lname, (user as any)?.employee?.lname);
+    const employeeName = `${uf} ${ul}`.trim() || null;
+
+    const phone = pickStr((user as any)?.phone, (user as any)?.employee?.phone, (user as any)?.user?.phone) || null;
+
     const docRef = await addDoc(collection(db, "leave_requests"), {
       uid: user.uid,
       createdByEmail: user.email ?? null,
+
+      // ✅ snapshot (เอาไว้ให้ทุกหน้าโชว์ได้ โดยไม่อ่าน users ของคนอื่น)
+      employeeNo,
+      employeeName,
+      phone,
 
       requestNo,
       category: payload.category,
@@ -249,6 +307,7 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
   const updateStatus = async (id: string, status: LeaveStatus, reason?: string) => {
     if (!canApprove) throw new Error("FORBIDDEN");
 
+    // ✅ patch อยู่ใน whitelist rules แน่นอน
     const patch: Record<string, any> = {
       status,
       updatedAt: serverTimestamp(),
@@ -257,7 +316,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     if (status === "อนุมัติ" || status === "ไม่อนุมัติ") {
       patch.decidedAt = serverTimestamp();
     }
-
     if (status === "อนุมัติ") patch.approvedAt = serverTimestamp();
     if (status === "ไม่อนุมัติ") patch.rejectedAt = serverTimestamp();
 
@@ -278,7 +336,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     await deleteDoc(doc(db, "leave_requests", id));
   };
 
-  // ✅ ลบประวัติของ user 1 คน (รองรับ field เก่า/ใหม่ + กันซ้ำ)
   const deleteRequestsByUid = async (uid: string) => {
     if (!isAdmin) throw new Error("FORBIDDEN");
 
@@ -325,12 +382,14 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
     () => ({
       requests,
       loading,
+      calendarRequests,
+      loadingCalendar,
       submitLeave,
       updateStatus,
       deleteRequest,
       deleteRequestsByUid,
     }),
-    [requests, loading]
+    [requests, loading, calendarRequests, loadingCalendar]
   );
 
   return <LeaveContext.Provider value={value}>{children}</LeaveContext.Provider>;
