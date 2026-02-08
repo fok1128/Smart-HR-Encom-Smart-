@@ -1,5 +1,4 @@
 // src/devtools.ts
-import { getAuth } from "firebase/auth";
 import {
   collection,
   doc,
@@ -16,20 +15,18 @@ import { db, auth } from "./firebase";
  * helper: สรุป error ให้ดูง่าย
  */
 function errInfo(e: any) {
-  // Firestore บางครั้งซ่อน URL ไว้ใน message หรือ stack
   const rawMsg = String(e?.message || "");
   const rawStack = String(e?.stack || "");
   return {
     name: e?.name,
     code: e?.code,
     message: rawMsg,
-    stack: rawStack, // ✅ ไม่ตัดแล้ว
+    stack: rawStack,
   };
 }
 
 /**
  * 0) testTokenClaims
- * ✅ ดู custom claims ใน idToken (ห้าม import firebase/auth ใน console)
  */
 export async function testTokenClaims(force = true) {
   try {
@@ -46,6 +43,9 @@ export async function testTokenClaims(force = true) {
   }
 }
 
+/**
+ * 1) testMe
+ */
 export async function testMe() {
   try {
     const u = auth.currentUser;
@@ -69,21 +69,6 @@ export async function testMe() {
   }
 }
 
-<<<<<<< HEAD
-function envOn(v: any) {
-  return String(v ?? "").trim() === "1" || String(v ?? "").toLowerCase() === "true";
-}
-
-// ✅ storage detector: ถ้าอยากเพิ่มโดเมนอื่นค่อยเติม
-function isStorageLikeUrl(url: any) {
-  if (typeof url !== "string") return false;
-  const s = url.toLowerCase();
-  return (
-    s.includes("firebasestorage.googleapis.com") ||
-    s.includes("supabase.co/storage") ||
-    s.includes("/storage/v1/")
-  );
-=======
 /**
  * 2) testProjectInfo
  * โชว์ว่าแอปกำลังชี้ไป Firebase project ไหน / user ไหน
@@ -112,7 +97,6 @@ export async function testProjectInfo() {
 
 /**
  * 3) testReadMyUserDoc
- * เช็กว่าอ่าน users/{uid} ได้จริงไหม (ควรได้)
  */
 export async function testReadMyUserDoc() {
   try {
@@ -138,7 +122,6 @@ export async function testReadMyUserDoc() {
 
 /**
  * 4) testLeaveReadOne
- * ตรวจว่าอ่าน collection leave_requests ได้ไหม + log doc ตัวอย่าง
  */
 export async function testLeaveReadOne() {
   try {
@@ -167,7 +150,6 @@ export async function testLeaveReadOne() {
 
 /**
  * 4.1) testLeaveReadById
- * อ่าน leave_requests/{docId} แบบเจาะจง
  */
 export async function testLeaveReadById(docId: string) {
   try {
@@ -190,7 +172,6 @@ export async function testLeaveReadById(docId: string) {
 
 /**
  * 4.2) testListLeaveCollections
- * ลองอ่านหลายชื่อ collection เผื่อสะกดผิดในหน้าไหน
  */
 export async function testListLeaveCollections() {
   const names = ["leave_requests", "leave_request", "leaveRequests"] as const;
@@ -212,17 +193,11 @@ export async function testListLeaveCollections() {
 
 /**
  * 4.3) testLeavePendingQuery
- * จำลอง query ที่มักใช้ในหน้าอนุมัติ/ปฏิทิน:
- * - where status pending
- * - orderBy submittedAt desc
- *
- * ⚠️ ถ้าขึ้น error เกี่ยวกับ index → ไปสร้าง index ตามที่ Firebase แจ้งได้เลย
  */
 export async function testLeavePendingQuery() {
   try {
     const qy = query(
       collection(db, "leave_requests"),
-      // สถานะที่ถือว่า pending (ปรับได้ตามของคุณ)
       where("status", "in", ["PENDING", "รอดำเนินการ"]),
       orderBy("submittedAt", "desc"),
       limit(5)
@@ -239,7 +214,6 @@ export async function testLeavePendingQuery() {
 
 /**
  * 4.4) testAuthRefreshToken
- * บังคับ refresh token (สำคัญมากตอน sync custom claims)
  */
 export async function testAuthRefreshToken() {
   try {
@@ -258,9 +232,19 @@ export async function testAuthRefreshToken() {
 /**
  * 5) Network Spy
  */
-function isStorageUrl(url: any) {
-  return typeof url === "string" && url.includes("firebasestorage.googleapis.com");
->>>>>>> dev
+function envOn(v: any) {
+  return String(v ?? "").trim() === "1" || String(v ?? "").toLowerCase() === "true";
+}
+
+// ✅ storage detector: ถ้าอยากเพิ่มโดเมนอื่นค่อยเติม
+function isStorageLikeUrl(url: any) {
+  if (typeof url !== "string") return false;
+  const s = url.toLowerCase();
+  return (
+    s.includes("firebasestorage.googleapis.com") ||
+    s.includes("supabase.co/storage") ||
+    s.includes("/storage/v1/")
+  );
 }
 
 export function installNetworkSpy() {
@@ -269,8 +253,7 @@ export function installNetworkSpy() {
   const DISABLE = envOn(import.meta.env.VITE_NET_SPY_DISABLE);
 
   // ✅ ค่า default: ไม่ยุ่ง storage เสมอ (แก้ปัญหา preflight / log รก)
-  const IGNORE_STORAGE =
-    envOn(import.meta.env.VITE_NET_SPY_IGNORE_STORAGE) || true;
+  const IGNORE_STORAGE = envOn(import.meta.env.VITE_NET_SPY_IGNORE_STORAGE) || true;
 
   if (DISABLE) {
     console.log("🟡 NET-SPY disabled by env: VITE_NET_SPY_DISABLE");
@@ -279,76 +262,52 @@ export function installNetworkSpy() {
 
   (window as any).__NET_SPY_INSTALLED__ = true;
 
-<<<<<<< HEAD
-  const origFetch: typeof window.fetch = window.fetch.bind(window);
-  const OrigXHR = window.XMLHttpRequest;
+  const origFetch = window.fetch.bind(window) as typeof window.fetch;
+// ...
+window.fetch = (async (...args: Parameters<typeof fetch>) => {
+  const url0 = args?.[0] as any;
+  const urlStr = typeof url0 === "string" ? url0 : String(url0?.url ?? "");
 
-  (window as any).__NET_SPY_ORIG_FETCH__ = origFetch;
-  (window as any).__NET_SPY_ORIG_XHR__ = OrigXHR;
-
-  window.fetch = (async (...args: Parameters<typeof fetch>) => {
-    const url = args?.[0] as any;
-    const urlStr = typeof url === "string" ? url : String(url?.url ?? "");
-
-    if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
-      console.warn("[NET-SPY][fetch] storage-ish url =", urlStr);
-=======
-  const origFetch = window.fetch.bind(window);
-  window.fetch = async (...args: any[]) => {
-    const url = args?.[0];
-    if (isStorageUrl(url)) {
-      console.warn("[NET-SPY][fetch] storage url =", url);
->>>>>>> dev
-      console.trace("[NET-SPY][fetch] stack");
-    }
-
-<<<<<<< HEAD
-    return origFetch(...args);
-  }) as typeof window.fetch;
-=======
-  const OrigXHR = window.XMLHttpRequest;
->>>>>>> dev
-
-  class SpyXHR extends OrigXHR {
-    private __url: any;
-
-    open(
-      method: string,
-      url: string | URL,
-      async?: boolean,
-      username?: string | null,
-      password?: string | null
-    ) {
-      this.__url = url;
-      const urlStr = String(url);
-
-      if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
-        console.warn("[NET-SPY][xhr.open] method =", method, "url =", urlStr);
-        console.trace("[NET-SPY][xhr.open] stack");
-      }
-
-      return super.open(
-        method,
-        url as any,
-        async ?? true,
-        username ?? undefined,
-        password ?? undefined
-      );
-    }
-
-    send(body?: any) {
-      const urlStr = String(this.__url ?? "");
-
-      if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
-        console.warn("[NET-SPY][xhr.send] url =", urlStr);
-        console.trace("[NET-SPY][xhr.send] stack");
-      }
-
-      return super.send(body);
-    }
+  if (!IGNORE_STORAGE && isStorageLikeUrl(urlStr)) {
+    console.warn("[NET-SPY][fetch] storage-ish url =", urlStr);
+    console.trace("[NET-SPY][fetch] stack");
   }
 
-  window.XMLHttpRequest = SpyXHR as any;
+  return origFetch(...args);
+}) as typeof window.fetch;
+
+  const OrigXHR = window.XMLHttpRequest;
+(window as any).__NET_SPY_ORIG_XHR__ = OrigXHR;
+
+// ✅ wrap แทน extends
+window.XMLHttpRequest = function XMLHttpRequestPatched(this: XMLHttpRequest) {
+  const xhr = new OrigXHR();
+
+  let __url = "";
+
+  const origOpen = xhr.open.bind(xhr);
+  xhr.open = (method: string, url: string | URL, async?: boolean, username?: string | null, password?: string | null) => {
+    __url = String(url);
+
+    if (!IGNORE_STORAGE && isStorageLikeUrl(__url)) {
+      console.warn("[NET-SPY][xhr.open] method =", method, "url =", __url);
+      console.trace("[NET-SPY][xhr.open] stack");
+    }
+
+    return origOpen(method, url as any, async ?? true, username ?? undefined, password ?? undefined);
+  };
+
+  const origSend = xhr.send.bind(xhr);
+  xhr.send = (body?: any) => {
+    if (!IGNORE_STORAGE && isStorageLikeUrl(__url)) {
+      console.warn("[NET-SPY][xhr.send] url =", __url);
+      console.trace("[NET-SPY][xhr.send] stack");
+    }
+    return origSend(body);
+  };
+
+  return xhr;
+} as any;
 
   (window as any).disableNetSpy = () => {
     try {
@@ -366,12 +325,9 @@ export function installNetworkSpy() {
   console.log(`✅ NET-SPY installed | IGNORE_STORAGE=${IGNORE_STORAGE ? "ON" : "OFF"}`);
 }
 
-<<<<<<< HEAD
-=======
 /**
  * 6) installDevTools
  */
->>>>>>> dev
 export function installDevTools() {
   if (!import.meta.env.DEV) return;
 
@@ -380,12 +336,6 @@ export function installDevTools() {
 
   // basics
   (window as any).testMe = testMe;
-<<<<<<< HEAD
-
-  installNetworkSpy();
-
-  console.log("✅ DevTools installed: window.testMe(), window.disableNetSpy()");
-=======
   (window as any).testProjectInfo = testProjectInfo;
   (window as any).testReadMyUserDoc = testReadMyUserDoc;
 
@@ -405,5 +355,4 @@ export function installDevTools() {
     "window.testLeaveReadOne(), window.testLeaveReadById(id), window.testListLeaveCollections(),",
     "window.testLeavePendingQuery(), window.testAuthRefreshToken(), NET-SPY"
   );
->>>>>>> dev
 }

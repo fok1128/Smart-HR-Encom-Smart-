@@ -6,6 +6,6 @@ export default defineConfig({
   plugins: [react(), svgr()],
   base: "./",
   build: {
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 4000,
   },
 });

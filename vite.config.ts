@@ -7,7 +7,7 @@ export default defineConfig({
   base: "./",
   build: {
     // ปรับเพดาน warning (หน่วยเป็น kB) — ของคุณไฟล์หลัก ~1621kB
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 4000,
 
   },
 });
