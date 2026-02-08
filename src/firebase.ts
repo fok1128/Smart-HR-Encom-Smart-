@@ -18,10 +18,6 @@ if (!firebaseConfig.apiKey) {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-<<<<<<< HEAD
-=======
-
->>>>>>> dev
 export const db = getFirestore(app);
 
 // ✅ ไม่ export storage แล้ว (ตัด Firebase Storage ออก)
