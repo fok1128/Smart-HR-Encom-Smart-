@@ -18,6 +18,9 @@ type LeaveSubType =
 
 type LeaveStatus = "อนุมัติ" | "ไม่อนุมัติ" | "รอดำเนินการ";
 
+type StatusFilter = "ทั้งหมด" | LeaveStatus;
+type CategoryFilter = "ทั้งหมด" | LeaveCategory;
+
 // ✅ รองรับรายวัน/หลายวัน + รายชั่วโมง/รายนาที
 type LeaveEvent = {
   id: string;
@@ -63,7 +66,8 @@ const addMonths = (d: Date, m: number) => new Date(d.getFullYear(), d.getMonth()
 function parseLocalDateTime(input: string): Date {
   const [dPart, tPartRaw] = input.split("T");
   const [y, m, d] = dPart.split("-").map(Number);
-  let hh = 0, mm = 0;
+  let hh = 0,
+    mm = 0;
   if (tPartRaw) {
     const t = tPartRaw.slice(0, 5);
     const parts = t.split(":").map(Number);
@@ -212,7 +216,6 @@ type RequestLike = {
   id?: string;
   requestNo?: string;
 
-  // ✅ เจ้าของคำร้อง (สำคัญมากสำหรับ filter)
   uid?: string;
   userUid?: string;
   ownerUid?: string;
@@ -277,7 +280,6 @@ function normalizeSubType(x?: string, cat?: LeaveCategory): LeaveSubType {
 
 function normalizeStatus(x?: string): LeaveStatus {
   if (x === "อนุมัติ" || x === "ไม่อนุมัติ" || x === "รอดำเนินการ") return x;
-  // เผื่อหลุด EN
   if (x === "APPROVED") return "อนุมัติ";
   if (x === "REJECTED") return "ไม่อนุมัติ";
   if (x === "PENDING") return "รอดำเนินการ";
@@ -300,8 +302,11 @@ export default function Calendar() {
   const { calendarRequests, loadingCalendar } = useLeave();
   const { user } = useAuth() as any;
 
-  // ✅ uid ของคนที่ล็อกอิน (กันหลุด: ให้เห็นเฉพาะของตัวเอง)
   const myUid: string = String(user?.uid || "").trim();
+
+  // ✅ FILTER UI (default = ทั้งหมด)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ทั้งหมด");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ทั้งหมด");
 
   // ✅ holiday map (ปีก่อน/ปีนี้/ปีหน้า)
   const today = new Date();
@@ -318,15 +323,15 @@ export default function Calendar() {
   // ✅ IMPORTANT: ปฏิทินต้องโชว์เฉพาะของตัวเองเท่านั้น
   const myCalendarRequests: RequestLike[] = useMemo(() => {
     const list = (calendarRequests ?? []) as unknown as RequestLike[];
-    if (!myUid) return []; // ถ้ายังไม่รู้ uid -> ไม่โชว์อะไร (กันข้อมูลรั่ว)
+    if (!myUid) return [];
     return list.filter((r) => {
       const owner = getRequestOwnerUid(r);
       return owner && owner === myUid;
     });
   }, [calendarRequests, myUid]);
 
-  // ✅ แปลงคำร้อง -> event ใช้ในปฏิทิน
-  const leaveEvents: LeaveEvent[] = useMemo(() => {
+  // ✅ แปลงคำร้อง -> event (ของฉันเท่านั้น)
+  const leaveEventsAll: LeaveEvent[] = useMemo(() => {
     return (myCalendarRequests ?? []).map((r) => {
       const requestNo = r.requestNo ?? r.id ?? "-";
       const category = normalizeCategory(r.category ?? r.type);
@@ -362,6 +367,15 @@ export default function Calendar() {
       };
     });
   }, [myCalendarRequests]);
+
+  // ✅ APPLY FILTERS (สถานะ + ประเภท)
+  const leaveEvents: LeaveEvent[] = useMemo(() => {
+    return leaveEventsAll.filter((ev) => {
+      const okStatus = statusFilter === "ทั้งหมด" ? true : ev.status === statusFilter;
+      const okCat = categoryFilter === "ทั้งหมด" ? true : ev.category === categoryFilter;
+      return okStatus && okCat;
+    });
+  }, [leaveEventsAll, statusFilter, categoryFilter]);
 
   const weekStartsOn: 0 | 1 = 1;
   const cells = useMemo(() => buildCalendarCells(currentMonth, weekStartsOn), [currentMonth]);
@@ -452,29 +466,81 @@ export default function Calendar() {
       .sort((a, b) => (a.startAt < b.startAt ? -1 : 1));
   }, [leaveEvents, currentMonth]);
 
+  const resetFilters = () => {
+    setStatusFilter("ทั้งหมด");
+    setCategoryFilter("ทั้งหมด");
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="w-full">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">ปฏิทินวันลา</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             วันหยุดไทย + วันลา • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
             {loadingCalendar ? " • กำลังโหลด..." : ""}
           </p>
+
+          {/* FILTER BAR */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">สถานะ</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+              >
+                <option value="ทั้งหมด">ทั้งหมด</option>
+                <option value="รอดำเนินการ">รอดำเนินการ</option>
+                <option value="อนุมัติ">อนุมัติ</option>
+                <option value="ไม่อนุมัติ">ไม่อนุมัติ</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">ประเภท</span>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
+                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+              >
+                <option value="ทั้งหมด">ทั้งหมด</option>
+                <option value="ลากิจ">ลากิจ</option>
+                <option value="ลาป่วย">ลาป่วย</option>
+                <option value="ลาพักร้อน">ลาพักร้อน</option>
+                <option value="ลากรณีพิเศษ">ลากรณีพิเศษ</option>
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            >
+              ล้างตัวกรอง
+            </button>
+
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                แสดง {leaveEvents.length} รายการ
+              </span>
+
+              <button
+                type="button"
+                onClick={goToday}
+                className="h-9 rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+              >
+                วันนี้
+              </button>
+            </div>
+          </div>
+
           {!myUid && (
-            <p className="mt-1 text-xs text-red-600 dark:text-red-300">
+            <p className="mt-2 text-xs text-red-600 dark:text-red-300">
               ไม่พบข้อมูลผู้ใช้ (uid) — ปฏิทินจะไม่แสดงข้อมูลเพื่อความปลอดภัย
             </p>
           )}
         </div>
-
-        <button
-          type="button"
-          onClick={goToday}
-          className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-        >
-          วันนี้
-        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -489,13 +555,7 @@ export default function Calendar() {
                 aria-label="Previous month"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M15 18l-6-6 6-6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
 
@@ -506,18 +566,14 @@ export default function Calendar() {
                 aria-label="Next month"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M9 6l6 6-6 6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
             </div>
 
-            <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{monthTitle}</div>
+            <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              {new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric" }).format(currentMonth)}
+            </div>
             <div className="text-sm text-gray-500 dark:text-gray-400">เลือกวันเพื่อดูรายละเอียด</div>
           </div>
 
@@ -615,7 +671,7 @@ export default function Calendar() {
                     {d.getDate()}
                   </div>
 
-                  {/* Holiday badge (สั้น ๆ) */}
+                  {/* Holiday badge */}
                   {isHoliday && (
                     <div className="absolute left-2 top-7 z-20 max-w-[75%] truncate rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-200">
                       {holidays[0].name}
@@ -638,7 +694,7 @@ export default function Calendar() {
                     </div>
                   )}
 
-                  {/* timed hint (ถ้าไม่มี holiday badge จะโชว์ตรงนี้พอดี) */}
+                  {/* timed hint */}
                   {!isHoliday && timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
                     <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
                       {formatTimeFromMinutes(timedOccs[0].startMin)}–{formatTimeFromMinutes(timedOccs[0].endMin)}
