@@ -441,11 +441,7 @@ export default function Calendar() {
 
     return m;
   }, [leaveEvents]);
-
-  const monthTitle = useMemo(() => {
-    return new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric" }).format(currentMonth);
-  }, [currentMonth]);
-
+  
   const selectedOccs = occMap.get(selectedISO) ?? [];
 
   const goToday = () => {
