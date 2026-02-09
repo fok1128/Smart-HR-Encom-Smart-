@@ -186,7 +186,7 @@ app.get("/me", requireAuth, async (req, res) => {
       });
     }
 
-    // ✅ 2) Sync custom claims role ให้ตรงกับ Firestore (ทาง A)
+    // ✅ 2) Sync custom claims role ให้ตรงกับ Firestore
     const claimSync = await syncRoleClaimFromFirestore(uid);
 
     // ✅ 3) โหลด employee
@@ -201,18 +201,13 @@ app.get("/me", requireAuth, async (req, res) => {
       });
     }
 
-    // ✅ หมายเหตุ: ถ้า claim ถูกเปลี่ยน (changed=true) ฝั่ง client ต้อง getIdToken(true) หรือ logout/login
     return res.json({
       ok: true,
       projectId: admin.app().options.projectId || null,
       uid,
       email: req.user.email || null,
-
-      // ✅ role ที่เชื่อถือได้ = จาก Firestore (และกำลัง sync ไป claim)
       role: roleFs,
-
-      claimSync, // { ok, changed, role } ช่วย debug
-
+      claimSync,
       user: { id: userSnap.id, ...userData },
       employee: { id: empSnap.id, ...empSnap.data() },
     });
@@ -238,13 +233,11 @@ app.post("/admin/set-role", requireAuth, async (req, res) => {
 
     if (!uid) return res.status(400).json({ ok: false, error: "MISSING_UID" });
 
-    // 1) update Firestore
     await db.collection("users").doc(uid).set(
       { role, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
 
-    // 2) sync claim
     const claimSync = await syncRoleClaimFromFirestore(uid);
 
     return res.json({ ok: true, uid, role, claimSync });
@@ -264,7 +257,6 @@ function safeFileName(name = "file") {
   return String(name).replace(/[^\w.\-() ]+/g, "_");
 }
 
-<<<<<<< HEAD
 function isAllowedMime(mime) {
   return mime === "application/pdf" || String(mime).startsWith("image/");
 }
@@ -301,18 +293,6 @@ function isAllowedPrefix(key) {
   );
 }
 
-/**
- * ✅ POST /files/upload
- * รองรับ:
- * - single: field "file"
- * - multi : field "files"
- *
- * Response:
- * - { ok:true, key, name, size, contentType, attachments:[...] }  (ถ้าอัปไฟล์เดียว)
- * - { ok:true, attachments:[...] }                                (ถ้าอัปหลายไฟล์)
- */
-=======
->>>>>>> dev
 app.post(
   "/files/upload",
   requireAuth,
@@ -325,10 +305,6 @@ app.post(
       const uid = String(req.user?.uid || "");
       if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
 
-<<<<<<< HEAD
-      // multer.fields -> req.files เป็น object: { file:[...], files:[...] }
-=======
->>>>>>> dev
       let files = [];
       if (Array.isArray(req.files)) {
         files = req.files;
@@ -340,23 +316,15 @@ app.post(
 
       if (!files.length) return res.status(400).json({ ok: false, error: "NO_FILES" });
 
-      // ✅ allowlist folder
       const prefix = mapFolderToPrefix(req.body?.folder);
       if (!prefix) return res.status(400).json({ ok: false, error: "FOLDER_NOT_ALLOWED" });
 
       const bucket = process.env.SUPABASE_BUCKET || "smart-hr-files";
       const supabase = getSupabase();
 
-<<<<<<< HEAD
-=======
-      const folder = String(req.body?.folder || "leave").trim() || "leave";
-      const basePrefix = folder === "leave" ? "leave_attachments" : folder;
-
->>>>>>> dev
       const attachments = [];
 
       for (const f of files) {
-        // ✅ จำกัดชนิดไฟล์ (pdf + image เท่านั้น)
         if (!isAllowedMime(f.mimetype)) {
           return res.status(400).json({ ok: false, error: "FILE_TYPE_NOT_ALLOWED" });
         }
@@ -385,10 +353,6 @@ app.post(
         });
       }
 
-<<<<<<< HEAD
-      // ✅ ถ้าอัป 1 ไฟล์: คืน key แบบตรงๆ ด้วย (กันพังหน้าเก่า)
-=======
->>>>>>> dev
       if (attachments.length === 1) {
         const a = attachments[0];
         return res.json({
@@ -418,7 +382,6 @@ app.get("/files/signed-url", requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: "INVALID_KEY" });
     }
 
-    // ✅ allowlist prefix กันขอของนอกระบบ
     if (!isAllowedPrefix(key)) {
       return res.status(403).json({ ok: false, error: "KEY_NOT_ALLOWED" });
     }
@@ -427,22 +390,15 @@ app.get("/files/signed-url", requireAuth, async (req, res) => {
     if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
 
     const role = await getMyRole(uid);
-
-    // ----------------- POLICY ตาม prefix -----------------
     const isOwner = key.includes(`/${uid}/`);
 
-    // 1) ✅ Announcement: ให้ทุกคนที่ login แล้วเปิดได้
     if (key.startsWith("announcement/")) {
-      // ผ่านเลย
-    }
-    // 2) ✅ Leave attachments: owner หรือ approver เท่านั้น
-    else if (key.startsWith("leave_attachments/")) {
+      // ทุกคนที่ login เปิดได้
+    } else if (key.startsWith("leave_attachments/")) {
       if (!isOwner && !isApprover(role)) {
         return res.status(403).json({ ok: false, error: "FORBIDDEN" });
       }
-    }
-    // 3) ✅ Profile: owner เท่านั้น
-    else if (key.startsWith("profile/")) {
+    } else if (key.startsWith("profile/")) {
       if (!isOwner) {
         return res.status(403).json({ ok: false, error: "FORBIDDEN" });
       }

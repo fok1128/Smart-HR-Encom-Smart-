@@ -1,196 +1,81 @@
-<<<<<<< HEAD
-# Smart-HR-Encom-Smart-
-=======
-# TailAdmin React - Free React Tailwind Admin Dashboard Template
+# Smart Leave System (Smart-HR-Encom-Smart)
 
-TailAdmin is a free and open-source admin dashboard template built on **React and Tailwind CSS**, providing developers
-with everything they need to create a comprehensive, data-driven back-end,
-dashboard, or admin panel solution for upcoming web projects.
+ระบบเว็บสำหรับ “ยื่นลา–อนุมัติ–ดูประวัติ–ออกรายงาน” ตามบทบาทผู้ใช้  
+Frontend ใช้ TailAdmin (React + Tailwind) และ Backend เป็น Express API เชื่อม Firebase/Firestore พร้อมอัปโหลดไฟล์ไป Supabase Storage (Signed URL)
 
-With TailAdmin, you get access to all the necessary dashboard UI components, elements, and pages required to build a
-feature-rich and complete dashboard or admin panel. Whether you're building dashboard or admin panel for a complex web
-application or a simple website, TailAdmin is the perfect solution to help you get up and running quickly.
+---
 
-![TailAdmin React.js Dashboard Preview](./banner.png)
+## Features
+- Authentication + Role-based access  
+  Roles: `USER`, `HR`, `MANAGER`, `EXECUTIVE_MANAGER`, `ADMIN`
+- Submit leave request + track status
+- Approve / Reject + approval history
+- Export approval history to PDF
+- Upload attachments (PDF / Images) to Supabase Storage
+- Secure file access via Signed URL + server-side policy
 
-## Overview
+---
 
-TailAdmin provides essential UI components and layouts for building feature-rich, data-driven admin dashboards and
-control panels. It's built on:
+## Tech Stack
+- Frontend: React + Tailwind CSS (TailAdmin template)
+- Backend: Node.js + Express
+- Auth/DB: Firebase Admin + Firestore
+- Storage: Supabase Storage (bucket) + Signed URL
 
-- React 19
-- TypeScript
-- Tailwind CSS
+---
 
-### Quick Links
+## Project Structure (สำคัญ)
+- `src/` : Frontend
+- `backend/` : Backend API
+  - `backend/server.js`
+  - `backend/supabase.js`
 
-- [✨ Visit Website](https://tailadmin.com)
-- [📄 Documentation](https://tailadmin.com/docs)
-- [⬇️ Download](https://tailadmin.com/download)
-- [🖌️ Figma Design File (Community Edition)](https://www.figma.com/community/file/1214477970819985778)
-- [⚡ Get PRO Version](https://tailadmin.com/pricing)
+---
 
-### Demos
+## Requirements
+- Node.js 18+ (แนะนำ)
+- Firebase Project: Auth + Firestore
+- Supabase Project: Storage bucket
 
-- [Free Version](https://free-react-demo.tailadmin.com/)
-- [Pro Version](https://react-demo.tailadmin.com)
+---
 
-### Other Versions
+## Environment Variables
 
-- [HTML Version](https://github.com/TailAdmin/tailadmin-free-tailwind-dashboard-template)
-- [Next.js Version](https://github.com/TailAdmin/free-nextjs-admin-dashboard)
-- [Vue.js Version](https://github.com/TailAdmin/vue-tailwind-admin-dashboard)
+### Frontend (`.env`)
+ตัวอย่าง:
+- `VITE_API_BASE_URL=http://localhost:4000`
 
-## Installation
+> ปรับตาม port/โดเมนที่คุณใช้จริง
 
-### Prerequisites
+### Backend (`backend/.env`)
+ขั้นต่ำที่มักต้องมี:
 
-To get started with TailAdmin, ensure you have the following prerequisites installed and set up:
+**Server**
+- `PORT=4000`
+- `CORS_ORIGIN=http://localhost:5173`
 
-- Node.js 18.x or later (recommended to use Node.js 20.x or later)
+**Supabase**
+- `SUPABASE_URL=...`
+- `SUPABASE_SERVICE_ROLE_KEY=...`
+- `SUPABASE_BUCKET=smart-hr-files`
 
-### Cloning the Repository
+**Firebase Admin (เลือกอย่างใดอย่างหนึ่ง)**
 
-Clone the repository using the following command:
+1) Render/Prod: ใส่ JSON เป็น string ใน ENV  
+- `FIREBASE_SERVICE_ACCOUNT={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}`
 
+> หมายเหตุ: `private_key` ต้องมี `\n` ได้ (ระบบใน server.js จะ replace ให้)
+
+หรือ
+
+2) Local: ใช้ไฟล์ service account ในเครื่อง  
+- `GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccount.json`
+
+---
+
+## Run (Local)
+
+### 1) Frontend
 ```bash
-git clone https://github.com/TailAdmin/free-react-tailwind-admin-dashboard.git
-```
-
-> Windows Users: place the repository near the root of your drive if you face issues while cloning.
-
-1. Install dependencies:
-
-   ```bash
-   npm install
-   # or
-   yarn install
-   ```
-
-   > Use the `--legacy-peer-deps` flag, if you face issues while installing.
-
-2. Start the development server:
-   ```bash
-   npm run dev
-   # or
-   yarn dev
-   ```
-
-## Components
-
-TailAdmin is a pre-designed starting point for building a web-based dashboard using React.js and Tailwind CSS. The
-template includes:
-
-- Sophisticated and accessible sidebar
-- Data visualization components
-- Prebuilt profile management and 404 page
-- Tables and Charts(Line and Bar)
-- Authentication forms and input elements
-- Alerts, Dropdowns, Modals, Buttons and more
-- Can't forget Dark Mode 🕶️
-
-All components are built with React and styled using Tailwind CSS for easy customization.
-
-## Feature Comparison
-
-### Free Version
-
-- 1 Unique Dashboard
-- 30+ dashboard components
-- 50+ UI elements
-- Basic Figma design files
-- Community support
-
-### Pro Version
-
-- 7 Unique Dashboards: Analytics, Ecommerce, Marketing, CRM, SaaS, Stocks, Logistics (more coming soon)
-- 500+ dashboard components and UI elements
-- Complete Figma design file
-- Email support
-
-To learn more about pro version features and pricing, visit our [pricing page](https://tailadmin.com/pricing).
-
-## Changelog
-
-### Version 2.0.2 - [March 25, 2025]
-
-- Upgraded to React 19
-- Included overrides for packages to prevent peer dependency errors.
-- Migrated from react-flatpickr to flatpickr package for React 19 support
-
-### Version 2.0.1 - [February 27, 2025]
-
-#### Update Overview
-
-- Upgraded to Tailwind CSS v4 for better performance and efficiency.
-- Updated class usage to match the latest syntax and features.
-- Replaced deprecated class and optimized styles.
-
-#### Next Steps
-
-- Run npm install or yarn install to update dependencies.
-- Check for any style changes or compatibility issues.
-- Refer to the Tailwind CSS v4 [Migration Guide](https://tailwindcss.com/docs/upgrade-guide) on this release. if needed.
-- This update keeps the project up to date with the latest Tailwind improvements. 🚀
-
-### Version 2.0.0 - [February 2025]
-
-A major update with comprehensive redesign and modern React patterns implementation.
-
-#### Major Improvements
-
-- Complete UI redesign with modern React patterns
-- New features: collapsible sidebar, chat, and calendar
-- Improved performance and accessibility
-- Updated data visualization using ApexCharts
-
-#### Key Features
-
-- Redesigned dashboards (Ecommerce, Analytics, Marketing, CRM)
-- Enhanced navigation with React Router integration
-- Advanced tables with sorting and filtering
-- Calendar with drag-and-drop support
-- New UI components and improved existing ones
-
-#### Breaking Changes
-
-- Updated sidebar component API
-- Migrated charts to ApexCharts
-- Revised authentication system
-
-[Read more](https://tailadmin.com/docs/update-logs/react) on this release.
-
-### Version 1.3.7 - [June 20, 2024]
-
-#### Enhancements
-
-1. Remove Repetition of DefaultLayout in every Pages
-2. Add ClickOutside Component for reduce repeated functionality in Header Message, Notification and User Dropdowns.
-
-### Version 1.3.6 - [Jan 31, 2024]
-
-#### Enhancements
-
-1. Integrate flatpickr in [Date Picker/Form Elements]
-2. Change color after select an option [Select Element/Form Elements].
-3. Make it functional [Multiselect Dropdown/Form Elements].
-4. Make best value editable [Pricing Table One/Pricing Table].
-5. Rearrange Folder structure.
-
-### Version 1.2.0 - [Apr 28, 2023]
-
-- Add Typescript in TailAdmin React.
-
-### Version 1.0.0 - Initial Release - [Mar 13, 2023]
-
-- Initial release of TailAdmin React.
-
-## License
-
-TailAdmin React.js Free Version is released under the MIT License.
-
-## Support
-
-If you find this project helpful, please consider giving it a star on GitHub. Your support helps us continue developing
-and maintaining this template.
->>>>>>> fd216a9 (my first commit)
+npm install
+npm run dev
