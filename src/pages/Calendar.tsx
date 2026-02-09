@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
+import { useAuth } from "../context/AuthContext";
 import { buildThaiHolidayMapAround } from "../services/utils/thHolidays";
 
 // ===== Types (ทำให้ไฟล์นี้ไม่พึ่ง type ที่ export จาก context) =====
@@ -210,6 +211,15 @@ function leaveLabel(ev: LeaveEvent) {
 type RequestLike = {
   id?: string;
   requestNo?: string;
+
+  // ✅ เจ้าของคำร้อง (สำคัญมากสำหรับ filter)
+  uid?: string;
+  userUid?: string;
+  ownerUid?: string;
+  createdByUid?: string;
+  createdBy?: string;
+  userId?: string;
+
   category?: string;
   subType?: string;
   status?: string;
@@ -274,8 +284,24 @@ function normalizeStatus(x?: string): LeaveStatus {
   return "รอดำเนินการ";
 }
 
+function getRequestOwnerUid(r: RequestLike): string {
+  const uid =
+    (r as any).uid ??
+    (r as any).userUid ??
+    (r as any).ownerUid ??
+    (r as any).createdByUid ??
+    (r as any).createdBy ??
+    (r as any).userId ??
+    "";
+  return String(uid || "").trim();
+}
+
 export default function Calendar() {
   const { calendarRequests, loadingCalendar } = useLeave();
+  const { user } = useAuth() as any;
+
+  // ✅ uid ของคนที่ล็อกอิน (กันหลุด: ให้เห็นเฉพาะของตัวเอง)
+  const myUid: string = String(user?.uid || "").trim();
 
   // ✅ holiday map (ปีก่อน/ปีนี้/ปีหน้า)
   const today = new Date();
@@ -289,9 +315,19 @@ export default function Calendar() {
   const selectedISO = toISODate(selectedDate);
   const selectedHolidays = holidayMap.get(selectedISO) ?? [];
 
+  // ✅ IMPORTANT: ปฏิทินต้องโชว์เฉพาะของตัวเองเท่านั้น
+  const myCalendarRequests: RequestLike[] = useMemo(() => {
+    const list = (calendarRequests ?? []) as unknown as RequestLike[];
+    if (!myUid) return []; // ถ้ายังไม่รู้ uid -> ไม่โชว์อะไร (กันข้อมูลรั่ว)
+    return list.filter((r) => {
+      const owner = getRequestOwnerUid(r);
+      return owner && owner === myUid;
+    });
+  }, [calendarRequests, myUid]);
+
   // ✅ แปลงคำร้อง -> event ใช้ในปฏิทิน
   const leaveEvents: LeaveEvent[] = useMemo(() => {
-    return ((calendarRequests ?? []) as unknown as RequestLike[]).map((r) => {
+    return (myCalendarRequests ?? []).map((r) => {
       const requestNo = r.requestNo ?? r.id ?? "-";
       const category = normalizeCategory(r.category ?? r.type);
       const subType = normalizeSubType(r.subType, category);
@@ -325,7 +361,7 @@ export default function Calendar() {
         note: r.reason ?? r.note ?? "",
       };
     });
-  }, [calendarRequests]);
+  }, [myCalendarRequests]);
 
   const weekStartsOn: 0 | 1 = 1;
   const cells = useMemo(() => buildCalendarCells(currentMonth, weekStartsOn), [currentMonth]);
@@ -425,6 +461,11 @@ export default function Calendar() {
             วันหยุดไทย + วันลา • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
             {loadingCalendar ? " • กำลังโหลด..." : ""}
           </p>
+          {!myUid && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-300">
+              ไม่พบข้อมูลผู้ใช้ (uid) — ปฏิทินจะไม่แสดงข้อมูลเพื่อความปลอดภัย
+            </p>
+          )}
         </div>
 
         <button
@@ -448,7 +489,13 @@ export default function Calendar() {
                 aria-label="Previous month"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M15 18l-6-6 6-6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </button>
 
@@ -459,7 +506,13 @@ export default function Calendar() {
                 aria-label="Next month"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path
+                    d="M9 6l6 6-6 6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </button>
             </div>
