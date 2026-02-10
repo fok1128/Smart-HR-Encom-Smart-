@@ -715,11 +715,14 @@ export default function LeaveSubmitPage() {
     }
 
     // ✅ ลากิจปกติ ต้องยื่นล่วงหน้า >= 3 วันทำการ (ยกเว้นฉุกเฉิน / ยกเว้นย้อนหลัง)
-    if (isBusinessNormal && !isRetroactive && startYMD) {
-      if (compareYMD(startYMD, minStartForBusinessNormal) < 0) {
-        e.startDate = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
+    // ลากิจปกติ: ต้องยื่นล่วงหน้า >= 3 วันทำการ (ยกเว้นฉุกเฉิน / ยกเว้นย้อนหลัง)
+      if (isBusinessNormal && !isRetroactive && startYMD) {
+        // ✅ ใช้ isBusinessEmergency ให้ TS ไม่ฟ้อง + อ่านง่ายว่า "ปกติเท่านั้น"
+        if (!isBusinessEmergency && compareYMD(startYMD, minStartForBusinessNormal) < 0) {
+          e.startDate = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
+        }
       }
-    }
+
 
     const MAX_FILES = 5;
     const MAX_MB = 15;
