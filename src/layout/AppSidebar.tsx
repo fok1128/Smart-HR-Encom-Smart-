@@ -53,6 +53,9 @@ const AppSidebar = () => {
       { icon: <CalenderIcon />, name: "ปฏิทินวันลา", path: "/calendar" },
       { icon: <ListIcon />, name: "ยื่นใบลา", path: "/leave/submit" },
       { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" },
+      {icon: <ListIcon />,name: "ใบลาของฉัน",path: "/my-leaves",
+}
+
     ];
 
     // ✅ ผู้อนุมัติ: ADMIN / HR / MANAGER / EXECUTIVE_MANAGER

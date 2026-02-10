@@ -28,6 +28,7 @@ export type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลา�
 export type LeaveSubType =
   | "ลากิจปกติ"
   | "ลากิจฉุกเฉิน"
+  | "ป่วยระหว่างวัน"
   | "ลาป่วยทั่วไป"
   | "ลาหมอนัด"
   | "ลาแบบมีใบรับรองแพทย์"
@@ -41,7 +42,6 @@ export type LeaveRequest = {
   uid: string;
   createdByEmail?: string;
 
-  // ✅ snapshot ผู้ยื่น
   employeeNo?: string;
   employeeName?: string;
   phone?: string;
@@ -52,6 +52,12 @@ export type LeaveRequest = {
   startAt: string;
   endAt: string;
   reason?: string;
+
+  // ✅ เพิ่ม optional policy fields
+  workdaysCount?: number;
+  leaveUnits?: number | null;
+  isRetroactive?: boolean;
+  retroReason?: string | null;
 
   attachments?: { name: string; size: number; url?: string; storagePath?: string; key?: string }[];
   files?: { name: string; size: number }[];
@@ -109,9 +115,11 @@ function isApproverRole(role?: string) {
 
 function normalizeStatusToThai(s: any): LeaveStatus {
   const v = String(s || "").trim();
+  // EN -> TH
   if (v === "PENDING") return "รอดำเนินการ";
   if (v === "APPROVED") return "อนุมัติ";
   if (v === "REJECTED") return "ไม่อนุมัติ";
+  // TH
   if (v === "รอดำเนินการ") return "รอดำเนินการ";
   if (v === "อนุมัติ") return "อนุมัติ";
   if (v === "ไม่อนุมัติ") return "ไม่อนุมัติ";
@@ -160,6 +168,11 @@ function mapDocToLeaveRequest(d: any): LeaveRequest {
     startAt: data.startAt,
     endAt: data.endAt,
     reason: data.reason ?? "",
+
+    workdaysCount: typeof data.workdaysCount === "number" ? data.workdaysCount : undefined,
+    leaveUnits: typeof data.leaveUnits === "number" ? data.leaveUnits : (data.leaveUnits ?? null),
+    isRetroactive: !!data.isRetroactive,
+    retroReason: data.retroReason ?? null,
 
     attachments: data.attachments ?? [],
     files: data.files ?? [],
@@ -217,10 +230,15 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       },
       (err: any) => {
         console.error("LeaveContext onSnapshot error:", err);
+
+        const msg =
           err?.code === "permission-denied"
             ? "ไม่มีสิทธิ์อ่านข้อมูลการลา (permission denied)"
             : err?.message || "โหลดข้อมูลการลาไม่สำเร็จ";
-        // ✅ ถ้าเธอมี toast ก็เอา msg ไปโชว์ได้
+
+        // ถ้ามี toast ก็เอา msg ไปโชว์ได้
+        console.warn(msg);
+
         setRequests([]);
         setLoading(false);
       }
@@ -265,8 +283,9 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
     const requestNo = genRequestNo6();
 
-    // ✅ เอาจาก AuthContext ที่ normalize แล้ว (สำคัญมาก)
-    const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo, (user as any)?.employee?.employeeNo) || null;
+    const employeeNo =
+      pickStr((user as any)?.employeeNo, (user as any)?.empNo, (user as any)?.employee?.employeeNo) || null;
+
     const uf = pickStr((user as any)?.fname, (user as any)?.user?.fname, (user as any)?.employee?.fname);
     const ul = pickStr((user as any)?.lname, (user as any)?.user?.lname, (user as any)?.employee?.lname);
     const employeeName = `${uf} ${ul}`.trim() || null;
@@ -277,7 +296,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       uid: user.uid,
       createdByEmail: user.email ?? null,
 
-      // ✅ snapshot (เอาไว้ให้ทุกหน้าโชว์ได้ โดยไม่อ่าน users ของคนอื่น)
       employeeNo,
       employeeName,
       phone,
@@ -307,7 +325,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
   const updateStatus = async (id: string, status: LeaveStatus, reason?: string) => {
     if (!canApprove) throw new Error("FORBIDDEN");
 
-    // ✅ patch อยู่ใน whitelist rules แน่นอน
     const patch: Record<string, any> = {
       status,
       updatedAt: serverTimestamp(),
