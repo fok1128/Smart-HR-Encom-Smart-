@@ -4,7 +4,7 @@ import UserInfoCard from "../components/UserProfile/UserInfoCard";
 import PageMeta from "../components/common/PageMeta";
 import { useMyProfile } from "../hooks/useMyProfile";
 
-export default function UserProfiles() {
+export default function UserProfile() {
   const { profile, fetching, errorMsg } = useMyProfile();
 
   return (
@@ -17,28 +17,28 @@ export default function UserProfiles() {
           Profile
         </h3>
 
-        {/* ✅ กำลังโหลด */}
+        {/* ✅ Loading */}
         {fetching && (
           <div className="text-sm text-gray-600 dark:text-white/70">
             กำลังโหลดข้อมูลโปรไฟล์...
           </div>
         )}
 
-        {/* ✅ ถ้ามี error ให้โชว์ก่อน (กันสับสนกับ "ไม่พบข้อมูล") */}
+        {/* ✅ Error */}
         {!fetching && errorMsg && (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
             {errorMsg}
           </div>
         )}
 
-        {/* ✅ โหลดเสร็จ ไม่มี error แต่ไม่เจอข้อมูล */}
+        {/* ✅ No profile */}
         {!fetching && !errorMsg && !profile && (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-white/[0.02] dark:text-white/70">
-            ไม่พบข้อมูลโปรไฟล์ (ตรวจสอบ users/employeeNo และ employees/{`{employeeNo}`})
+            ไม่พบข้อมูลโปรไฟล์ (ตรวจสอบ users/{`{uid}`}.employeeNo และ employees/{`{employeeNo}`})
           </div>
         )}
 
-        {/* ✅ มีข้อมูลแล้วค่อยโชว์การ์ด */}
+        {/* ✅ Profile OK */}
         {!fetching && !errorMsg && profile && (
           <div className="space-y-6">
             <UserMetaCard profile={profile} />

@@ -10,6 +10,8 @@ import {
   deleteDoc,
   doc,
   updateDoc,
+  arrayUnion,
+  getDocs,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { getAuth } from "firebase/auth";
@@ -19,9 +21,6 @@ export type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELED";
 
 /**
  * ✅ แนบไฟล์แบบใหม่ (Supabase ผ่าน Backend)
- * - storagePath = key ที่ได้จาก /files/upload
- *
- * ยังรองรับของเดิม (url/path) ไว้กันพังข้อมูลเก่า
  */
 export type LeaveAttachment =
   | { name: string; size: number }
@@ -43,12 +42,14 @@ export type LeaveRequestDoc = {
   startAt: string;
   endAt: string;
 
+  // ✅ optional normalized dates
+  startYMD?: string | null;
+  endYMD?: string | null;
+  leaveYear?: number | null;
+
   reason: string;
 
-  // legacy
   files?: { name: string; size: number }[];
-
-  // new
   attachments?: LeaveAttachment[];
 
   status: LeaveStatus;
@@ -61,11 +62,31 @@ export type LeaveRequestDoc = {
   rejectedBy?: { uid: string; email?: string | null } | null;
   approvedAt?: any;
   rejectedAt?: any;
-
   decidedAt?: any;
 
-  // legacy
   rejectReason?: string | null;
+
+  // snapshot fields
+  createdByEmail?: string | null;
+  employeeNo?: string | null;
+  employeeName?: string | null;
+  phone?: string | null;
+
+  // ✅ policy fields
+  workdaysCount?: number;
+
+  // ✅ ลากิจ: หน่วยวันจริงที่ถูกนับ (รองรับ 0.5)
+  leaveUnits?: number | null;
+
+  isRetroactive?: boolean;
+  retroReason?: string | null;
+
+  requireMedicalCert?: boolean;
+  medicalCertDueAt?: string | null;
+
+  medicalCertProvided?: boolean;
+  medicalCertSubmittedAt?: string | null;
+  medicalCertSource?: "UPLOADED_WITH_REQUEST" | "UPLOADED_LATER" | null;
 };
 
 const colRef = collection(db, "leave_requests");
@@ -118,9 +139,6 @@ export async function getSignedUrlForKey(key: string): Promise<string> {
   return data.signedUrl as string;
 }
 
-/**
- * ✅ normalize response จาก backend ให้เป็น attachment แบบมาตรฐานเสมอ
- */
 function normalizeUploadResponse(data: any, f: File): LeaveAttachment {
   const first = (Array.isArray(data?.attachments) && data.attachments[0]) || null;
 
@@ -139,12 +157,6 @@ function normalizeUploadResponse(data: any, f: File): LeaveAttachment {
   };
 }
 
-/**
- * ✅ อัปโหลดไฟล์แนบไป Supabase Storage ผ่าน Backend (/files/upload)
- * คืน attachments ที่มี storagePath (key)
- *
- * NOTE: ส่ง field เดียวพอ (กันอัปโหลดซ้ำ 2 เท่า)
- */
 export async function uploadLeaveAttachments(
   uid: string,
   files: File[],
@@ -185,26 +197,9 @@ export async function uploadLeaveAttachments(
   return out;
 }
 
-export async function createLeaveRequest(payload: {
-  uid: string;
-  email?: string | null;
-
-  // ✅ เพิ่ม snapshot fields (optional)
-  createdByEmail?: string | null;
-  employeeNo?: string | null;
-  employeeName?: string | null;
-  phone?: string | null;
-
-  category: string;
-  subType: string;
-  mode: LeaveMode;
-  startAt: string;
-  endAt: string;
-  reason: string;
-
-  files?: { name: string; size: number }[];
-  attachments?: LeaveAttachment[];
-}) {
+export async function createLeaveRequest(
+  payload: Omit<LeaveRequestDoc, "id" | "requestNo" | "status" | "submittedAt" | "updatedAt">
+) {
   const requestNo = genRequestNo();
   const docRef = await addDoc(colRef, {
     ...payload,
@@ -216,11 +211,6 @@ export async function createLeaveRequest(payload: {
   return { id: docRef.id, requestNo };
 }
 
-/**
- * ✅ FIX สำคัญ:
- * ให้ signature ตรงกับหน้า LeaveSubmitPage.tsx ที่เรียก
- * createLeaveRequestWithFiles(payload, files, onProgress)
- */
 export async function createLeaveRequestWithFiles(
   payload: Omit<Parameters<typeof createLeaveRequest>[0], "attachments" | "files">,
   files: File[],
@@ -230,9 +220,75 @@ export async function createLeaveRequestWithFiles(
 
   return createLeaveRequest({
     ...payload,
-    files: (files || []).map((f) => ({ name: f.name, size: f.size })), // legacy เผื่อใช้
+    files: (files || []).map((f) => ({ name: f.name, size: f.size })), // legacy
     attachments,
   });
+}
+
+/**
+ * ✅ แนบไฟล์เพิ่มภายหลัง (ใบรับรองแพทย์)
+ */
+export async function addLeaveAttachments(
+  leaveRequestId: string,
+  uid: string,
+  files: File[],
+  onProgress?: (percent: number) => void
+) {
+  if (!leaveRequestId) throw new Error("MISSING_LEAVE_REQUEST_ID");
+  if (!uid) throw new Error("MISSING_UID");
+
+  const attachments = await uploadLeaveAttachments(uid, files, onProgress);
+  const legacyFiles = (files || []).map((f) => ({ name: f.name, size: f.size }));
+
+  await updateDoc(doc(db, "leave_requests", leaveRequestId), {
+    attachments: arrayUnion(...attachments),
+    files: arrayUnion(...legacyFiles),
+    updatedAt: serverTimestamp(),
+  });
+
+  return attachments;
+}
+
+/**
+ * ✅ ลากิจ: รวม “ใช้ไปแล้วกี่วัน” ในปีนั้น (นับ PENDING + APPROVED)
+ * - ใช้ leaveUnits ถ้ามี (รองรับ 0.5)
+ * - ถ้าไม่มี leaveUnits ให้ fallback = workdaysCount (หรือ 0)
+ *
+ * Query ใช้ startAt เป็น string แบบ ISO/ISO-local:
+ * - range: `${year}-01-01` ถึง `${year}-12-31T23:59`
+ * - ต้องมี composite index: uid + category + startAt (ถ้าถูกบังคับ)
+ */
+export async function getMyBusinessLeaveUsage(uid: string, year: number): Promise<number> {
+  if (!uid) return 0;
+
+  const start = `${year}-01-01`;
+  const end = `${year}-12-31T23:59`;
+
+  // นับเฉพาะ PENDING + APPROVED
+  const qy = query(
+    colRef,
+    where("uid", "==", uid),
+    where("category", "==", "ลากิจ"),
+    where("startAt", ">=", start),
+    where("startAt", "<=", end)
+  );
+
+  const snap = await getDocs(qy);
+  let sum = 0;
+
+  snap.docs.forEach((d) => {
+    const data: any = d.data();
+    const status = String(data.status || "").toUpperCase();
+    if (status !== "PENDING" && status !== "APPROVED") return;
+
+    const units = typeof data.leaveUnits === "number" ? data.leaveUnits : null;
+    const wd = typeof data.workdaysCount === "number" ? data.workdaysCount : 0;
+
+    sum += units != null ? units : wd;
+  });
+
+  // ปัดทศนิยมกันเพี้ยน float
+  return Number(sum.toFixed(2));
 }
 
 export function listenMyLeaveRequests(
@@ -276,7 +332,6 @@ export function listenPendingLeaveRequests(
   cb: (rows: LeaveRequestDoc[]) => void,
   onError?: (message: string) => void
 ) {
-  // ✅ ใบที่รออนุมัติ
   const qy = query(colRef, where("status", "==", "PENDING"), orderBy("submittedAt", "desc"));
 
   return onSnapshot(
@@ -297,11 +352,6 @@ export function listenPendingLeaveRequests(
   );
 }
 
-/**
- * ✅ IMPORTANT:
- * rules ของคุณอนุญาต Approver update ได้เฉพาะคีย์เหล่านี้เท่านั้น
- * (กัน permission-denied จาก patch เกิน)
- */
 const APPROVER_ALLOWED_KEYS = new Set([
   "status",
   "rejectReason",
@@ -317,7 +367,6 @@ const APPROVER_ALLOWED_KEYS = new Set([
 function pickAllowedApproverPatch(patch: any) {
   const out: any = {};
   if (!patch || typeof patch !== "object") return out;
-
   for (const k of Object.keys(patch)) {
     if (APPROVER_ALLOWED_KEYS.has(k)) out[k] = patch[k];
   }

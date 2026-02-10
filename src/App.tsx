@@ -18,6 +18,7 @@ import LeaveApprovePage from "./pages/LeaveApprovePage";
 import LeaveApproveHistoryPage from "./pages/LeaveApproveHistoryPage"; // ✅ เพิ่ม
 import RequireRole from "./routes/RequireRole";
 import { ToastCenterProvider } from "./components/common/ToastCenter";
+import MyLeaveRequestsPage from "./pages/MyLeaveRequestsPage";
 
 export default function App() {
   return (
@@ -45,7 +46,8 @@ export default function App() {
             <Route path="leave/submit" element={<LeaveSubmitPage />} />
             <Route path="leave/request" element={<LeaveSubmitPage />} />
             <Route path="leave/status" element={<LeaveStatusPage />} />
-
+            <Route path="/my-leaves" element={<MyLeaveRequestsPage />} />
+            
             {/* ✅ Approver roles (ADMIN/HR/MANAGER/EXECUTIVE_MANAGER) */}
             <Route
               element={
