@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { listenMyLeaveRequests, type LeaveRequestDoc } from "../services/leaveRequests";
+import { listenMyFieldWorkRequests } from "../services/fieldWorkRequests";
 import { getSignedUrl } from "../services/files";
 
 function fmtSubmitted(ts: any) {
@@ -18,14 +19,70 @@ function fmtSubmitted(ts: any) {
 type AttachItem = {
   name: string;
   size: number;
-  url?: string;          // เก่า
-  storagePath?: string;  // ✅ supabase key
-  path?: string;         // เก่า
+  url?: string; // เก่า
+  storagePath?: string; // ✅ supabase key
+  path?: string; // เก่า
 };
+
+type FieldWorkDoc = {
+  id: string;
+  requestNo?: string;
+
+  uid: string;
+  email?: string | null;
+
+  startAt: string;
+  endAt: string;
+
+  place: string;
+  note?: string | null;
+
+  status?: "APPROVED" | "PENDING" | "REJECTED" | "CANCELED";
+  submittedAt?: any;
+  approvedAt?: any;
+
+  // snapshot fields (ถ้ามี)
+  employeeName?: string | null;
+  employeeNo?: string | null;
+};
+
+type UnifiedRow =
+  | (LeaveRequestDoc & { __kind: "LEAVE"; __typeLabel: string; __status: string; __submittedAt: any; __atts: AttachItem[] })
+  | (FieldWorkDoc & { __kind: "FIELD_WORK"; __typeLabel: string; __status: string; __submittedAt: any; __atts: AttachItem[] });
+
+function statusLabel(s: string) {
+  const u = String(s || "").toUpperCase();
+  if (u === "APPROVED") return "อนุมัติ";
+  if (u === "REJECTED") return "ไม่อนุมัติ";
+  if (u === "CANCELED") return "ยกเลิก";
+  return "รอดำเนินการ";
+}
+
+function statusBadgeClass(s: string) {
+  const u = String(s || "").toUpperCase();
+  return u === "APPROVED"
+    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+    : u === "REJECTED"
+    ? "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+    : u === "CANCELED"
+    ? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
+    : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+}
+
+function normTime(s: any) {
+  return String(s || "").replace("T", " ");
+}
 
 export default function LeaveStatusPage() {
   const { user } = useAuth();
-  const [items, setItems] = useState<LeaveRequestDoc[]>([]);
+
+  // raw data
+  const [leaveItems, setLeaveItems] = useState<LeaveRequestDoc[]>([]);
+  const [fieldItems, setFieldItems] = useState<FieldWorkDoc[]>([]);
+
+  // filters
+  const [typeFilter, setTypeFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
   // preview modal
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -35,11 +92,130 @@ export default function LeaveStatusPage() {
 
   useEffect(() => {
     if (!user?.uid) return;
-    const unsub = listenMyLeaveRequests(user.uid, setItems);
-    return () => unsub();
+
+    const unsubLeave = listenMyLeaveRequests(user.uid, setLeaveItems);
+    const unsubField = listenMyFieldWorkRequests(user.uid, (rows: any[]) => setFieldItems(rows as any));
+
+    return () => {
+      try {
+        unsubLeave?.();
+      } catch {}
+      try {
+        unsubField?.();
+      } catch {}
+    };
   }, [user?.uid]);
 
-  const rows = useMemo(() => items ?? [], [items]);
+  const unifiedRows: UnifiedRow[] = useMemo(() => {
+    const leaves: UnifiedRow[] = (leaveItems || []).map((r) => {
+      const atts: AttachItem[] = Array.isArray((r as any).attachments) ? ((r as any).attachments as any) : [];
+      const submitted = (r as any).submittedAt || (r as any).updatedAt || null;
+
+      return {
+        ...(r as any),
+        __kind: "LEAVE",
+        __typeLabel: `${r.category} • ${r.subType}`,
+        __status: String((r as any).status || "PENDING").toUpperCase(),
+        __submittedAt: submitted,
+        __atts: atts,
+      };
+    });
+
+    const fields: UnifiedRow[] = (fieldItems || []).map((f) => {
+      const st = String((f as any).status || "APPROVED").toUpperCase(); // field work ควร APPROVED ตั้งแต่แรก
+      const submitted = (f as any).submittedAt || (f as any).approvedAt || null;
+      const reqNo = (f as any).requestNo || `FW-${String((f as any).id || "").slice(0, 6).toUpperCase()}`;
+
+      return {
+        ...(f as any),
+        requestNo: reqNo,
+        __kind: "FIELD_WORK",
+        __typeLabel: `ออกปฏิบัติงานนอกสถานที่ • ${(f as any).place || "-"}`,
+        __status: st,
+        __submittedAt: submitted,
+        __atts: [], // field work ไม่มีไฟล์แนบ
+      };
+    });
+
+    const all = [...leaves, ...fields];
+
+    // sort newest first
+    all.sort((a, b) => {
+      const ams = a.__submittedAt?.toDate?.()?.getTime?.() ?? 0;
+      const bms = b.__submittedAt?.toDate?.()?.getTime?.() ?? 0;
+      return bms - ams;
+    });
+
+    return all;
+  }, [leaveItems, fieldItems]);
+
+  // ✅ dropdown options (ไม่ให้หาย)
+  const typeOptions = useMemo(() => {
+    // ค่า default ที่ควรมี (กันกรณียังไม่มีข้อมูลบางประเภทในปีนั้น)
+    const defaults = [
+      "ลากิจ",
+      "ลาป่วย",
+      "ลาพักร้อน",
+      "ลาคลอด",
+      "ลาราชการทหาร",
+      "ลาเพื่อทำหมัน",
+      "ลากรณีพิเศษ",
+      "ออกปฏิบัติงานนอกสถานที่",
+    ];
+
+    const fromData = new Set<string>();
+
+    unifiedRows.forEach((r) => {
+      if (r.__kind === "FIELD_WORK") {
+        fromData.add("ออกปฏิบัติงานนอกสถานที่");
+      } else {
+        // ปกติ filter ตาม “category” (ไม่รวม subtype)
+        const cat = String((r as any).category || "").trim();
+        if (cat) fromData.add(cat);
+
+        // ถ้า category = ลากรณีพิเศษ แต่บางทีอยากให้เห็น “ลาเพื่อทำหมัน” เป็นตัวเลือกด้วย
+        const sub = String((r as any).subType || "").trim();
+        if (sub === "ลาเพื่อทำหมัน") fromData.add("ลาเพื่อทำหมัน");
+      }
+    });
+
+    // รวม + เรียง
+    const merged = Array.from(new Set([...defaults, ...Array.from(fromData)])).filter(Boolean);
+
+    // เรียงแบบน่าใช้ (เอา default ก่อน)
+    const order = new Map<string, number>();
+    defaults.forEach((x, i) => order.set(x, i));
+    merged.sort((a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999) || a.localeCompare(b, "th"));
+
+    return ["ALL", ...merged];
+  }, [unifiedRows]);
+
+  const statusOptions = useMemo(() => {
+    return ["ALL", "PENDING", "APPROVED", "REJECTED", "CANCELED"];
+  }, []);
+
+  const filteredRows = useMemo(() => {
+    let out = unifiedRows;
+
+    if (typeFilter !== "ALL") {
+      out = out.filter((r) => {
+        if (r.__kind === "FIELD_WORK") {
+          return typeFilter === "ออกปฏิบัติงานนอกสถานที่";
+        }
+        // leave
+        const cat = String((r as any).category || "").trim();
+        const sub = String((r as any).subType || "").trim();
+        if (typeFilter === "ลาเพื่อทำหมัน") return sub === "ลาเพื่อทำหมัน";
+        return cat === typeFilter;
+      });
+    }
+
+    if (statusFilter !== "ALL") {
+      out = out.filter((r) => String(r.__status || "").toUpperCase() === statusFilter);
+    }
+
+    return out;
+  }, [unifiedRows, typeFilter, statusFilter]);
 
   const isImage = (url: string) => /\.(png|jpg|jpeg|webp|gif)$/i.test(url);
   const isPdf = (url: string) => /\.pdf(\?|$)/i.test(url);
@@ -102,10 +278,64 @@ export default function LeaveStatusPage() {
         </div>
       </div>
 
+      {/* Filters */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 sm:p-5">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+          <div className="lg:col-span-4">
+            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">กรองตามประเภทการลา</label>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+            >
+              {typeOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t === "ALL" ? "ทั้งหมด" : t}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="lg:col-span-4">
+            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">กรองตามสถานะการอนุมัติ</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+            >
+              {statusOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s === "ALL" ? "ทั้งหมด" : statusLabel(s)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="lg:col-span-4 flex flex-wrap items-center justify-end gap-3">
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              กำลังแสดง <span className="font-semibold text-gray-900 dark:text-gray-100">{filteredRows.length}</span> /{" "}
+              {unifiedRows.length} รายการ
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setTypeFilter("ALL");
+                setStatusFilter("ALL");
+              }}
+              className="h-11 rounded-xl border border-gray-200 bg-white px-5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-gray-800"
+            >
+              ล้างตัวกรอง
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 sm:p-5">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">รายการคำร้องทั้งหมด</div>
-          <div className="text-sm text-gray-500 dark:text-gray-400">{rows.length} รายการ</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">{filteredRows.length} รายการ</div>
         </div>
 
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
@@ -122,59 +352,48 @@ export default function LeaveStatusPage() {
             </thead>
 
             <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-              {rows.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
                   <td className="px-3 py-3 text-gray-500 dark:text-gray-400" colSpan={6}>
-                    ยังไม่มีคำร้อง
+                    ไม่พบคำร้องตามตัวกรอง
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => {
-                  const atts: AttachItem[] = Array.isArray((r as any).attachments) ? ((r as any).attachments as any) : [];
-                  const status = String(r.status || "");
-
-                  const badge =
-                    status === "APPROVED"
-                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                      : status === "REJECTED"
-                      ? "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                      : status === "CANCELED"
-                      ? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
-                      : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+                filteredRows.map((r) => {
+                  const badge = statusBadgeClass(r.__status);
+                  const stText = statusLabel(r.__status);
 
                   return (
-                    <tr key={r.id} className="bg-white dark:bg-gray-900">
-                      <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">{r.requestNo}</td>
-
-                      <td className="px-3 py-3 text-gray-800 dark:text-gray-200">
-                        {r.category} • {r.subType}
+                    <tr key={`${r.__kind}-${(r as any).id}`} className="bg-white dark:bg-gray-900">
+                      <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">
+                        {(r as any).requestNo}
                       </td>
+
+                      <td className="px-3 py-3 text-gray-800 dark:text-gray-200">{r.__typeLabel}</td>
 
                       <td className="px-3 py-3 text-gray-700 dark:text-gray-200">
-                        {String(r.startAt).replace("T", " ")} → {String(r.endAt).replace("T", " ")}
+                        {normTime((r as any).startAt)} → {normTime((r as any).endAt)}
                       </td>
 
                       <td className="px-3 py-3">
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badge}`}>
-                          {r.status}
-                        </span>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badge}`}>{stText}</span>
                       </td>
 
-                      <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{fmtSubmitted(r.submittedAt)}</td>
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{fmtSubmitted(r.__submittedAt)}</td>
 
                       <td className="px-3 py-3">
-                        {atts.length === 0 ? (
+                        {r.__atts.length === 0 ? (
                           <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
                         ) : (
                           <div className="flex flex-wrap gap-2">
-                            {atts.map((a, idx) => (
+                            {r.__atts.map((a, idx) => (
                               <button
                                 key={`${a.name}-${idx}`}
                                 type="button"
                                 disabled={previewLoading}
                                 onClick={() => openPreview(a)}
                                 className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800"
-                                title={(a.url || a.storagePath) ? "กดเพื่อดูไฟล์" : "ยังไม่มีลิงก์/พาธ"}
+                                title={a.url || a.storagePath ? "กดเพื่อดูไฟล์" : "ยังไม่มีลิงก์/พาธ"}
                               >
                                 📎 {a.name || `ไฟล์ ${idx + 1}`}
                               </button>
@@ -190,7 +409,7 @@ export default function LeaveStatusPage() {
           </table>
         </div>
 
-        {rows.length > 0 && (
+        {filteredRows.length > 0 && (
           <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
             * หมายเหตุ/เหตุผลแสดงในปฏิทินรายละเอียดรายวันด้วย
           </div>
@@ -216,9 +435,7 @@ export default function LeaveStatusPage() {
                   <div className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
                     ดูไฟล์แนบ: {previewName}
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    * แสดงผลเพื่อดูเท่านั้น
-                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">* แสดงผลเพื่อดูเท่านั้น</div>
                 </div>
 
                 <button

@@ -1,10 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";
 import { buildThaiHolidayMapAround } from "../services/utils/thHolidays";
+import { listenMyFieldWorkRequests, type FieldWorkRequestDoc } from "../services/fieldWorkRequests";
 
-// ===== Types (ทำให้ไฟล์นี้ไม่พึ่ง type ที่ export จาก context) =====
-type LeaveCategory = "ลากิจ" | "ลาป่วย" | "ลาพักร้อน" | "ลากรณีพิเศษ";
+// ===== Types =====
+type LeaveCategory =
+  | "ลากิจ"
+  | "ลาป่วย"
+  | "ลาพักร้อน"
+  | "ลากรณีพิเศษ"
+  | "ปฏิบัติงานนอกสถานที่";
+
 type LeaveSubType =
   | "ลากิจปกติ"
   | "ลากิจฉุกเฉิน"
@@ -14,14 +21,16 @@ type LeaveSubType =
   | "ลาพักร้อน"
   | "ลาคลอด"
   | "ลาราชการทหาร"
-  | "อื่นๆ";
+  | "ลาเพื่อทำหมัน"
+  | "อื่นๆ"
+  | "FIELD_WORK"; // ใช้เป็น subtype สำหรับงานนอกสถานที่
 
 type LeaveStatus = "อนุมัติ" | "ไม่อนุมัติ" | "รอดำเนินการ";
 
 type StatusFilter = "ทั้งหมด" | LeaveStatus;
 type CategoryFilter = "ทั้งหมด" | LeaveCategory;
 
-// ✅ รองรับรายวัน/หลายวัน + รายชั่วโมง/รายนาที
+// ✅ Event
 type LeaveEvent = {
   id: string;
   requestNo: string;
@@ -52,13 +61,10 @@ const dayLabelsMonFirst = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const datePart = (s: string) => s.split("T")[0];
 
-const toISODate = (d: Date) =>
-  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const toISODate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
 const sameDay = (a: Date, b: Date) =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth() === b.getMonth() &&
-  a.getDate() === b.getDate();
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 const addMonths = (d: Date, m: number) => new Date(d.getFullYear(), d.getMonth() + m, 1);
@@ -170,10 +176,7 @@ function splitEventByDay(ev: LeaveEvent): DayOccurrence[] {
 }
 
 // ---------- Styles ----------
-const catStyle: Record<
-  LeaveCategory,
-  { dot: string; barBg: string; barText: string; border: string }
-> = {
+const catStyle: Record<LeaveCategory, { dot: string; barBg: string; barText: string; border: string }> = {
   ลาป่วย: {
     dot: "bg-red-500",
     barBg: "bg-red-500/20 dark:bg-red-400/20",
@@ -198,6 +201,12 @@ const catStyle: Record<
     barText: "text-purple-800 dark:text-purple-200",
     border: "border-purple-200 dark:border-purple-900/40",
   },
+  ปฏิบัติงานนอกสถานที่: {
+    dot: "bg-sky-500",
+    barBg: "bg-sky-500/20 dark:bg-sky-400/20",
+    barText: "text-sky-800 dark:text-sky-200",
+    border: "border-sky-200 dark:border-sky-900/40",
+  },
 };
 
 const statusStyle: Record<LeaveStatus, string> = {
@@ -207,6 +216,7 @@ const statusStyle: Record<LeaveStatus, string> = {
 };
 
 function leaveLabel(ev: LeaveEvent) {
+  if (ev.category === "ปฏิบัติงานนอกสถานที่") return "ปฏิบัติงานนอกสถานที่";
   if (ev.category === "ลาพักร้อน") return "ลาพักร้อน";
   return `${ev.category} • ${ev.subType}`;
 }
@@ -253,8 +263,16 @@ function toTimedISO(dateISO: string, hhmm?: string) {
 }
 
 function normalizeCategory(x?: string): LeaveCategory {
-  if (x === "ลากิจ" || x === "ลาป่วย" || x === "ลาพักร้อน" || x === "ลากรณีพิเศษ") return x;
-  if (x === "ลาคลอด" || x === "ลาราชการทหาร") return "ลากรณีพิเศษ";
+  if (
+    x === "ลากิจ" ||
+    x === "ลาป่วย" ||
+    x === "ลาพักร้อน" ||
+    x === "ลากรณีพิเศษ" ||
+    x === "ปฏิบัติงานนอกสถานที่"
+  )
+    return x;
+
+  if (x === "ลาคลอด" || x === "ลาราชการทหาร" || x === "ลาเพื่อทำหมัน") return "ลากรณีพิเศษ";
   return "ลากิจ";
 }
 
@@ -268,10 +286,17 @@ function normalizeSubType(x?: string, cat?: LeaveCategory): LeaveSubType {
     "ลาพักร้อน",
     "ลาคลอด",
     "ลาราชการทหาร",
+    "ลาเพื่อทำหมัน",
     "อื่นๆ",
+    "FIELD_WORK",
   ];
+
   if (x && all.includes(x as LeaveSubType)) return x as LeaveSubType;
 
+  // ✅ fix: ถ้าเจอคำว่า "ทำหมัน" ให้เป็น "ลาเพื่อทำหมัน" ไม่ใช่ "อื่นๆ"
+  if (typeof x === "string" && x.includes("ทำหมัน")) return "ลาเพื่อทำหมัน";
+
+  if (cat === "ปฏิบัติงานนอกสถานที่") return "FIELD_WORK";
   if (cat === "ลาป่วย") return "ลาป่วยทั่วไป";
   if (cat === "ลาพักร้อน") return "ลาพักร้อน";
   if (cat === "ลากรณีพิเศษ") return "อื่นๆ";
@@ -304,34 +329,46 @@ export default function Calendar() {
 
   const myUid: string = String(user?.uid || "").trim();
 
-  // ✅ FILTER UI (default = ทั้งหมด)
+  // ✅ field work state
+  const [fwRows, setFwRows] = useState<FieldWorkRequestDoc[]>([]);
+  const [fwErr, setFwErr] = useState<string>("");
+
+  useEffect(() => {
+    if (!myUid) {
+      setFwRows([]);
+      return;
+    }
+    setFwErr("");
+    const unsub = listenMyFieldWorkRequests(
+      myUid,
+      (rows) => setFwRows(rows),
+      (msg) => setFwErr(msg || "โหลดงานนอกสถานที่ไม่สำเร็จ")
+    );
+    return () => unsub?.();
+  }, [myUid]);
+
+  // ✅ FILTER UI
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ทั้งหมด");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ทั้งหมด");
 
-  // ✅ holiday map (ปีก่อน/ปีนี้/ปีหน้า)
+  // ✅ holiday map
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState<Date>(startOfMonth(today));
   const [selectedDate, setSelectedDate] = useState<Date>(today);
 
-  const holidayMap = useMemo(() => {
-    return buildThaiHolidayMapAround(currentMonth.getFullYear());
-  }, [currentMonth]);
-
+  const holidayMap = useMemo(() => buildThaiHolidayMapAround(currentMonth.getFullYear()), [currentMonth]);
   const selectedISO = toISODate(selectedDate);
   const selectedHolidays = holidayMap.get(selectedISO) ?? [];
 
-  // ✅ IMPORTANT: ปฏิทินต้องโชว์เฉพาะของตัวเองเท่านั้น
+  // ✅ leave_requests ของฉันเท่านั้น
   const myCalendarRequests: RequestLike[] = useMemo(() => {
     const list = (calendarRequests ?? []) as unknown as RequestLike[];
     if (!myUid) return [];
-    return list.filter((r) => {
-      const owner = getRequestOwnerUid(r);
-      return owner && owner === myUid;
-    });
+    return list.filter((r) => getRequestOwnerUid(r) === myUid);
   }, [calendarRequests, myUid]);
 
-  // ✅ แปลงคำร้อง -> event (ของฉันเท่านั้น)
-  const leaveEventsAll: LeaveEvent[] = useMemo(() => {
+  // ✅ map leave_requests -> events
+  const leaveEventsFromLeave: LeaveEvent[] = useMemo(() => {
     return (myCalendarRequests ?? []).map((r) => {
       const requestNo = r.requestNo ?? r.id ?? "-";
       const category = normalizeCategory(r.category ?? r.type);
@@ -368,7 +405,28 @@ export default function Calendar() {
     });
   }, [myCalendarRequests]);
 
-  // ✅ APPLY FILTERS (สถานะ + ประเภท)
+  // ✅ map field_work_requests -> events
+  const leaveEventsFromFW: LeaveEvent[] = useMemo(() => {
+    return (fwRows ?? []).map((r) => {
+      const requestNo = r.requestNo ?? r.id ?? "-";
+      return {
+        id: requestNo,
+        requestNo,
+        category: "ปฏิบัติงานนอกสถานที่",
+        subType: "FIELD_WORK",
+        status: "อนุมัติ", // auto approve
+        startAt: r.startAt,
+        endAt: r.endAt,
+        note: `${r.place}${r.note ? ` • ${r.note}` : ""}`,
+      };
+    });
+  }, [fwRows]);
+
+  const leaveEventsAll: LeaveEvent[] = useMemo(() => {
+    return [...leaveEventsFromLeave, ...leaveEventsFromFW];
+  }, [leaveEventsFromLeave, leaveEventsFromFW]);
+
+  // ✅ APPLY FILTERS
   const leaveEvents: LeaveEvent[] = useMemo(() => {
     return leaveEventsAll.filter((ev) => {
       const okStatus = statusFilter === "ทั้งหมด" ? true : ev.status === statusFilter;
@@ -382,14 +440,12 @@ export default function Calendar() {
 
   const occMap = useMemo(() => {
     const m = new Map<string, DayOccurrence[]>();
-
     for (const ev of leaveEvents) {
       for (const occ of splitEventByDay(ev)) {
         if (!m.has(occ.date)) m.set(occ.date, []);
         m.get(occ.date)!.push(occ);
       }
     }
-
     for (const [k, list] of m.entries()) {
       list.sort((a, b) => {
         if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
@@ -397,13 +453,11 @@ export default function Calendar() {
       });
       m.set(k, list);
     }
-
     return m;
   }, [leaveEvents]);
 
   const barMap = useMemo(() => {
     const m = new Map<string, BarSeg[]>();
-
     for (const ev of leaveEvents) {
       const sISO = datePart(ev.startAt);
       const eISO = datePart(ev.endAt);
@@ -441,7 +495,7 @@ export default function Calendar() {
 
     return m;
   }, [leaveEvents]);
-  
+
   const selectedOccs = occMap.get(selectedISO) ?? [];
 
   const goToday = () => {
@@ -473,9 +527,15 @@ export default function Calendar() {
         <div className="w-full">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">ปฏิทินวันลา</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            วันหยุดไทย + วันลา • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
+            วันหยุดไทย + วันลา + งานนอกสถานที่ • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
             {loadingCalendar ? " • กำลังโหลด..." : ""}
           </p>
+
+          {fwErr && (
+            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+              {fwErr}
+            </div>
+          )}
 
           {/* FILTER BAR */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -505,6 +565,7 @@ export default function Calendar() {
                 <option value="ลาป่วย">ลาป่วย</option>
                 <option value="ลาพักร้อน">ลาพักร้อน</option>
                 <option value="ลากรณีพิเศษ">ลากรณีพิเศษ</option>
+                <option value="ปฏิบัติงานนอกสถานที่">ปฏิบัติงานนอกสถานที่</option>
               </select>
             </div>
 
@@ -573,7 +634,6 @@ export default function Calendar() {
             <div className="text-sm text-gray-500 dark:text-gray-400">เลือกวันเพื่อดูรายละเอียด</div>
           </div>
 
-          {/* Day header */}
           <div className="mt-4 grid grid-cols-7 gap-2">
             {dayLabelsMonFirst.map((d) => (
               <div key={d} className="text-center text-xs font-semibold text-gray-500 dark:text-gray-400">
@@ -582,7 +642,6 @@ export default function Calendar() {
             ))}
           </div>
 
-          {/* Grid */}
           <div className="mt-2 grid grid-cols-7 gap-2">
             {cells.map((d) => {
               const inMonth = d.getMonth() === currentMonth.getMonth();
@@ -622,7 +681,6 @@ export default function Calendar() {
                     isHoliday ? "bg-red-50/60 dark:bg-red-900/10" : "",
                   ].join(" ")}
                 >
-                  {/* Bars */}
                   <div className="pointer-events-none absolute inset-0">
                     {showBars.map((seg, i) => {
                       const ev = seg.event;
@@ -654,7 +712,6 @@ export default function Calendar() {
                     })}
                   </div>
 
-                  {/* Date number */}
                   <div
                     className={[
                       "absolute top-2 left-2 z-20 text-sm font-semibold leading-none",
@@ -667,7 +724,6 @@ export default function Calendar() {
                     {d.getDate()}
                   </div>
 
-                  {/* Holiday badge */}
                   {isHoliday && (
                     <div className="absolute left-2 top-7 z-20 max-w-[75%] truncate rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-200">
                       {holidays[0].name}
@@ -675,7 +731,6 @@ export default function Calendar() {
                     </div>
                   )}
 
-                  {/* Dot categories */}
                   {(timedOccs.length > 0 || barSegs.length > 0) && (
                     <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
                       {Array.from(new Set([...barSegs.map((b) => b.event.category), ...timedOccs.map((o) => o.event.category)]))
@@ -683,14 +738,12 @@ export default function Calendar() {
                         .map((cat) => (
                           <span key={cat} className={`inline-flex h-2 w-2 rounded-full ${catStyle[cat].dot}`} title={cat} />
                         ))}
-
                       {moreBars > 0 && (
                         <span className="ml-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">+{moreBars}</span>
                       )}
                     </div>
                   )}
 
-                  {/* timed hint */}
                   {!isHoliday && timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
                     <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
                       {formatTimeFromMinutes(timedOccs[0].startMin)}–{formatTimeFromMinutes(timedOccs[0].endMin)}
@@ -701,7 +754,6 @@ export default function Calendar() {
             })}
           </div>
 
-          {/* Legend */}
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
             {(Object.keys(catStyle) as LeaveCategory[]).map((c) => (
               <div key={c} className="flex items-center gap-2">
@@ -722,21 +774,15 @@ export default function Calendar() {
             <div>
               <div className="text-base font-semibold text-gray-900 dark:text-gray-100">รายละเอียดวันที่เลือก</div>
               <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {new Intl.DateTimeFormat("th-TH", {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                }).format(selectedDate)}
+                {new Intl.DateTimeFormat("th-TH", { weekday: "long", year: "numeric", month: "long", day: "numeric" }).format(selectedDate)}
               </div>
             </div>
 
             <span className="rounded-full border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 dark:border-gray-800 dark:text-gray-200">
-              {selectedOccs.length} รายการลา
+              {selectedOccs.length} รายการ
             </span>
           </div>
 
-          {/* ✅ Holidays */}
           <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/15 dark:text-red-200">
             <div className="font-semibold">วันหยุด / วันสำคัญ</div>
             {selectedHolidays.length === 0 ? (
@@ -750,7 +796,6 @@ export default function Calendar() {
             )}
           </div>
 
-          {/* Table */}
           <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-50 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
@@ -768,7 +813,7 @@ export default function Calendar() {
                 {selectedOccs.length === 0 ? (
                   <tr>
                     <td className="px-3 py-3 text-gray-500 dark:text-gray-400" colSpan={6}>
-                      ไม่มีรายการลาในวันนี้
+                      ไม่มีรายการในวันนี้
                     </td>
                   </tr>
                 ) : (
@@ -811,7 +856,6 @@ export default function Calendar() {
             </table>
           </div>
 
-          {/* Month list */}
           <div className="mt-6 border-t border-gray-200 pt-4 dark:border-gray-800">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">รายการในเดือนนี้ (ช่วงเวลา)</div>
 

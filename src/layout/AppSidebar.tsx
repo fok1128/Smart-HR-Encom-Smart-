@@ -1,3 +1,4 @@
+// AppSidebar.tsx
 import type { ReactNode } from "react";
 import { useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -25,7 +26,7 @@ const LOGO_SRC = "/images/logo/company-logo3.jpg";
 
 const AppSidebar = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
-  const { user, logout } = useAuth();
+  const { user, logout } = useAuth() as any;
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -34,43 +35,42 @@ const AppSidebar = () => {
 
   const isCollapsed = !isExpanded && !isHovered && !isMobileOpen;
 
-  // ✅ ไฮไลต์เมนูให้ติดแม้มี subpath
   const isActive = useCallback(
-    (path: string) => location.pathname === path || location.pathname.startsWith(path + "/"),
+    (path: string) => {
+      const cur = location.pathname;
+      if (path === "/") return cur === "/";
+      return cur === path || cur.startsWith(path + "/");
+    },
     [location.pathname]
   );
 
-  const handleLogout = () => {
-    logout();
-    navigate("/signin", { replace: true });
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      navigate("/signin", { replace: true });
+    }
   };
 
-  // ✅ ทำ nav ตาม role
   const navItems: NavItem[] = useMemo(() => {
     const base: NavItem[] = [
       { icon: <GridIcon />, name: "ประกาศ / หน้าแรก", path: "/" },
       { icon: <UserCircleIcon />, name: "Profile", path: "/profile" },
       { icon: <CalenderIcon />, name: "ปฏิทินวันลา", path: "/calendar" },
+
+      // ✅ Field Work
+      { icon: <ListIcon />, name: "แจ้งปฏิบัติงานนอกสถานที่", path: "/field-work" },
+      { icon: <ListIcon />, name: "ประวัติออกปฏิบัติงาน", path: "/field-work/history" },
+
       { icon: <ListIcon />, name: "ยื่นใบลา", path: "/leave/submit" },
       { icon: <PieChartIcon />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" },
-      {icon: <ListIcon />,name: "ใบลาของฉัน",path: "/my-leaves",
-}
-
+      { icon: <ListIcon />, name: "ใบลาของฉัน", path: "/my-leaves" },
     ];
 
-    // ✅ ผู้อนุมัติ: ADMIN / HR / MANAGER / EXECUTIVE_MANAGER
     if (canApprove) {
       base.push(
-        {
-          icon: <PieChartIcon />,
-          name: "อนุมัติใบลา",
-          path: "/leave/approve",
-        },
-        {
-          icon: <ListIcon />,
-          name: "ประวัติการอนุมัติ",
-          path: "/leave/approve-history",
-        }
+        { icon: <PieChartIcon />, name: "อนุมัติใบลา", path: "/leave/approve" },
+        { icon: <ListIcon />, name: "ประวัติการอนุมัติ", path: "/leave/approve-history" }
       );
     }
 
@@ -92,7 +92,6 @@ const AppSidebar = () => {
       onMouseEnter={() => !isExpanded && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* ===== Brand: Logo + Smart HR ===== */}
       <div className={`py-6 flex ${isCollapsed ? "lg:justify-center" : "justify-start"}`}>
         <Link to="/" className="flex items-center gap-3">
           <div className="h-10 w-10 overflow-hidden rounded-xl bg-white">
@@ -108,7 +107,6 @@ const AppSidebar = () => {
         </Link>
       </div>
 
-      {/* ===== Menu ===== */}
       <div className="flex flex-col overflow-y-auto duration-300 ease-linear no-scrollbar">
         <nav className="mb-6">
           <div>
@@ -145,7 +143,6 @@ const AppSidebar = () => {
           </div>
         </nav>
 
-        {/* ===== Logout bottom ===== */}
         <div className="mt-auto pb-6">
           <button
             type="button"
