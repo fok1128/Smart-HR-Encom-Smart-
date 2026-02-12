@@ -22,6 +22,7 @@ type LeaveSubType =
   | "ลาพักร้อน"
   | "ลาคลอด"
   | "ลาราชการทหาร"
+  | "ลาเพื่อทำหมัน"
   | "อื่นๆ";
 type LeaveMode = "allDay" | "time";
 
@@ -34,7 +35,6 @@ function ChevronDownIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
-
 function XIcon({ className = "" }: { className?: string }) {
   return (
     <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -42,7 +42,6 @@ function XIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
-
 function CheckIcon({ className = "" }: { className?: string }) {
   return (
     <svg className={className} width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -50,7 +49,6 @@ function CheckIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
-
 function AlertIcon({ className = "" }: { className?: string }) {
   return (
     <svg className={className} width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -137,9 +135,7 @@ function SelectBox<T extends string>({
             if (e.key === "Enter" || e.key === " ") setOpen((v) => !v);
           }}
         >
-          <span className={selected ? "text-gray-900 dark:text-gray-100" : "text-gray-400"}>
-            {selected?.label ?? placeholder}
-          </span>
+          <span className={selected ? "text-gray-900 dark:text-gray-100" : "text-gray-400"}>{selected?.label ?? placeholder}</span>
 
           <span className="flex items-center gap-2 text-gray-500">
             {clearable && value && !disabled && (
@@ -213,7 +209,7 @@ const subTypeByCategory: Record<LeaveCategory, LeaveSubType[]> = {
   ลากิจ: ["ลากิจปกติ", "ลากิจฉุกเฉิน"],
   ลาป่วย: ["ป่วยระหว่างวัน", "ลาป่วยทั่วไป", "ลาหมอนัด", "ลาแบบมีใบรับรองแพทย์"],
   ลาพักร้อน: ["ลาพักร้อน"],
-  ลากรณีพิเศษ: ["ลาคลอด", "ลาราชการทหาร", "อื่นๆ"],
+  ลากรณีพิเศษ: ["ลาคลอด", "ลาราชการทหาร", "ลาเพื่อทำหมัน", "อื่นๆ"],
 };
 
 function todayISODate() {
@@ -221,7 +217,6 @@ function todayISODate() {
   const pad2 = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-
 function toISODateTimeLocal(d: Date) {
   const pad2 = (n: number) => String(n).padStart(2, "0");
   const yyyy = d.getFullYear();
@@ -231,7 +226,6 @@ function toISODateTimeLocal(d: Date) {
   const mi = pad2(d.getMinutes());
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
-
 function isEndBeforeStart(start: string, end: string) {
   if (!start || !end) return false;
   return new Date(end).getTime() < new Date(start).getTime();
@@ -291,7 +285,6 @@ function dueAtByNthWorkdayFrom(startDate: Date, n: number) {
     d = addDays(d, 1);
   }
 }
-
 function formatThaiDate(d: Date) {
   const months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
   const dd = d.getDate();
@@ -299,7 +292,6 @@ function formatThaiDate(d: Date) {
   const yyyy = d.getFullYear() + 543;
   return `${dd} ${mm} ${yyyy}`;
 }
-
 function minutesOfDayFromDateTimeLocal(s: string): number | null {
   if (!s || s.length < 16) return null;
   const hh = Number(s.slice(11, 13));
@@ -361,20 +353,15 @@ function PopupModal({ state, onOk }: { state: PopupState; onOk: () => void }) {
 
   const node = (
     <div
-      className={[
-        "fixed inset-0 z-[999999] flex items-center justify-center p-4",
-        "bg-black/25 backdrop-blur-md",
-      ].join(" ")}
+      className={["fixed inset-0 z-[999999] flex items-center justify-center p-4", "bg-black/25 backdrop-blur-md"].join(" ")}
       aria-modal="true"
       role="dialog"
       onWheel={(e) => e.preventDefault()}
       onTouchMove={(e) => e.preventDefault()}
       onMouseDown={(e) => {
-        // ไม่ให้คลิกพื้นหลังแล้วปิด + กัน drag เลื่อน
         e.preventDefault();
       }}
     >
-      {/* ✅ เหลือแค่กรอบสีเขียว/แดง + ปุ่มอยู่ขวา */}
       <div className="w-[92vw] max-w-4xl">
         <div
           className={[
@@ -403,7 +390,6 @@ function PopupModal({ state, onOk }: { state: PopupState; onOk: () => void }) {
                   isSuccess ? "text-emerald-800 dark:text-emerald-100" : "text-red-800 dark:text-red-100",
                 ].join(" ")}
               >
-                {/* ✅ ตัดคำว่าเรียบร้อย = ให้ title จาก state ตรง ๆ */}
                 {state.title}
               </div>
 
@@ -444,6 +430,154 @@ function PopupModal({ state, onOk }: { state: PopupState; onOk: () => void }) {
   return createPortal(node, document.body);
 }
 
+/** ✅ การ์ดสรุปสิทธิ (ใช้ร่วมกันทุกประเภท) + progress bar แบบเดียวกัน */
+function YearEntitlementCard({
+  title,
+  year,
+  total, // null = ตามนโยบาย/HR, "UNLIMITED" = ไม่จำกัด
+  used,
+  loading,
+  error,
+  requested,
+  note,
+}: {
+  title: string;
+  year: number;
+  total: number | null | "UNLIMITED";
+  used?: number | null;
+  loading?: boolean;
+  error?: string;
+  requested?: number;
+  note?: React.ReactNode;
+}) {
+  const usedNum = Number.isFinite(used as number) ? Number(used) : 0;
+
+  const isUnlimited = total === "UNLIMITED";
+  const hasTotal = typeof total === "number" && Number.isFinite(total);
+  const totalNum = hasTotal ? Number(total) : 0;
+
+  const remain = hasTotal ? Math.max(0, totalNum - usedNum) : null;
+  const pct = hasTotal && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
+
+  return (
+    <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-gray-800 dark:bg-gray-900/40">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">{title}</div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-600 dark:text-gray-300">
+            <span className="rounded-full border border-gray-200 bg-white px-3 py-1 dark:border-gray-800 dark:bg-gray-900">
+              ปี {year}
+            </span>
+
+            {isUnlimited ? (
+              <>
+                <span className="text-gray-500 dark:text-gray-400">•</span>
+                <span className="font-semibold text-gray-700 dark:text-gray-200">สิทธิ: ไม่จำกัด (ตามแพทย์/นโยบาย)</span>
+              </>
+            ) : hasTotal ? (
+              <>
+                <span className="text-gray-500 dark:text-gray-400">•</span>
+                <span>
+                  ใช้ไป{" "}
+                  <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span>{" "}
+                  วันทำการ
+                </span>
+                <span className="text-gray-500 dark:text-gray-400">•</span>
+                <span>
+                  คงเหลือ{" "}
+                  <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : remain}</span>{" "}
+                  วันทำการ
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="text-gray-500 dark:text-gray-400">•</span>
+                <span className="font-semibold text-gray-700 dark:text-gray-200">สิทธิ: ตามนโยบาย/ตรวจสอบกับ HR</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="shrink-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-800 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100">
+          กำลังยื่นรอบนี้: <span className="font-extrabold text-gray-900 dark:text-gray-100">{requested ?? 0}</span> วัน
+        </div>
+      </div>
+
+      {/* ✅ progress bar */}
+      {hasTotal && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-xs font-semibold text-gray-600 dark:text-gray-300">
+            <div>
+              ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span>{" "}
+              วันทำการ
+            </div>
+            <div className="text-gray-900 dark:text-gray-100">{loading ? "…" : remain} วันทำการ</div>
+          </div>
+
+          <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+            <div className="h-full bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {!!note && <div className="mt-4 text-sm text-gray-700 dark:text-gray-200">{note}</div>}
+
+      {!!error && (
+        <div className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-200">* โหลดข้อมูลสิทธิไม่สำเร็จ: {error}</div>
+      )}
+    </div>
+  );
+}
+
+/** ✅ แถวสรุปแบบรูปตัวอย่าง (หัวข้อ + ใช้ไป/คงเหลือ + แถบ) */
+function EntitlementRow({
+  title,
+  total,
+  used,
+  loading,
+}: {
+  title: string;
+  total: number | "UNLIMITED" | null;
+  used: number;
+  loading?: boolean;
+}) {
+  const isUnlimited = total === "UNLIMITED" || total == null;
+  const totalNum = typeof total === "number" ? total : 0;
+  const usedNum = Number.isFinite(used) ? used : 0;
+
+  const remain = typeof total === "number" ? Math.max(0, totalNum - usedNum) : null;
+  const pct = typeof total === "number" && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-gray-900">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-base font-extrabold text-gray-900 dark:text-gray-100">{title}</div>
+          <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+            {isUnlimited ? (
+              <>ใช้ไป {loading ? "…" : usedNum} วันทำการ • คงเหลือ ไม่จำกัด</>
+            ) : (
+              <>
+                ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span> วันทำการ • คงเหลือ{" "}
+                <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : remain}</span> วันทำการ
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="shrink-0 text-sm font-extrabold text-gray-900 dark:text-gray-100">
+          {typeof total === "number" ? `${total} วันทำการ` : "ไม่จำกัด"}
+        </div>
+      </div>
+
+      <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+        <div className="h-full bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading || isUnlimited ? 0 : pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export default function LeaveSubmitPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -472,6 +606,12 @@ export default function LeaveSubmitPage() {
 
   useEffect(() => {
     setSubType("");
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.subType;
+      delete next.category;
+      return next;
+    });
   }, [category]);
 
   useEffect(() => {
@@ -530,6 +670,13 @@ export default function LeaveSubmitPage() {
   const isBusinessNormal = isBusinessLeave && subType === "ลากิจปกติ";
   const isBusinessEmergency = isBusinessLeave && subType === "ลากิจฉุกเฉิน";
 
+  const isVacation = category === "ลาพักร้อน";
+
+  const isSpecial = category === "ลากรณีพิเศษ";
+  const isMaternity = isSpecial && subType === "ลาคลอด";
+  const isMilitary = isSpecial && subType === "ลาราชการทหาร";
+  const isSterilization = isSpecial && subType === "ลาเพื่อทำหมัน";
+
   // ✅ ป่วยระหว่างวัน = บังคับ "ระบุเวลา"
   useEffect(() => {
     if (isSickInDay && mode !== "time") setMode("time");
@@ -576,13 +723,21 @@ export default function LeaveSubmitPage() {
   }, [isSickInDay, mode, startDT, endDT]);
 
   // =======================
-  // ✅ RULE: ลากิจ
-  // - ลาได้ไม่เกิน 5 วัน/ปี (รีเซ็ตทุกปี)
-  // - ลากิจปกติ: ต้องยื่นล่วงหน้า >= 3 วันทำการ (จ.-ส.) (ยกเว้น "ลากิจฉุกเฉิน")
-  // - กรณีย้อนหลัง: ต้องมี "เหตุผล" หรือ "แนบหลักฐาน"
+  // ✅ สิทธิต่อปี
   // =======================
-  const BUSINESS_ANNUAL_LIMIT = 5;
+  const LIMIT_BUSINESS = 5;
+  const LIMIT_SICK = 30;
+  const LIMIT_VACATION = 6;
 
+  const LIMIT_MATERNITY = 120;
+  const LIMIT_MILITARY = 60;
+
+  // ลาเพื่อทำหมัน = ไม่จำกัด
+  const LIMIT_STERILIZATION: "UNLIMITED" = "UNLIMITED";
+
+  // =======================
+  // ✅ RULE: ลากิจปกติ ต้องยื่นล่วงหน้า >= 3 วันทำการ (จ.-ส.) (ยกเว้นฉุกเฉิน/ย้อนหลัง)
+  // =======================
   function countForwardWorkdaysFromTomorrow(n: number) {
     let d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -604,18 +759,24 @@ export default function LeaveSubmitPage() {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   }, []);
 
-  // ====== ✅ Usage summary: ลากิจปีนี้ ======
-  const [bizUsed, setBizUsed] = useState<number>(0);
-  const [bizLoading, setBizLoading] = useState<boolean>(false);
-  const [bizErr, setBizErr] = useState<string>("");
+  // =======================
+  // ✅ Usage summary: โหลด “ใช้ไปแล้ว” ทุกประเภทในปีนี้ (query ครั้งเดียว)
+  // =======================
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageErr, setUsageErr] = useState("");
+  const [usedMap, setUsedMap] = useState<Record<string, number>>({});
 
-  async function loadBusinessLeaveUsage() {
+  function usedKey(cat: LeaveCategory, sub?: LeaveSubType | "") {
+    if (cat !== "ลากรณีพิเศษ") return `CAT:${cat}`;
+    return `SP:${sub || "UNKNOWN"}`;
+  }
+
+  async function loadYearUsageAll() {
     if (!user?.uid) return;
 
-    setBizLoading(true);
-    setBizErr("");
+    setUsageLoading(true);
+    setUsageErr("");
     try {
-      // ✅ query แค่ uid แล้ว filter ใน client (ไม่ต้องสร้าง composite index)
       const snap = await getDocs(query(collection(db, "leave_requests"), where("uid", "==", user.uid)));
       const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
 
@@ -623,8 +784,7 @@ export default function LeaveSubmitPage() {
       const yStart = `${year}-01-01`;
       const yEnd = `${year}-12-31`;
 
-      const used = rows
-        .filter((r) => String(r.category || "") === "ลากิจ")
+      const okRows = rows
         .filter((r) => {
           const s = String(r.status || "").toUpperCase();
           const thai = String(r.status || "");
@@ -637,28 +797,130 @@ export default function LeaveSubmitPage() {
           const startYmd = startAt.length >= 10 ? startAt.slice(0, 10) : "";
           if (!startYmd) return false;
           return startYmd >= yStart && startYmd <= yEnd;
-        })
-        .reduce((sum, r) => sum + Number(r.workdaysCount || 0), 0);
+        });
 
-      setBizUsed(Number.isFinite(used) ? used : 0);
+      const next: Record<string, number> = {};
+
+      for (const r of okRows) {
+        const cat = String(r.category || "") as LeaveCategory;
+        const sub = String(r.subType || "") as LeaveSubType;
+        const days = Number(r.workdaysCount || 0) || 0;
+
+        if (cat === "ลากรณีพิเศษ") {
+          const k = usedKey("ลากรณีพิเศษ", sub);
+          next[k] = (next[k] || 0) + days;
+        } else if (cat === "ลากิจ" || cat === "ลาป่วย" || cat === "ลาพักร้อน") {
+          const k = usedKey(cat);
+          next[k] = (next[k] || 0) + days;
+        }
+      }
+
+      setUsedMap(next);
     } catch (e: any) {
-      console.error("loadBusinessLeaveUsage error:", e);
-      setBizErr(e?.message || String(e));
-      setBizUsed(0);
+      console.error("loadYearUsageAll error:", e);
+      setUsageErr(e?.message || String(e));
+      setUsedMap({});
     } finally {
-      setBizLoading(false);
+      setUsageLoading(false);
     }
   }
 
   useEffect(() => {
-    loadBusinessLeaveUsage();
+    loadYearUsageAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  const bizRemain = useMemo(() => {
-    const x = BUSINESS_ANNUAL_LIMIT - (bizUsed || 0);
-    return x < 0 ? 0 : x;
-  }, [bizUsed]);
+  const bizUsed = usedMap[usedKey("ลากิจ")] || 0;
+  const sickUsed = usedMap[usedKey("ลาป่วย")] || 0;
+  const vacationUsed = usedMap[usedKey("ลาพักร้อน")] || 0;
+
+  const maternityUsed = usedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0;
+  const militaryUsed = usedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0;
+  const sterilUsed = usedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0;
+
+  const bizRemain = Math.max(0, LIMIT_BUSINESS - bizUsed);
+  const sickRemain = Math.max(0, LIMIT_SICK - sickUsed);
+  const vacationRemain = Math.max(0, LIMIT_VACATION - vacationUsed);
+  const maternityRemain = Math.max(0, LIMIT_MATERNITY - maternityUsed);
+  const militaryRemain = Math.max(0, LIMIT_MILITARY - militaryUsed);
+
+  // =======================
+  // ✅ NEW: Summary block (ดูย้อนหลังรายปี) สำหรับ “รวมสิทธิการลาทั้งหมด”
+  // =======================
+  function toAdYear(thYear: number) {
+    // thYear = พ.ศ. -> ค.ศ.
+    return thYear - 543;
+  }
+  function toThYear(adYear: number) {
+    return adYear + 543;
+  }
+
+  const [summaryYearTH, setSummaryYearTH] = useState<number>(() => toThYear(new Date().getFullYear()));
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryErr, setSummaryErr] = useState("");
+  const [summaryUsedMap, setSummaryUsedMap] = useState<Record<string, number>>({});
+
+  async function loadUsageAllByYear(adYear: number) {
+    if (!user?.uid) return;
+
+    setSummaryLoading(true);
+    setSummaryErr("");
+    try {
+      const snap = await getDocs(query(collection(db, "leave_requests"), where("uid", "==", user.uid)));
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
+
+      const yStart = `${adYear}-01-01`;
+      const yEnd = `${adYear}-12-31`;
+
+      const okRows = rows
+        .filter((r) => {
+          const s = String(r.status || "").toUpperCase();
+          const thai = String(r.status || "");
+          const isRejected = s === "REJECTED" || thai === "ไม่อนุมัติ";
+          const isCanceled = s === "CANCELED" || thai === "ยกเลิก";
+          return !isRejected && !isCanceled;
+        })
+        .filter((r) => {
+          const startAt = String(r.startAt || "");
+          const startYmd = startAt.length >= 10 ? startAt.slice(0, 10) : "";
+          if (!startYmd) return false;
+          return startYmd >= yStart && startYmd <= yEnd;
+        });
+
+      const next: Record<string, number> = {};
+      for (const r of okRows) {
+        const cat = String(r.category || "") as LeaveCategory;
+        const sub = String(r.subType || "") as LeaveSubType;
+        const days = Number(r.workdaysCount || 0) || 0;
+
+        if (cat === "ลากรณีพิเศษ") {
+          const k = usedKey("ลากรณีพิเศษ", sub);
+          next[k] = (next[k] || 0) + days;
+        } else if (cat === "ลากิจ" || cat === "ลาป่วย" || cat === "ลาพักร้อน") {
+          const k = usedKey(cat);
+          next[k] = (next[k] || 0) + days;
+        }
+      }
+
+      setSummaryUsedMap(next);
+    } catch (e: any) {
+      console.error("loadUsageAllByYear error:", e);
+      setSummaryErr(e?.message || String(e));
+      setSummaryUsedMap({});
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const ad = toAdYear(summaryYearTH);
+    loadUsageAllByYear(ad);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, summaryYearTH]);
+
+  const summaryBizUsed = summaryUsedMap[usedKey("ลากิจ")] || 0;
+  const summarySickUsed = summaryUsedMap[usedKey("ลาป่วย")] || 0;
+  const summaryVacationUsed = summaryUsedMap[usedKey("ลาพักร้อน")] || 0;
 
   const resetAll = () => {
     setCategory("");
@@ -715,14 +977,28 @@ export default function LeaveSubmitPage() {
     }
 
     // ✅ ลากิจปกติ ต้องยื่นล่วงหน้า >= 3 วันทำการ (ยกเว้นฉุกเฉิน / ยกเว้นย้อนหลัง)
-    // ลากิจปกติ: ต้องยื่นล่วงหน้า >= 3 วันทำการ (ยกเว้นฉุกเฉิน / ยกเว้นย้อนหลัง)
-      if (isBusinessNormal && !isRetroactive && startYMD) {
-        // ✅ ใช้ isBusinessEmergency ให้ TS ไม่ฟ้อง + อ่านง่ายว่า "ปกติเท่านั้น"
-        if (!isBusinessEmergency && compareYMD(startYMD, minStartForBusinessNormal) < 0) {
-          e.startDate = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
+    if (isBusinessNormal && !isRetroactive && startYMD) {
+      if (!isBusinessEmergency && compareYMD(startYMD, minStartForBusinessNormal) < 0) {
+        e.startDate = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
+      }
+    }
+
+    // ✅ เงื่อนไขเอกสาร “เฉพาะ” ลาคลอด/ทหาร/ทำหมัน (เขียนไว้เป็นเงื่อนไข)
+    if (isSterilization) {
+      // ต้องยื่นล่วงหน้า 1 วัน (ตามเงื่อนไขที่ให้มา)
+      if (!isRetroactive && startYMD) {
+        const min = (() => {
+          const d = new Date();
+          d.setHours(0, 0, 0, 0);
+          const t = addDays(d, 1);
+          const pad2 = (x: number) => String(x).padStart(2, "0");
+          return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+        })();
+        if (compareYMD(startYMD, min) < 0) {
+          e.startDate = `ลาเพื่อทำหมัน: ต้องยื่นล่วงหน้าอย่างน้อย 1 วัน (เริ่มลาได้ตั้งแต่ ${min})`;
         }
       }
-
+    }
 
     const MAX_FILES = 5;
     const MAX_MB = 15;
@@ -739,11 +1015,21 @@ export default function LeaveSubmitPage() {
       if (files.length === 0) e.files = "ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองแพทย์จากโรงพยาบาลตอนยื่น";
     }
 
-    // ✅ ลากิจ: ไม่เกิน 5 วัน/ปี
+    // ✅ ตรวจสิทธิ/เพดาน
     if (isBusinessLeave && workdaysCount > 0) {
-      if (workdaysCount > bizRemain) {
-        e.businessLimit = `ลากิจปีนี้เหลือ ${bizRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
-      }
+      if (workdaysCount > bizRemain) e.businessLimit = `ลากิจปีนี้เหลือ ${bizRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    }
+    if (isSick && workdaysCount > 0) {
+      if (workdaysCount > sickRemain) e.sickLimit = `ลาป่วยปีนี้เหลือ ${sickRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    }
+    if (isVacation && workdaysCount > 0) {
+      if (workdaysCount > vacationRemain) e.vacationLimit = `ลาพักร้อนปีนี้เหลือ ${vacationRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    }
+    if (isMaternity && workdaysCount > 0) {
+      if (workdaysCount > maternityRemain) e.maternityLimit = `ลาคลอดปีนี้เหลือ ${maternityRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    }
+    if (isMilitary && workdaysCount > 0) {
+      if (workdaysCount > militaryRemain) e.militaryLimit = `ลาเพื่อรับราชการทหารปีนี้เหลือ ${militaryRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
     }
 
     setErrors(e);
@@ -808,8 +1094,11 @@ export default function LeaveSubmitPage() {
 
       const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
 
-      // ✅ รีโหลด usage ลากิจทันที
-      await loadBusinessLeaveUsage();
+      // ✅ รีโหลด usage ปีปัจจุบัน (สำหรับ ConditionsBox)
+      await loadYearUsageAll();
+
+      // ✅ รีโหลด summary year ที่เลือกอยู่ (เผื่อยื่นในปีเดียวกัน)
+      await loadUsageAllByYear(toAdYear(summaryYearTH));
 
       setErrors({});
       setFiles([]);
@@ -840,6 +1129,244 @@ export default function LeaveSubmitPage() {
     setPopup(null);
   };
 
+  // =======================
+  // ✅ ConditionsBox: ทำรูปแบบเดียวกันทุกประเภท + เงื่อนไขอยู่ด้านบน
+  // =======================
+  const ConditionsBox = useMemo(() => {
+    if (!category) return null;
+
+    const year = new Date().getFullYear();
+
+    const wrapCls =
+      "rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200";
+
+    const headerCls = "font-extrabold text-gray-900 dark:text-gray-100";
+    const listCls = "mt-2 grid gap-1 text-sm text-gray-700 dark:text-gray-200";
+
+    // 1) ลากิจ
+    if (category === "ลากิจ") {
+      return (
+        <div className={wrapCls}>
+          <div className={headerCls}>เงื่อนไขลากิจ</div>
+          <div className={listCls}>
+            <div>• ลาได้ไม่เกิน 5 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม)</div>
+            <div>• ลากิจปกติ ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (จ.-ส.)</div>
+            <div>• ลากิจฉุกเฉิน: ไม่จำเป็นต้องยื่นใบรับรองแพทย์</div>
+            <div>• กรณีย้อนหลัง ต้องมีเหตุผล หรือแนบไฟล์หลักฐาน</div>
+          </div>
+
+          <YearEntitlementCard
+            title="สรุปสิทธิในปีนี้"
+            year={year}
+            total={LIMIT_BUSINESS}
+            used={bizUsed}
+            loading={usageLoading}
+            error={usageErr}
+            requested={workdaysCount}
+            note={
+              <>
+                {isBusinessNormal && !isRetroactive && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                    <div className="font-extrabold">ลากิจปกติ: วันที่เริ่มลาเร็วสุด</div>
+                    <div className="mt-1 text-sm">
+                      เริ่มลาได้ตั้งแต่ <span className="font-extrabold">{minStartForBusinessNormal}</span> เป็นต้นไป
+                    </div>
+                  </div>
+                )}
+
+                {errors.businessLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.businessLimit}</div>}
+              </>
+            }
+          />
+        </div>
+      );
+    }
+
+    // 2) ลาป่วย
+    if (category === "ลาป่วย") {
+      return (
+        <div className={wrapCls}>
+          <div className={headerCls}>เงื่อนไขลาป่วย </div>
+
+          <div className={listCls}>
+            <div>• “ป่วยระหว่างวัน” ไม่ต้องแนบใบรับรองทุกกรณี</div>
+            <div>• ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
+            <div>• ลาป่วย ≥ 3 วันทำการ ต้องมีใบรับรอง “จากโรงพยาบาลเท่านั้น”</div>
+          </div>
+
+          <YearEntitlementCard
+            title="สรุปสิทธิในปีนี้"
+            year={year}
+            total={LIMIT_SICK}
+            used={sickUsed}
+            loading={usageLoading}
+            error={usageErr}
+            requested={workdaysCount}
+            note={
+              <>
+                <div className="text-sm">
+                  <span className="font-semibold">จำนวนวันทำการ (ประเมิน):</span>{" "}
+                  <span className="font-extrabold text-teal-700 dark:text-teal-200">{workdaysCount} วัน</span>
+                  {startYMD && (
+                    <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{isRetroactive ? "• ยื่นย้อนหลัง" : "• ไม่ย้อนหลัง"}</span>
+                  )}
+                </div>
+
+                {needMedicalCert && medicalCertMode === "DUE_BY_WORKDAY_3" && medicalCertDueAt && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                    <div className="font-extrabold">ต้องแนบใบรับรอง “ภายในวันทำการที่ 3”</div>
+                    <div className="mt-1 text-sm">
+                      เดดไลน์: <span className="font-extrabold">{formatThaiDate(medicalCertDueAt)}</span> (ภายใน 23:59)
+                    </div>
+                    <div className="mt-1 text-xs opacity-90">
+                      * วันนี้สามารถยื่นก่อน แล้วไปแนบเอกสารภายหลังในหน้า “ใบลาของฉัน” (ตอนสถานะยังรอดำเนินการ)
+                    </div>
+                  </div>
+                )}
+
+                {needMedicalCert && medicalCertMode === "MUST_AT_SUBMIT" && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100">
+                    <div className="font-extrabold">ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองตอนยื่น</div>
+                    <div className="mt-1 text-xs opacity-90">* ไม่ควรแนบทีหลัง เพราะถือว่าเลยเดดไลน์แล้ว</div>
+                  </div>
+                )}
+
+                {errors.sickLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.sickLimit}</div>}
+              </>
+            }
+          />
+        </div>
+      );
+    }
+
+    // 3) ลาพักร้อน
+    if (category === "ลาพักร้อน") {
+      return (
+        <div className={wrapCls}>
+          <div className={headerCls}>เงื่อนไขลาพักร้อน</div>
+          <div className={listCls}>
+            <div>• สิทธิวันลาพักร้อน 6 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม)</div>
+            <div>• แนะนำให้ยื่นล่วงหน้าเพื่อให้ผู้อนุมัติพิจารณาได้ทันเวลา</div>
+          </div>
+
+          <YearEntitlementCard
+            title="สรุปสิทธิในปีนี้"
+            year={year}
+            total={LIMIT_VACATION}
+            used={vacationUsed}
+            loading={usageLoading}
+            error={usageErr}
+            requested={workdaysCount}
+            note={
+              <>
+                <div className="text-sm">* หากบริษัทมีเงื่อนไขเพิ่มเติม ให้ยึดตามนโยบาย/HR</div>
+                {errors.vacationLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.vacationLimit}</div>}
+              </>
+            }
+          />
+        </div>
+      );
+    }
+
+    // 4) ลากรณีพิเศษ
+    return (
+      <div className={wrapCls}>
+        <div className={headerCls}>เงื่อนไขลากรณีพิเศษ</div>
+
+        <div className={listCls}>
+          <div>• ขึ้นกับประเภทที่เลือก (เช่น ลาคลอด / ราชการทหาร / ทำหมัน / อื่นๆ)</div>
+          <div>• อาจต้องแนบเอกสารประกอบตามที่ HR/ผู้อนุมัติร้องขอ</div>
+        </div>
+
+        {isMaternity && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+            <div className="font-extrabold">ลาคลอด (เงื่อนไขการยื่น)</div>
+            <div className="mt-1 text-sm">
+              • ต้องลาล่วงหน้าไม่น้อยกว่า 30 วัน และแนบหลักฐานสมุดฝากครรภ์
+              <br />• เมื่อกลับมาทำงาน ให้ยื่นสำเนาหลักฐานการคลอดบุตรประกอบใบลา หรือ สำเนาใบรับรองแพทย์
+            </div>
+          </div>
+        )}
+
+        {isMilitary && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+            <div className="font-extrabold">ลาเพื่อรับราชการทหาร (เงื่อนไข)</div>
+            <div className="mt-1 text-sm">
+              • พร้อมแนบสำเนาหลักฐานหมายเรียกพลของราชการ
+              <br />• มีสิทธิลาโดยได้รับค่าจ้างเท่ากับวันทำงานปกติ ตามจำนวนวันที่ถูกเรียกพล แต่ไม่เกิน 60 วัน
+            </div>
+          </div>
+        )}
+
+        {isSterilization && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+            <div className="font-extrabold">ลาเพื่อทำหมัน และลาเนื่องจากการทำหมัน (เงื่อนไข)</div>
+            <div className="mt-1 text-sm">
+              • มีสิทธิ์ลาเพื่อทำหมัน และมีสิทธิ์ลาเนื่องจากการทำหมันตามระยะเวลาที่แพทย์กำหนดและออกใบรับรอง โดยลูกจ้างมีสิทธิ์ได้รับค่าจ้างในวันลานั้นด้วย
+              <br />• ต้องยื่นใบลาล่วงหน้า 1 วัน และแนบใบรับรองแพทย์ย้อนหลังเมื่อกลับมาทำงานวันแรก
+            </div>
+          </div>
+        )}
+
+        <YearEntitlementCard
+          title="สรุปสิทธิในปีนี้"
+          year={year}
+          total={isMaternity ? LIMIT_MATERNITY : isMilitary ? LIMIT_MILITARY : isSterilization ? LIMIT_STERILIZATION : null}
+          used={isMaternity ? maternityUsed : isMilitary ? militaryUsed : isSterilization ? sterilUsed : null}
+          loading={usageLoading}
+          error={usageErr}
+          requested={workdaysCount}
+          note={
+            <>
+              {!subType && <div className="text-sm">* โปรดเลือก “ประเภทย่อย” เพื่อแสดงสิทธิของรายการนั้น</div>}
+              {errors.maternityLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.maternityLimit}</div>}
+              {errors.militaryLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.militaryLimit}</div>}
+            </>
+          }
+        />
+      </div>
+    );
+  }, [
+    category,
+    subType,
+    workdaysCount,
+    usageLoading,
+    usageErr,
+    bizUsed,
+    sickUsed,
+    vacationUsed,
+    maternityUsed,
+    militaryUsed,
+    sterilUsed,
+    bizRemain,
+    sickRemain,
+    vacationRemain,
+    maternityRemain,
+    militaryRemain,
+    isBusinessNormal,
+    isRetroactive,
+    minStartForBusinessNormal,
+    startYMD,
+    needMedicalCert,
+    medicalCertMode,
+    medicalCertDueAt,
+    errors.businessLimit,
+    errors.sickLimit,
+    errors.vacationLimit,
+    errors.maternityLimit,
+    errors.militaryLimit,
+    isMaternity,
+    isMilitary,
+    isSterilization,
+  ]);
+
+  // ✅ years for summary (พ.ศ.) — 7 ปีล่าสุด (ปรับได้)
+  const summaryYearOptions = useMemo(() => {
+    const nowTH = toThYear(new Date().getFullYear());
+    const years = Array.from({ length: 7 }, (_, i) => nowTH - 6 + i);
+    return years.map((y) => ({ value: String(y), label: String(y) }));
+  }, []);
+
   return (
     <div className="space-y-6">
       <PopupModal state={popup} onOk={handlePopupOk} />
@@ -862,97 +1389,8 @@ export default function LeaveSubmitPage() {
         </button>
       </div>
 
-      {/* ✅ เงื่อนไขลากิจ + แถบสรุปสิทธิ: โชว์ตลอด (ไม่ต้องรอเลือก “ลากิจ”) */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
-        <div className="font-extrabold text-gray-900 dark:text-gray-100">เงื่อนไขลากิจ</div>
-        <div className="mt-2 grid gap-1 text-sm text-gray-700 dark:text-gray-200">
-          <div>• ลาได้ไม่เกิน 5 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม)</div>
-          <div>• ลากิจปกติ ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (จ.-ส.)</div>
-          <div>• ลากิจฉุกเฉิน: ยกเว้น ไม่ต้องยื่นล่วงหน้า</div>
-          <div>• กรณีย้อนหลัง ต้องมีเหตุผล หรือแนบไฟล์หลักฐาน</div>
-        </div>
-
-        <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/40">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-base font-extrabold">
-              ปี {new Date().getFullYear()} • ใช้ไปแล้ว{" "}
-              <span className="text-teal-700 dark:text-teal-200">{bizLoading ? "…" : bizUsed}</span>{" "}
-              วัน • เหลือ{" "}
-              <span className="text-teal-700 dark:text-teal-200">{bizLoading ? "…" : bizRemain}</span> วัน
-            </div>
-            <div className="text-sm font-semibold text-gray-600 dark:text-gray-300">
-              กำลังยื่นรอบนี้:{" "}
-              <span className="text-gray-900 dark:text-gray-100">{isBusinessLeave ? workdaysCount : 0} วัน</span>
-            </div>
-          </div>
-
-          {bizErr && (
-            <div className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
-              * โหลดสรุปสิทธิไม่สำเร็จ: {bizErr}
-              <div className="opacity-80">
-                * ถ้าขึ้นเรื่อง index ไม่ต้องสร้างก็ได้ เพราะหน้านี้ query แบบไม่ใช้ composite index แล้ว
-              </div>
-            </div>
-          )}
-
-          {/* ✅ โชว์ “วันที่เริ่มลาเร็วสุด” เฉพาะกรณีเลือก ลากิจปกติ และไม่ย้อนหลัง */}
-          {isBusinessNormal && !isRetroactive && (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
-              <div className="font-bold">ลากิจปกติ: วันที่เริ่มลาเร็วสุด</div>
-              <div className="mt-1 text-sm">
-                เริ่มลาได้ตั้งแต่ <span className="font-extrabold">{minStartForBusinessNormal}</span> เป็นต้นไป
-              </div>
-            </div>
-          )}
-
-          {errors.businessLimit && <p className="mt-3 text-xs font-extrabold text-red-600">{errors.businessLimit}</p>}
-        </div>
-      </div>
-
-      {/* ✅ สรุป policy ลาป่วย + ตารางเงื่อนไข */}
-      {isSick && subType && (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
-          <div className="font-semibold text-gray-900 dark:text-gray-100">
-            เงื่อนไขลาป่วย (บริษัททำงาน จ.-ส. / เวลา 09:00–18:00)
-          </div>
-
-          <div className="mt-2 grid gap-2">
-            <div>
-              <span className="font-semibold">จำนวนวันทำการ (ประเมิน):</span>{" "}
-              <span className="font-semibold text-teal-700 dark:text-teal-200">{workdaysCount} วัน</span>
-              {startYMD && (
-                <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-                  {isRetroactive ? "• ยื่นย้อนหลัง" : "• ไม่ย้อนหลัง"}
-                </span>
-              )}
-            </div>
-
-            <div className="text-xs text-gray-600 dark:text-gray-400">
-              • “ป่วยระหว่างวัน” ไม่ต้องแนบใบรับรองทุกกรณี<br />
-              • ลาป่วย ≥ 3 วันทำการ ต้องมีใบรับรอง “จากโรงพยาบาลเท่านั้น”
-            </div>
-
-            {needMedicalCert && medicalCertMode === "DUE_BY_WORKDAY_3" && medicalCertDueAt && (
-              <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
-                <div className="font-semibold">ต้องแนบใบรับรอง “ภายในวันทำการที่ 3”</div>
-                <div className="mt-1 text-sm">
-                  เดดไลน์: <span className="font-semibold">{formatThaiDate(medicalCertDueAt)}</span> (ภายใน 23:59)
-                </div>
-                <div className="mt-1 text-xs opacity-90">
-                  * วันนี้สามารถยื่นก่อน แล้วไปแนบเอกสารภายหลังในหน้า “ใบลาของฉัน” (ตอนสถานะยังรอดำเนินการ)
-                </div>
-              </div>
-            )}
-
-            {needMedicalCert && medicalCertMode === "MUST_AT_SUBMIT" && (
-              <div className="mt-1 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100">
-                <div className="font-semibold">ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองตอนยื่น</div>
-                <div className="mt-1 text-xs opacity-90">* ไม่ควรแนบทีหลัง เพราะถือว่าเลยเดดไลน์แล้ว</div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* ✅ เงื่อนไข: แสดง “เฉพาะประเภทที่เลือก” */}
+      {ConditionsBox}
 
       {submitting && files.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
@@ -1012,13 +1450,7 @@ export default function LeaveSubmitPage() {
               </label>
 
               <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input
-                  type="radio"
-                  name="leaveMode"
-                  checked={mode === "time"}
-                  onChange={() => setMode("time")}
-                  disabled={submitting}
-                />
+                <input type="radio" name="leaveMode" checked={mode === "time"} onChange={() => setMode("time")} disabled={submitting} />
                 ระบุเวลา
               </label>
             </div>
@@ -1036,8 +1468,20 @@ export default function LeaveSubmitPage() {
                     disabled={submitting}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
                   />
-                  {(errors.startDate || errors.businessLimit) && (
-                    <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDate || errors.businessLimit}</p>
+                  {(errors.startDate ||
+                    errors.businessLimit ||
+                    errors.sickLimit ||
+                    errors.vacationLimit ||
+                    errors.maternityLimit ||
+                    errors.militaryLimit) && (
+                    <p className="mt-2 text-xs font-semibold text-red-600">
+                      {errors.startDate ||
+                        errors.businessLimit ||
+                        errors.sickLimit ||
+                        errors.vacationLimit ||
+                        errors.maternityLimit ||
+                        errors.militaryLimit}
+                    </p>
                   )}
                 </div>
 
@@ -1090,9 +1534,7 @@ export default function LeaveSubmitPage() {
           </div>
 
           {isSickInDay && mode === "time" && (
-            <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
-              * ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00
-            </div>
+            <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">* ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
           )}
         </div>
 
@@ -1154,9 +1596,7 @@ export default function LeaveSubmitPage() {
                 )}
               </div>
 
-              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                * ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend
-              </div>
+              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">* ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend</div>
             </div>
           </div>
         </div>
@@ -1180,6 +1620,79 @@ export default function LeaveSubmitPage() {
           </button>
         </div>
       </form>
+
+      {/* =======================
+          ✅ NEW BLOCK: รวมสิทธิการลาทั้งหมด (ดูย้อนหลังรายปี)
+          ✅ วางต่อจากปุ่มล้างฟอร์ม/ส่งคำร้อง (แยกส่วน)
+        ======================= */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">รวมสิทธิการลาทั้งหมด</div>
+            <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
+          </div>
+
+          <div className="min-w-[180px]">
+            <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เลือกปี (พ.ศ.)</div>
+            <select
+              value={String(summaryYearTH)}
+              onChange={(e) => setSummaryYearTH(Number(e.target.value))}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-gray-800 dark:bg-gray-900"
+            >
+              {summaryYearOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {summaryErr && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+            * โหลดข้อมูลย้อนหลังไม่สำเร็จ: {summaryErr}
+          </div>
+        )}
+
+        <div className="mt-6 grid gap-4">
+  {/* 1) ลาป่วย */}
+  <EntitlementRow title="ลาป่วย (รวม)" total={LIMIT_SICK} used={summarySickUsed} loading={summaryLoading} />
+
+  {/* 2) ลากิจ */}
+  <EntitlementRow title="ลากิจ" total={LIMIT_BUSINESS} used={summaryBizUsed} loading={summaryLoading} />
+
+  {/* 3) ลาพักร้อน */}
+  <EntitlementRow title="ลาพักร้อนประจำปี" total={LIMIT_VACATION} used={summaryVacationUsed} loading={summaryLoading} />
+
+  {/* 4) ลาคลอด */}
+  <EntitlementRow
+    title="ลาคลอด"
+    total={LIMIT_MATERNITY}
+    used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0}
+    loading={summaryLoading}
+  />
+
+  {/* 5) ลาทำหมัน (ไม่จำกัด) */}
+  <EntitlementRow
+    title="ลาเพื่อทำหมัน"
+    total={LIMIT_STERILIZATION}
+    used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0}
+    loading={summaryLoading}
+  />
+
+  {/* 6) ลารับราชการทหาร */}
+  <EntitlementRow
+    title="ลาเพื่อรับราชการทหาร"
+    total={LIMIT_MILITARY}
+    used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0}
+    loading={summaryLoading}
+  />
+</div>
+
+        <div className="mt-5 text-xs text-gray-500 dark:text-gray-400">
+          * หมายเหตุ: ไม่นับคำร้องที่ “ไม่อนุมัติ/REJECTED” และ “ยกเลิก/CANCELED”
+        </div>
+      </div>
     </div>
   );
 }
