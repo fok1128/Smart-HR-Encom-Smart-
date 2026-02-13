@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { useToastCenter } from "../components/common/ToastCenter";
+import ModalShell from "../components/common/ModalShell";
 import { listenMyLeaveRequests, type LeaveRequestDoc } from "../services/leaveRequests";
 import { listenMyFieldWorkRequests } from "../services/fieldWorkRequests";
 import { getSignedUrl } from "../services/files";
@@ -47,8 +49,20 @@ type FieldWorkDoc = {
 };
 
 type UnifiedRow =
-  | (LeaveRequestDoc & { __kind: "LEAVE"; __typeLabel: string; __status: string; __submittedAt: any; __atts: AttachItem[] })
-  | (FieldWorkDoc & { __kind: "FIELD_WORK"; __typeLabel: string; __status: string; __submittedAt: any; __atts: AttachItem[] });
+  | (LeaveRequestDoc & {
+      __kind: "LEAVE";
+      __typeLabel: string;
+      __status: string;
+      __submittedAt: any;
+      __atts: AttachItem[];
+    })
+  | (FieldWorkDoc & {
+      __kind: "FIELD_WORK";
+      __typeLabel: string;
+      __status: string;
+      __submittedAt: any;
+      __atts: AttachItem[];
+    });
 
 function statusLabel(s: string) {
   const u = String(s || "").toUpperCase();
@@ -75,6 +89,7 @@ function normTime(s: any) {
 
 export default function LeaveStatusPage() {
   const { user } = useAuth();
+  const { showToast } = useToastCenter();
 
   // raw data
   const [leaveItems, setLeaveItems] = useState<LeaveRequestDoc[]>([]);
@@ -84,7 +99,7 @@ export default function LeaveStatusPage() {
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
-  // preview modal
+  // preview modal (ใช้ ModalShell)
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewName, setPreviewName] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -114,7 +129,7 @@ export default function LeaveStatusPage() {
       return {
         ...(r as any),
         __kind: "LEAVE",
-        __typeLabel: `${r.category} • ${r.subType}`,
+        __typeLabel: `${(r as any).category} • ${(r as any).subType}`,
         __status: String((r as any).status || "PENDING").toUpperCase(),
         __submittedAt: submitted,
         __atts: atts,
@@ -122,7 +137,7 @@ export default function LeaveStatusPage() {
     });
 
     const fields: UnifiedRow[] = (fieldItems || []).map((f) => {
-      const st = String((f as any).status || "APPROVED").toUpperCase(); // field work ควร APPROVED ตั้งแต่แรก
+      const st = String((f as any).status || "APPROVED").toUpperCase();
       const submitted = (f as any).submittedAt || (f as any).approvedAt || null;
       const reqNo = (f as any).requestNo || `FW-${String((f as any).id || "").slice(0, 6).toUpperCase()}`;
 
@@ -139,7 +154,6 @@ export default function LeaveStatusPage() {
 
     const all = [...leaves, ...fields];
 
-    // sort newest first
     all.sort((a, b) => {
       const ams = a.__submittedAt?.toDate?.()?.getTime?.() ?? 0;
       const bms = b.__submittedAt?.toDate?.()?.getTime?.() ?? 0;
@@ -151,7 +165,6 @@ export default function LeaveStatusPage() {
 
   // ✅ dropdown options (ไม่ให้หาย)
   const typeOptions = useMemo(() => {
-    // ค่า default ที่ควรมี (กันกรณียังไม่มีข้อมูลบางประเภทในปีนั้น)
     const defaults = [
       "ลากิจ",
       "ลาป่วย",
@@ -169,20 +182,16 @@ export default function LeaveStatusPage() {
       if (r.__kind === "FIELD_WORK") {
         fromData.add("ออกปฏิบัติงานนอกสถานที่");
       } else {
-        // ปกติ filter ตาม “category” (ไม่รวม subtype)
         const cat = String((r as any).category || "").trim();
         if (cat) fromData.add(cat);
 
-        // ถ้า category = ลากรณีพิเศษ แต่บางทีอยากให้เห็น “ลาเพื่อทำหมัน” เป็นตัวเลือกด้วย
         const sub = String((r as any).subType || "").trim();
         if (sub === "ลาเพื่อทำหมัน") fromData.add("ลาเพื่อทำหมัน");
       }
     });
 
-    // รวม + เรียง
     const merged = Array.from(new Set([...defaults, ...Array.from(fromData)])).filter(Boolean);
 
-    // เรียงแบบน่าใช้ (เอา default ก่อน)
     const order = new Map<string, number>();
     defaults.forEach((x, i) => order.set(x, i));
     merged.sort((a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999) || a.localeCompare(b, "th"));
@@ -202,7 +211,6 @@ export default function LeaveStatusPage() {
         if (r.__kind === "FIELD_WORK") {
           return typeFilter === "ออกปฏิบัติงานนอกสถานที่";
         }
-        // leave
         const cat = String((r as any).category || "").trim();
         const sub = String((r as any).subType || "").trim();
         if (typeFilter === "ลาเพื่อทำหมัน") return sub === "ลาเพื่อทำหมัน";
@@ -220,6 +228,12 @@ export default function LeaveStatusPage() {
   const isImage = (url: string) => /\.(png|jpg|jpeg|webp|gif)$/i.test(url);
   const isPdf = (url: string) => /\.pdf(\?|$)/i.test(url);
 
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewName("");
+    setPreviewUrl("");
+  };
+
   const openPreview = async (att: AttachItem) => {
     try {
       setPreviewLoading(true);
@@ -230,12 +244,16 @@ export default function LeaveStatusPage() {
       }
 
       if (!url && att?.path) {
-        alert("ไฟล์นี้เป็นข้อมูลเก่าที่เก็บแบบ Firebase path — ตอนนี้ระบบเปลี่ยนเป็น Supabase แล้ว");
+        showToast("ไฟล์นี้เป็นข้อมูลเก่าที่เก็บแบบ Firebase path — ตอนนี้ระบบเปลี่ยนเป็น Supabase แล้ว", {
+          title: "เปิดไฟล์ไม่ได้",
+          variant: "warning",
+          durationMs: 2600,
+        });
         return;
       }
 
       if (!url) {
-        alert("ไฟล์แนบรายการนี้ยังไม่มีลิงก์/พาธสำหรับดู");
+        showToast("ไฟล์แนบรายการนี้ยังไม่มีลิงก์/พาธสำหรับดู", { title: "เปิดไฟล์ไม่ได้", variant: "warning" });
         return;
       }
 
@@ -244,38 +262,83 @@ export default function LeaveStatusPage() {
       setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
-      alert(`เปิดไฟล์ไม่ได้: ${e?.message || e}`);
+      showToast(e?.message || String(e), { title: "เปิดไฟล์ไม่ได้", variant: "danger" });
     } finally {
       setPreviewLoading(false);
     }
   };
 
-  // ESC close
-  useEffect(() => {
-    if (!previewOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setPreviewOpen(false);
-        setPreviewName("");
-        setPreviewUrl("");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [previewOpen]);
-
   return (
     <div className="space-y-6">
+      {/* ✅ Preview Modal (ใช้ ModalShell กลางระบบ) */}
+      <ModalShell
+        open={previewOpen}
+        title={`ดูไฟล์แนบ: ${previewName || "-"}`}
+        description="* แสดงผลเพื่อดูเท่านั้น"
+        onClose={closePreview}
+        widthClassName="max-w-5xl"
+        footer={
+          <div className="flex justify-end gap-2">
+            {previewUrl ? (
+              <button
+                type="button"
+                onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800"
+              >
+                เปิดในแท็บใหม่
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={closePreview}
+              className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-extrabold text-white hover:bg-black/90 dark:bg-white dark:text-gray-900"
+            >
+              ปิด
+            </button>
+          </div>
+        }
+      >
+        <div className="h-[72vh] overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
+          {!previewUrl ? (
+            <div className="flex h-full items-center justify-center text-sm font-semibold text-gray-500">
+              ไม่มีลิงก์ไฟล์สำหรับแสดงผล
+            </div>
+          ) : isImage(previewUrl) ? (
+            <div className="flex h-full items-center justify-center p-4">
+              <img
+                src={previewUrl}
+                alt={previewName}
+                draggable={false}
+                onContextMenu={(e) => e.preventDefault()}
+                className="max-h-full max-w-full rounded-2xl border border-gray-200 object-contain dark:border-gray-800"
+              />
+            </div>
+          ) : isPdf(previewUrl) ? (
+            <iframe
+              title={previewName}
+              src={`${previewUrl}#toolbar=0&navpanes=0`}
+              className="h-full w-full"
+              sandbox="allow-same-origin allow-scripts"
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300">
+              <div className="font-semibold">ไฟล์ชนิดนี้แสดงในหน้าเว็บไม่ได้</div>
+              <button
+                type="button"
+                onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+                className="rounded-xl bg-purple-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-purple-700"
+              >
+                เปิดดูในแท็บใหม่
+              </button>
+            </div>
+          )}
+        </div>
+      </ModalShell>
+
       <div>
         <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ตรวจสอบสถานะคำร้อง</h1>
-        <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          เลขคำร้อง • ประเภท • ช่วงเวลา • สถานะ • ยื่นเมื่อ
-        </div>
+        <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">เลขคำร้อง • ประเภท • ช่วงเวลา • สถานะ • ยื่นเมื่อ</div>
       </div>
 
       {/* Filters */}
@@ -322,6 +385,7 @@ export default function LeaveStatusPage() {
               onClick={() => {
                 setTypeFilter("ALL");
                 setStatusFilter("ALL");
+                showToast("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ", variant: "success", durationMs: 1400 });
               }}
               className="h-11 rounded-xl border border-gray-200 bg-white px-5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-gray-800"
             >
@@ -365,9 +429,7 @@ export default function LeaveStatusPage() {
 
                   return (
                     <tr key={`${r.__kind}-${(r as any).id}`} className="bg-white dark:bg-gray-900">
-                      <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">
-                        {(r as any).requestNo}
-                      </td>
+                      <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">{(r as any).requestNo}</td>
 
                       <td className="px-3 py-3 text-gray-800 dark:text-gray-200">{r.__typeLabel}</td>
 
@@ -415,81 +477,6 @@ export default function LeaveStatusPage() {
           </div>
         )}
       </div>
-
-      {/* Preview Modal */}
-      {previewOpen && (
-        <div className="fixed inset-0 z-[99999]">
-          <div
-            className="absolute inset-0 bg-black/45 backdrop-blur-md"
-            onClick={() => {
-              setPreviewOpen(false);
-              setPreviewName("");
-              setPreviewUrl("");
-            }}
-          />
-
-          <div className="relative z-[100000] flex min-h-screen items-center justify-center p-4">
-            <div className="w-[96%] max-w-4xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl dark:border-gray-800 dark:bg-gray-900">
-              <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    ดูไฟล์แนบ: {previewName}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">* แสดงผลเพื่อดูเท่านั้น</div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPreviewOpen(false);
-                    setPreviewName("");
-                    setPreviewUrl("");
-                  }}
-                  className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-black/5 dark:text-gray-300 dark:hover:bg-white/10"
-                >
-                  ปิด ✕
-                </button>
-              </div>
-
-              <div className="h-[70vh] bg-gray-50 dark:bg-gray-950">
-                {!previewUrl ? (
-                  <div className="flex h-full items-center justify-center text-sm text-gray-500">
-                    ไม่มีลิงก์ไฟล์สำหรับแสดงผล
-                  </div>
-                ) : isImage(previewUrl) ? (
-                  <div className="flex h-full items-center justify-center p-4">
-                    <img
-                      src={previewUrl}
-                      alt={previewName}
-                      draggable={false}
-                      onContextMenu={(e) => e.preventDefault()}
-                      className="max-h-full max-w-full rounded-xl border border-gray-200 object-contain dark:border-gray-800"
-                    />
-                  </div>
-                ) : isPdf(previewUrl) ? (
-                  <iframe
-                    title={previewName}
-                    src={`${previewUrl}#toolbar=0&navpanes=0`}
-                    className="h-full w-full"
-                    sandbox="allow-same-origin allow-scripts"
-                  />
-                ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300">
-                    <div>ไฟล์ชนิดนี้แสดงในหน้าเว็บไม่ได้</div>
-                    <button
-                      type="button"
-                      onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
-                      className="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white dark:bg-white dark:text-gray-900"
-                    >
-                      เปิดดูในแท็บใหม่
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

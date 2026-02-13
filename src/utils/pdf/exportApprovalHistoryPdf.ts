@@ -2,6 +2,8 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { THAI_FONT_BASE64, THAI_FONT_FILE, THAI_FONT_NAME } from "./thaiFont";
 
+type NotifyVariant = "info" | "success" | "warning" | "danger";
+
 type ExportMeta = {
   title?: string;
   orgLine1?: string;
@@ -34,12 +36,16 @@ type ExportMeta = {
 
   signatureTitle?: string;
   signatureName?: string;
+
+  // ✅ เพิ่ม: ให้หน้าเว็บส่ง toast มา (แทน alert)
+  notify?: (message: string, opts?: { title?: string; variant?: NotifyVariant }) => void;
 };
 
 export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {}) {
   if (!rows || rows.length === 0) {
-    alert("ไม่มีข้อมูลให้ Export");
-    return;
+    // ❌ ไม่ใช้ alert แล้ว
+    meta.notify?.("ไม่มีข้อมูลให้ Export", { title: "Export PDF", variant: "warning" });
+    return false;
   }
 
   const doc = new jsPDF({
@@ -132,9 +138,12 @@ export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {
   const yRight2 = yRight1 + lineGap;
 
   doc.text(`รายงานประจำเดือน`, rightX, yRight1, { align: "right" });
-  doc.text(`เดือน${TH_MONTHS[reportMonthDate.getMonth()]} ปี ${reportMonthDate.getFullYear() + 543}`, rightX, yRight2, {
-    align: "right",
-  });
+  doc.text(
+    `เดือน${TH_MONTHS[reportMonthDate.getMonth()]} ปี ${reportMonthDate.getFullYear() + 543}`,
+    rightX,
+    yRight2,
+    { align: "right" }
+  );
 
   // ====== บล็อกซ้าย (ใต้ผู้ออกรายงาน) ======
   let yLeft = yRow + lineGap;
@@ -162,14 +171,16 @@ export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {
   // =========================
   // Table
   // =========================
-  const head = [[
-    "ชื่อพนักงาน",
-    "เลขคำร้อง",
-    "ยื่นคำร้อง",
-    "วันอนุมัติ/อัปเดต",
-    "สถานะ",
-    "เหตุผล/หมายเหตุ",
-  ]];
+  const head = [
+    [
+      "ชื่อพนักงาน",
+      "เลขคำร้อง",
+      "ยื่นคำร้อง",
+      "วันอนุมัติ/อัปเดต",
+      "สถานะ",
+      "เหตุผล/หมายเหตุ",
+    ],
+  ];
 
   const body = rows.map((r) => [
     safe(r.employeeName),
@@ -218,6 +229,9 @@ export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {
   addSignatureBlock(doc, sigName, sigTitle);
 
   doc.save(`approval-history_${formatFileStamp(exportedAt)}.pdf`);
+
+  meta.notify?.("Export PDF สำเร็จ", { title: "Export PDF", variant: "success" });
+  return true;
 }
 
 // ---------------- helpers ----------------
@@ -254,12 +268,16 @@ function formatTHDateTime(d: Date | null) {
   if (!d) return "-";
   const pad = (n: number) => String(n).padStart(2, "0");
   const yyyy = d.getFullYear() + 543;
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${yyyy} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${yyyy} ${pad(d.getHours())}:${pad(
+    d.getMinutes()
+  )}`;
 }
 
 function formatFileStamp(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(
+    d.getHours()
+  )}${pad(d.getMinutes())}`;
 }
 
 function statusTH(status: string) {
@@ -328,7 +346,9 @@ function addSignatureBlock(doc: jsPDF, name: string, title: string) {
 
   doc.setFontSize(SIZE_TITLE);
   doc.setTextColor(60);
-  doc.text(title || "รักษาการกรรมการผู้จัดการใหญ่", lineCenterX, yLine - 40, { align: "center" });
+  doc.text(title || "รักษาการกรรมการผู้จัดการใหญ่", lineCenterX, yLine - 40, {
+    align: "center",
+  });
 
   if (name?.trim()) {
     doc.setFontSize(SIZE_NAME);
@@ -347,8 +367,18 @@ function addSignatureBlock(doc: jsPDF, name: string, title: string) {
 }
 
 const TH_MONTHS = [
-  "มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
-  "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม",
+  "มกราคม",
+  "กุมภาพันธ์",
+  "มีนาคม",
+  "เมษายน",
+  "พฤษภาคม",
+  "มิถุนายน",
+  "กรกฎาคม",
+  "สิงหาคม",
+  "กันยายน",
+  "ตุลาคม",
+  "พฤศจิกายน",
+  "ธันวาคม",
 ];
 
 function getReportMonthDate(meta: ExportMeta, exportedAt: Date) {

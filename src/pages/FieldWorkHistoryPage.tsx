@@ -1,10 +1,9 @@
 // src/pages/FieldWorkHistoryPage.tsx
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import { useAuth } from "../context/AuthContext";
-import { useToastCenter } from "../components/common/ToastCenter";
+import { useDialogCenter } from "../components/common/DialogCenter";
 import {
   deleteFieldWorkRequest,
   listenAllFieldWorkRequests,
@@ -17,6 +16,9 @@ import { getSignedUrl } from "../services/files";
 // ✅ เพิ่ม lookup สำรองด้วย email
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { db } from "../firebase";
+
+// ✅ Modal กลาง (ไฟล์แนบทั้งหมด) — คงไว้ได้
+import { Modal } from "../components/ui/modal";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -82,7 +84,7 @@ const dateInputStyle: any = {
 
 export default function FieldWorkHistoryPage() {
   const { user } = useAuth() as any;
-  const { showToast } = useToastCenter();
+  const dialog = useDialogCenter();
 
   const myUid = String(user?.uid || "").trim();
   const role = String(user?.role || "").toUpperCase();
@@ -105,10 +107,6 @@ export default function FieldWorkHistoryPage() {
   const [toISO, setToISO] = useState<string>(() => defaultRange.toISO);
   const [q, setQ] = useState<string>("");
 
-  const [deletingId, setDeletingId] = useState<string>("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmVisible, setConfirmVisible] = useState(false);
-
   const [userMap, setUserMap] = useState<Record<string, UserMini>>({});
   const [emailMap, setEmailMap] = useState<Record<string, UserMini>>({});
 
@@ -117,18 +115,6 @@ export default function FieldWorkHistoryPage() {
     requestNo: "",
     attachments: [],
   });
-  const [attVisible, setAttVisible] = useState(false);
-
-  // ✅ Lock scroll เมื่อมี modal เปิด
-  const modalAnyOpen = confirmOpen || attModal.open;
-  useEffect(() => {
-    if (!modalAnyOpen) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [modalAnyOpen]);
 
   useEffect(() => {
     if (!myUid) {
@@ -154,9 +140,7 @@ export default function FieldWorkHistoryPage() {
 
   // ✅ โหลดชื่อ+เบอร์จาก uid
   useEffect(() => {
-    const uids = Array.from(
-      new Set((rows || []).map((r) => String(r.uid || "").trim()).filter(Boolean))
-    );
+    const uids = Array.from(new Set((rows || []).map((r) => String(r.uid || "").trim()).filter(Boolean)));
     const missing = uids.filter((u) => !userMap[u]);
     if (missing.length === 0) return;
 
@@ -191,11 +175,7 @@ export default function FieldWorkHistoryPage() {
   // ✅ fallback: users by email
   useEffect(() => {
     const emails = Array.from(
-      new Set(
-        (rows || [])
-          .map((r) => String((r as any)?.email || "").trim().toLowerCase())
-          .filter(Boolean)
-      )
+      new Set((rows || []).map((r) => String((r as any)?.email || "").trim().toLowerCase()).filter(Boolean))
     );
 
     const missingEmails = emails.filter((e) => !emailMap[e]);
@@ -249,17 +229,10 @@ export default function FieldWorkHistoryPage() {
         const s = (r as any)?.submitter || null;
         const snapName =
           String(s?.fullName || "").trim() ||
-          [String(s?.fname || "").trim(), String(s?.lname || "").trim()]
-            .filter(Boolean)
-            .join(" ")
-            .trim();
-        const snapPhone =
-          String(s?.phone || "").trim() ||
-          String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
+          [String(s?.fname || "").trim(), String(s?.lname || "").trim()].filter(Boolean).join(" ").trim();
+        const snapPhone = String(s?.phone || "").trim() || String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
 
-        const hay = `${r.requestNo} ${r.place} ${r.note || ""} ${(r as any)?.email || ""} ${
-          p.fullName
-        } ${p.phone} ${pe.fullName} ${pe.phone} ${snapName} ${snapPhone}`.toLowerCase();
+        const hay = `${r.requestNo} ${r.place} ${r.note || ""} ${(r as any)?.email || ""} ${p.fullName} ${p.phone} ${pe.fullName} ${pe.phone} ${snapName} ${snapPhone}`.toLowerCase();
 
         return hay.includes(qq);
       })
@@ -272,35 +245,32 @@ export default function FieldWorkHistoryPage() {
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (e: any) {
       const m = e?.message || String(e);
-      showToast(m, { title: "เปิดไฟล์ไม่สำเร็จ", variant: "danger" });
+      await dialog.alert(m, { title: "เปิดไฟล์ไม่สำเร็จ", variant: "danger" });
     }
   }
 
-  function askDelete(id: string) {
-    setDeletingId(id);
-    setConfirmOpen(true);
-    requestAnimationFrame(() => setConfirmVisible(true));
-  }
+  async function handleDelete(id: string, requestNo?: string, who?: string) {
+    if (!canDelete) {
+      await dialog.alert("คุณไม่มีสิทธิ์ลบรายการนี้", { title: "ไม่อนุญาต", variant: "danger" });
+      return;
+    }
 
-  function closeConfirm() {
-    setConfirmVisible(false);
-    setTimeout(() => {
-      setConfirmOpen(false);
-      setDeletingId("");
-    }, 170);
-  }
+    const ok = await dialog.confirm(`คุณกำลังจะลบ: ${who || "-"} · ${requestNo || id}\nการลบจะไม่สามารถกู้คืนได้`, {
+      title: "ยืนยันการลบ",
+      confirmText: "ลบเลย",
+      cancelText: "ยกเลิก",
+      variant: "danger",
+      size: "md",
+    });
 
-  async function doDelete() {
-    const id = deletingId;
-    closeConfirm();
+    if (!ok) return;
 
-    if (!id) return;
     try {
       await deleteFieldWorkRequest(id);
-      showToast("ลบรายการเรียบร้อย", { title: "ลบสำเร็จ", variant: "success" });
+      await dialog.success("ลบรายการเรียบร้อย", { title: "ลบสำเร็จ", size: "md" });
     } catch (e: any) {
       const m = e?.message || String(e);
-      showToast(m, { title: "ลบไม่สำเร็จ", variant: "danger" });
+      await dialog.alert(m, { title: "ลบไม่สำเร็จ", variant: "danger" });
     }
   }
 
@@ -313,14 +283,10 @@ export default function FieldWorkHistoryPage() {
       .filter((a) => a.storagePath);
 
     setAttModal({ open: true, requestNo, attachments: list });
-    requestAnimationFrame(() => setAttVisible(true));
   }
 
   function closeAllFiles() {
-    setAttVisible(false);
-    setTimeout(() => {
-      setAttModal({ open: false, requestNo: "", attachments: [] });
-    }, 180);
+    setAttModal({ open: false, requestNo: "", attachments: [] });
   }
 
   function resetDates() {
@@ -331,178 +297,61 @@ export default function FieldWorkHistoryPage() {
 
   const colCount = canDelete ? 8 : 7;
 
-  const attachmentsModalNode =
-    attModal.open &&
-    createPortal(
-      <div
-        className={[
-          "fixed inset-0 z-[3001] flex items-center justify-center p-4",
-          "bg-black/20 backdrop-blur-sm",
-          attVisible ? "opacity-100" : "opacity-0",
-        ].join(" ")}
-        style={{ transition: "opacity 180ms ease" }}
-        onClick={closeAllFiles}
-        role="dialog"
-        aria-modal="true"
-      >
-        <style>{`
-          @keyframes fwModalIn {
-            0%   { transform: translateY(10px) scale(.985); opacity: 0; }
-            100% { transform: translateY(0px) scale(1); opacity: 1; }
-          }
-          @keyframes fwModalOut {
-            0%   { transform: translateY(0px) scale(1); opacity: 1; }
-            100% { transform: translateY(10px) scale(.985); opacity: 0; }
-          }
-        `}</style>
-
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900"
-          style={{
-            animation: attVisible ? "fwModalIn 200ms ease-out" : "fwModalOut 180ms ease-in",
-          }}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-xl font-extrabold text-gray-900 dark:text-gray-100">
-                ไฟล์แนบทั้งหมด
-              </div>
-              <div className="mt-1 text-sm font-semibold text-gray-500 dark:text-gray-400">
-                {attModal.requestNo}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
-            <div className="divide-y divide-gray-200 dark:divide-gray-800">
-              {attModal.attachments.map((a, idx) => (
-                <div
-                  key={`${a.storagePath}-${idx}`}
-                  className="flex items-center justify-between gap-3 px-4 py-3"
-                >
-                  <div className="min-w-0 flex-1 pr-2">
-                    <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100 break-words">
-                      {normalizeAttName(a.name)}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => openAttachment(a.storagePath || "")}
-                    className="h-10 shrink-0 rounded-xl bg-brand-600 px-6 text-sm font-extrabold text-white hover:bg-brand-700"
-                  >
-                    เปิด
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-6 flex justify-end">
-            <button
-              type="button"
-              onClick={closeAllFiles}
-              className="h-10 rounded-xl border border-gray-200 bg-white px-5 text-sm font-bold text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-            >
-              ปิดหน้าต่าง
-            </button>
-          </div>
-        </div>
-      </div>,
-      document.body
-    );
-
-  const confirmNode =
-    confirmOpen &&
-    createPortal(
-      <div
-        className={[
-          "fixed inset-0 z-[3000] flex items-center justify-center p-4",
-          "bg-black/20 backdrop-blur-sm",
-          confirmVisible ? "opacity-100" : "opacity-0",
-        ].join(" ")}
-        style={{ transition: "opacity 170ms ease" }}
-        onClick={closeConfirm}
-        role="dialog"
-        aria-modal="true"
-      >
-        <style>{`
-          @keyframes fwConfirmIn {
-            0%   { transform: translateY(10px) scale(.985); opacity: 0; }
-            100% { transform: translateY(0px) scale(1); opacity: 1; }
-          }
-          @keyframes fwConfirmOut {
-            0%   { transform: translateY(0px) scale(1); opacity: 1; }
-            100% { transform: translateY(10px) scale(.985); opacity: 0; }
-          }
-        `}</style>
-
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900"
-          style={{
-            animation: confirmVisible ? "fwConfirmIn 200ms ease-out" : "fwConfirmOut 170ms ease-in",
-          }}
-        >
-          <div className="text-xl font-extrabold text-gray-900 dark:text-gray-100">ยืนยันการลบ</div>
-          <div className="mt-2 text-sm font-semibold text-gray-600 dark:text-gray-300">
-            ต้องการลบรายการนี้ใช่ไหม? การลบจะไม่สามารถกู้คืนได้
-          </div>
-
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={closeConfirm}
-              className="h-10 rounded-xl border border-gray-200 bg-white px-5 text-sm font-bold text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-            >
-              ยกเลิก
-            </button>
-            <button
-              type="button"
-              onClick={doDelete}
-              className="h-10 rounded-xl bg-red-600 px-5 text-sm font-extrabold text-white hover:bg-red-700"
-            >
-              ลบรายการ
-            </button>
-          </div>
-        </div>
-      </div>,
-      document.body
-    );
-
   return (
     <>
       <PageMeta title="Field Work History | Smart HR" description="Field work history page" />
       <PageBreadcrumb pageTitle="ประวัติแจ้งปฏิบัติงานนอกสถานที่" />
 
       <style>{`
-        input[type="date"]::-webkit-calendar-picker-indicator {
-          opacity: 1;
-          display: block;
-          cursor: pointer;
-        }
-        input[type="date"]::-webkit-inner-spin-button,
-        input[type="date"]::-webkit-clear-button {
-          display: none;
-        }
-        .dark input[type="date"]::-webkit-calendar-picker-indicator {
-          filter: invert(1);
-        }
+        input[type="date"]::-webkit-calendar-picker-indicator { opacity: 1; display: block; cursor: pointer; }
+        input[type="date"]::-webkit-inner-spin-button, input[type="date"]::-webkit-clear-button { display: none; }
+        .dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
       `}</style>
 
-      {attachmentsModalNode}
-      {confirmNode}
+      {/* ✅ Modal กลาง: ไฟล์แนบทั้งหมด */}
+      <Modal isOpen={attModal.open} onClose={closeAllFiles} title="ไฟล์แนบทั้งหมด" closeOnBackdrop zIndexClassName="z-[2147483646]">
+        <div className="text-sm font-semibold text-gray-500 dark:text-gray-400">{attModal.requestNo}</div>
+
+        <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
+          <div className="divide-y divide-gray-200 dark:divide-gray-800">
+            {attModal.attachments.length === 0 ? (
+              <div className="px-4 py-4 text-sm font-semibold text-gray-500 dark:text-gray-400">ไม่มีไฟล์แนบ</div>
+            ) : (
+              attModal.attachments.map((a, idx) => (
+                <div key={`${a.storagePath}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0 flex-1 pr-2">
+                    <div className="break-words text-sm font-extrabold text-gray-900 dark:text-gray-100">{normalizeAttName(a.name)}</div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => openAttachment(a.storagePath || "")}
+                    className="h-10 shrink-0 rounded-2xl bg-gradient-to-r from-fuchsia-600 to-purple-600 px-6 text-sm font-extrabold text-white hover:from-fuchsia-700 hover:to-purple-700"
+                  >
+                    เปิด
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            onClick={closeAllFiles}
+            className="h-10 rounded-2xl border border-white/50 bg-white/70 px-5 text-sm font-extrabold text-gray-800 transition hover:bg-white dark:border-white/10 dark:bg-gray-950/40 dark:text-gray-100 dark:hover:bg-gray-900/60"
+          >
+            ปิดหน้าต่าง
+          </button>
+        </div>
+      </Modal>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6 transition">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">
-              ประวัติแจ้งปฏิบัติงานนอกสถานที่
-            </h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              ดูย้อนหลัง + เปิดไฟล์แนบ {canDelete ? "+ (สิทธิ) ลบรายการ" : ""}
-            </p>
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">ประวัติแจ้งปฏิบัติงานนอกสถานที่</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูย้อนหลัง + เปิดไฟล์แนบ {canDelete ? "+ (สิทธิ) ลบรายการ" : ""}</p>
           </div>
 
           {canSeeAll && (
@@ -619,13 +468,9 @@ export default function FieldWorkHistoryPage() {
                 filtered.map((r) => {
                   const submittedMs = tsToMs(r.submittedAt);
                   const submittedText = submittedMs
-                    ? new Intl.DateTimeFormat("th-TH", {
-                        year: "numeric",
-                        month: "2-digit",
-                        day: "2-digit",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      }).format(new Date(submittedMs))
+                    ? new Intl.DateTimeFormat("th-TH", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(
+                        new Date(submittedMs)
+                      )
                     : "-";
 
                   const pByUid = userMap[r.uid] || { fullName: "", phone: "" };
@@ -635,33 +480,20 @@ export default function FieldWorkHistoryPage() {
                   const s = (r as any)?.submitter || null;
                   const snapName =
                     String(s?.fullName || "").trim() ||
-                    [String(s?.fname || "").trim(), String(s?.lname || "").trim()]
-                      .filter(Boolean)
-                      .join(" ")
-                      .trim();
-                  const snapPhone =
-                    String(s?.phone || "").trim() ||
-                    String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
+                    [String(s?.fname || "").trim(), String(s?.lname || "").trim()].filter(Boolean).join(" ").trim();
+                  const snapPhone = String(s?.phone || "").trim() || String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
 
-                  const fullName =
-                    snapName || pByUid.fullName || pByEmail.fullName || (r as any)?.email || r.uid || "-";
+                  const fullName = snapName || pByUid.fullName || pByEmail.fullName || (r as any)?.email || r.uid || "-";
                   const phone = snapPhone || pByUid.phone || pByEmail.phone || "";
                   const atts = Array.isArray((r as any).attachments) ? (r as any).attachments : [];
 
                   return (
                     <tr key={r.id}>
-                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">
-                        {submittedText}
-                      </td>
-
-                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">
-                        {r.requestNo}
-                      </td>
+                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">{submittedText}</td>
+                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">{r.requestNo}</td>
 
                       <td className="px-4 py-3 text-gray-700 dark:text-gray-200 align-top">
-                        <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">
-                          {fullName}
-                        </div>
+                        <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">{fullName}</div>
                         <div className="text-xs text-gray-500 dark:text-gray-400">{phone || "-"}</div>
                       </td>
 
@@ -677,12 +509,7 @@ export default function FieldWorkHistoryPage() {
                         {r.note ? (
                           <div
                             className="whitespace-normal break-words leading-5 text-sm"
-                            style={{
-                              display: "-webkit-box",
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: "vertical" as any,
-                              overflow: "hidden",
-                            }}
+                            style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}
                           >
                             {r.note}
                           </div>
@@ -709,11 +536,7 @@ export default function FieldWorkHistoryPage() {
                             ))}
 
                             {atts.length > 2 && (
-                              <button
-                                type="button"
-                                onClick={() => openAllFiles(r.requestNo, atts)}
-                                className="text-left text-[11px] font-extrabold text-brand-600 hover:text-brand-700"
-                              >
+                              <button type="button" onClick={() => openAllFiles(r.requestNo, atts)} className="text-left text-[11px] font-extrabold text-brand-600 hover:text-brand-700">
                                 ดูทั้งหมด ({atts.length} ไฟล์)
                               </button>
                             )}
@@ -723,11 +546,7 @@ export default function FieldWorkHistoryPage() {
 
                       {canDelete && (
                         <td className="px-4 py-3 text-left align-top">
-                          <button
-                            type="button"
-                            onClick={() => askDelete(r.id)}
-                            className="text-sm font-extrabold text-red-600 hover:text-red-700"
-                          >
+                          <button type="button" onClick={() => handleDelete(r.id, r.requestNo, fullName)} className="text-sm font-extrabold text-red-600 hover:text-red-700">
                             ลบ
                           </button>
                         </td>
