@@ -9,10 +9,13 @@ type UserDoc = {
   role?: string;
   active?: string | boolean;
   departmentId?: string;
-  fname?: string;   // ✅ เผื่อบางโปรเจกต์เก็บไว้ใน users
+
+  // เผื่อบางที่เก็บไว้ใน users
+  fname?: string;
   lname?: string;
   position?: string;
   phone?: string;
+  avatarUrl?: string;
 };
 
 type EmployeeDoc = {
@@ -22,6 +25,7 @@ type EmployeeDoc = {
   departmentId?: string;
   phone?: string;
   active?: string | boolean;
+  avatarUrl?: string;
 };
 
 function toBool(v: any) {
@@ -49,10 +53,20 @@ export function useMyProfile() {
     departmentId: string;
     phone: string;
     active: boolean;
+    avatarUrl?: string | null;
   } | null>(null);
 
   const [fetching, setFetching] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // ✅ trigger เพื่อ refetch หลังอัปเดต
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    const onUpdated = () => setReloadKey((x) => x + 1);
+    window.addEventListener("profile-updated", onUpdated);
+    return () => window.removeEventListener("profile-updated", onUpdated);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -72,7 +86,7 @@ export function useMyProfile() {
       setErrorMsg(null);
 
       try {
-        // 1) users/{uid} (ควรอ่านได้แน่)
+        // 1) users/{uid}
         const uSnap = await getDoc(doc(db, "users", user.uid));
         const u = (uSnap.exists() ? (uSnap.data() as UserDoc) : {}) as UserDoc;
 
@@ -80,7 +94,7 @@ export function useMyProfile() {
         const email = u.email || user.email || "";
         const role = String(u.role || "USER").toUpperCase();
 
-        // 2) employees/{employeeNo} (อาจโดน rules บล็อก)
+        // 2) employees/{employeeNo}
         let emp: EmployeeDoc = {};
         let empDenied = false;
 
@@ -89,11 +103,8 @@ export function useMyProfile() {
             const eSnap = await getDoc(doc(db, "employees", employeeNo));
             emp = eSnap.exists() ? (eSnap.data() as EmployeeDoc) : {};
           } catch (e: any) {
-            if (isPermissionError(e)) {
-              empDenied = true; // ✅ ไม่พัง แค่รู้ว่าอ่านไม่ได้
-            } else {
-              throw e; // error อื่นให้ขึ้นจริง
-            }
+            if (isPermissionError(e)) empDenied = true;
+            else throw e;
           }
         }
 
@@ -102,20 +113,22 @@ export function useMyProfile() {
           employeeNo: employeeNo || "-",
           role,
 
-          // ✅ ใช้ employees ก่อน ถ้าไม่มีค่อย fallback ไป users
+          // ✅ employees ก่อน แล้วค่อย fallback users
           fname: emp.fname || u.fname || "-",
           lname: emp.lname || u.lname || "",
           position: emp.position || u.position || "-",
           departmentId: emp.departmentId || u.departmentId || "-",
           phone: emp.phone || u.phone || "-",
           active: toBool(emp.active ?? u.active),
+
+          // ✅ avatarUrl เก็บเป็น storagePath (เช่น profile/{uid}/...)
+          avatarUrl: (emp.avatarUrl ?? u.avatarUrl) || null,
         };
 
         if (!alive) return;
 
         setProfile(merged);
 
-        // ✅ แจ้งเตือนแบบนิ่ม ๆ เฉพาะกรณี employees อ่านไม่ได้
         if (empDenied) {
           setErrorMsg("อ่านข้อมูลพนักงาน (employees) ไม่ได้ — แต่แสดงโปรไฟล์พื้นฐานจาก users ให้แล้ว");
         }
@@ -139,7 +152,7 @@ export function useMyProfile() {
     return () => {
       alive = false;
     };
-  }, [user?.uid, user?.email, loading]);
+  }, [user?.uid, user?.email, loading, reloadKey]);
 
   return { profile, fetching, errorMsg };
 }

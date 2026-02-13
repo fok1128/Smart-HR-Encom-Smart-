@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
+// src/components/UserProfile/UserMetaCard.tsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 
 import { db } from "../../firebase";
 import { useModal } from "../../hooks/useModal";
-import { Modal } from "../ui/modal";
+import ModalShell from "../common/ModalShell";
 import Button from "../ui/button/Button";
 import Input from "../form/input/InputField";
 import Label from "../form/Label";
-import { useToastCenter } from "../common/ToastCenter";
+
+import { getSignedUrl, uploadFile } from "../../services/files";
+import { useDialogCenter } from "../common/DialogCenter";
 
 type Profile = {
   email: string;
@@ -19,82 +22,179 @@ type Profile = {
   departmentId: string;
   phone: string;
   active: boolean;
+  avatarUrl?: string | null;
 };
+
+function isPermissionError(err: any) {
+  return (
+    err?.code === "permission-denied" ||
+    String(err?.message || "").includes("Missing or insufficient permissions")
+  );
+}
 
 export default function UserMetaCard({ profile }: { profile: Profile }) {
   const { isOpen, openModal, closeModal } = useModal();
-  const { showToast } = useToastCenter();
+  const dialog = useDialogCenter();
 
-  const [fname, setFname] = useState(profile.fname);
-  const [lname, setLname] = useState(profile.lname);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
   const [phone, setPhone] = useState(profile.phone);
-  const [position, setPosition] = useState(profile.position);
-
   const [saving, setSaving] = useState(false);
 
+  const [avatarPath, setAvatarPath] = useState<string | null>(profile.avatarUrl || null);
+  const [avatarSignedUrl, setAvatarSignedUrl] = useState<string | null>(null);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+
+  const [pickedFile, setPickedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
   useEffect(() => {
-    setFname(profile.fname);
-    setLname(profile.lname);
     setPhone(profile.phone);
-    setPosition(profile.position);
-  }, [profile.fname, profile.lname, profile.phone, profile.position]);
+    setAvatarPath(profile.avatarUrl || null);
+  }, [profile.phone, profile.avatarUrl]);
+
+  useEffect(() => {
+    if (!pickedFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(pickedFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pickedFile]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      if (!avatarPath) {
+        setAvatarSignedUrl(null);
+        return;
+      }
+
+      setAvatarLoading(true);
+      try {
+        const url = await getSignedUrl(avatarPath);
+        if (!alive) return;
+        setAvatarSignedUrl(url);
+      } catch {
+        if (!alive) return;
+        setAvatarSignedUrl(null);
+      } finally {
+        if (alive) setAvatarLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [avatarPath]);
+
+  const initials = useMemo(() => {
+    const a = `${profile?.fname?.[0] || "U"}${profile?.lname?.[0] || ""}`;
+    return a.toUpperCase();
+  }, [profile.fname, profile.lname]);
+
+  const showAvatarUrl = previewUrl || avatarSignedUrl;
 
   const handleOpen = () => {
-    setFname(profile.fname);
-    setLname(profile.lname);
     setPhone(profile.phone);
-    setPosition(profile.position);
+    setAvatarPath(profile.avatarUrl || null);
+    setPickedFile(null);
+    setPreviewUrl(null);
     openModal();
   };
 
-  const handleSave = async (e?: React.MouseEvent) => {
-    e?.preventDefault();
+  const handleRemoveAvatar = () => {
+    setPickedFile(null);
+    setPreviewUrl(null);
+    setAvatarPath(null);
+    setAvatarSignedUrl(null);
+  };
+
+  const handlePickFile = () => fileRef.current?.click();
+
+  const handleFileChange = (f: File | null) => {
+    if (!f) {
+      setPickedFile(null);
+      return;
+    }
+    if (!String(f.type || "").startsWith("image/")) {
+      dialog.alert("รองรับเฉพาะไฟล์รูปภาพ (image/*) เท่านั้น", { title: "Error", variant: "danger" });
+      return;
+    }
+    if (f.size > 15 * 1024 * 1024) {
+      dialog.alert("ไฟล์ใหญ่เกิน 15MB", { title: "Error", variant: "danger" });
+      return;
+    }
+    setPickedFile(f);
+  };
+
+  const handleSave = async () => {
     if (!profile.employeeNo || profile.employeeNo === "-") {
-      showToast("ไม่พบ employeeNo ในระบบ", { title: "Error", variant: "danger" });
+      dialog.alert("ไม่พบ employeeNo ในระบบ", { title: "Error", variant: "danger" });
       return;
     }
 
     setSaving(true);
     try {
+      let nextAvatarPath: string | null = avatarPath;
+
+      if (pickedFile) {
+        const up = await uploadFile(pickedFile, "profile");
+        nextAvatarPath = up.storagePath;
+      }
+
       await updateDoc(doc(db, "employees", profile.employeeNo), {
-        fname: String(fname || "").trim(),
-        lname: String(lname || "").trim(),
         phone: String(phone || "").trim(),
-        position: String(position || "").trim(),
+        avatarUrl: nextAvatarPath || null,
         updatedAt: serverTimestamp(),
       });
 
-      showToast("บันทึกโปรไฟล์แล้ว", { title: "Success", variant: "success" });
       window.dispatchEvent(new Event("profile-updated"));
       closeModal();
-    } catch (err) {
+
+      dialog.alert("บันทึกโปรไฟล์แล้ว", { title: "Success", variant: "success" });
+    } catch (err: any) {
       console.error(err);
-      showToast("บันทึกไม่สำเร็จ", { title: "Error", variant: "danger" });
+      dialog.alert(
+        isPermissionError(err)
+          ? "สิทธิ์ไม่พอในการแก้ไขโปรไฟล์ (ตรวจสอบ Firestore Rules)"
+          : "บันทึกไม่สำเร็จ",
+        { title: "Error", variant: "danger" }
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  const initials = `${profile?.fname?.[0] || "U"}${profile?.lname?.[0] || ""}`.toUpperCase();
-
   return (
     <>
-      <div className="p-5 border border-gray-200 rounded-2xl dark:border-gray-800 lg:p-6">
+      {/* การ์ดด้านบน */}
+      <div className="p-5 border border-gray-200 rounded-2xl bg-white shadow-sm dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-col items-center w-full gap-6 xl:flex-row">
-            {/* ✅ Avatar เป็นตัวอักษร (ไม่ใช้รูปแล้ว) */}
             <div className="flex flex-col items-center gap-3">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full border border-gray-200 bg-gray-100 text-xl font-semibold text-gray-700 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-200">
-                {initials}
+              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-gray-200 bg-gray-100 text-xl font-semibold text-gray-700 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-200">
+                {showAvatarUrl ? (
+                  <img
+                    src={showAvatarUrl}
+                    alt="avatar"
+                    className="h-full w-full object-cover"
+                    onError={() => setAvatarSignedUrl(null)}
+                  />
+                ) : (
+                  initials
+                )}
               </div>
+              {avatarLoading && <div className="text-xs text-gray-500 dark:text-gray-400">กำลังโหลดรูป...</div>}
             </div>
 
-            {/* ✅ ชื่อ/ตำแหน่งจริง */}
             <div className="order-2 xl:order-2">
               <h4 className="mb-2 text-lg font-semibold text-center text-gray-800 dark:text-white/90 xl:text-left">
                 {profile.fname} {profile.lname}
               </h4>
-
               <div className="flex flex-col items-center gap-1 text-center xl:flex-row xl:gap-3 xl:text-left">
                 <p className="text-sm text-gray-500 dark:text-gray-400">{profile.position}</p>
                 <div className="hidden h-3.5 w-px bg-gray-300 dark:bg-gray-700 xl:block"></div>
@@ -105,90 +205,124 @@ export default function UserMetaCard({ profile }: { profile: Profile }) {
             </div>
           </div>
 
-          {/* ✅ เหลือแค่ปุ่ม Edit เดียว */}
           <button
             onClick={handleOpen}
             className="flex w-full items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] dark:hover:text-gray-200 lg:inline-flex lg:w-auto"
           >
-            <svg
-              className="fill-current"
-              width="18"
-              height="18"
-              viewBox="0 0 18 18"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                fillRule="evenodd"
-                clipRule="evenodd"
-                d="M15.0911 2.78206C14.2125 1.90338 12.7878 1.90338 11.9092 2.78206L4.57524 10.116C4.26682 10.4244 4.0547 10.8158 3.96468 11.2426L3.31231 14.3352C3.25997 14.5833 3.33653 14.841 3.51583 15.0203C3.69512 15.1996 3.95286 15.2761 4.20096 15.2238L7.29355 14.5714C7.72031 14.4814 8.11172 14.2693 8.42013 13.9609L15.7541 6.62695C16.6327 5.74827 16.6327 4.32365 15.7541 3.44497L15.0911 2.78206ZM12.9698 3.84272C13.2627 3.54982 13.7376 3.54982 14.0305 3.84272L14.6934 4.50563C14.9863 4.79852 14.9863 5.2734 14.6934 5.56629L14.044 6.21573L12.3204 4.49215L12.9698 3.84272ZM11.2597 5.55281L5.6359 11.1766C5.53309 11.2794 5.46238 11.4099 5.43238 11.5522L5.01758 13.5185L6.98394 13.1037C7.1262 13.0737 7.25666 13.003 7.35947 12.9002L12.9833 7.27639L11.2597 5.55281Z"
-                fill=""
-              />
-            </svg>
             Edit
           </button>
         </div>
       </div>
 
-      {/* ✅ modal แก้ข้อมูล */}
-      <Modal isOpen={isOpen} onClose={closeModal} className="max-w-[700px] m-4">
-        <div className="no-scrollbar relative w-full max-w-[700px] overflow-y-auto rounded-3xl bg-white p-4 dark:bg-gray-900 lg:p-11">
-          <div className="px-2 pr-14">
-            <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
-              Edit Personal Information
-            </h4>
-            <p className="mb-6 text-sm text-gray-500 dark:text-gray-400 lg:mb-7">
-              Update your details to keep your profile up-to-date.
-            </p>
-          </div>
+      {/* ✅ Modal: ให้ “พื้นขาว” และให้ glow ทำโดย ModalShell เท่านั้น */}
+      <ModalShell
+        open={isOpen}
+        onClose={closeModal}
+        widthClassName="max-w-[720px]"
+        title="Edit Profile"
+        description='แก้ไขได้เฉพาะ “รูปโปรไฟล์” และ “เบอร์โทร” เท่านั้น'
+        showTopBar={true}
+        closeOnEsc={!saving}
+        closeOnBackdrop={!saving}
+        canClose={() => !saving}
+        glow={true}
+        // ✅ ห้ามใส่ after/before glow แล้ว
+        panelClassName="bg-white"
+      >
+        <div className="bg-white">
+          {/* Avatar box */}
+          <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+            <Label>Profile Picture</Label>
 
-          <form className="flex flex-col">
-            <div className="custom-scrollbar h-[450px] overflow-y-auto px-2 pb-3">
-              <div className="mt-2">
-                <h5 className="mb-5 text-lg font-medium text-gray-800 dark:text-white/90 lg:mb-6">
-                  Personal Information
-                </h5>
+            <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-4">
+                <div className="h-14 w-14 overflow-hidden rounded-full border border-gray-200 bg-white">
+                  {showAvatarUrl ? (
+                    <img src={showAvatarUrl} alt="avatar" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gray-100 text-base font-semibold text-gray-700">
+                      {initials}
+                    </div>
+                  )}
+                </div>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>First Name</Label>
-                    <Input type="text" value={fname} onChange={(e: any) => setFname(e.target.value)} />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-800">
+                    {pickedFile ? `เลือกไฟล์: ${pickedFile.name}` : "ยังไม่ได้เลือกไฟล์"}
                   </div>
-
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>Last Name</Label>
-                    <Input type="text" value={lname} onChange={(e: any) => setLname(e.target.value)} />
-                  </div>
-
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>Email Address</Label>
-                    <Input type="text" value={profile.email} readOnly />
-                  </div>
-
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>Phone</Label>
-                    <Input type="text" value={phone} onChange={(e: any) => setPhone(e.target.value)} />
-                  </div>
-
-                  <div className="col-span-2">
-                    <Label>Position</Label>
-                    <Input type="text" value={position} onChange={(e: any) => setPosition(e.target.value)} />
+                  <div className="text-xs text-gray-500">
+                    รองรับเฉพาะไฟล์รูปภาพ (image/*) ขนาดไม่เกิน 15MB
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center gap-3 px-2 mt-6 lg:justify-end">
-              <Button size="sm" variant="outline" onClick={closeModal} type="button">
-                Close
-              </Button>
-              <Button size="sm" onClick={handleSave} type="button" disabled={saving}>
-                {saving ? "Saving..." : "Save Changes"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handlePickFile}
+                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg"
+                >
+                  <span className="text-base leading-none">＋</span>
+                  Addfile
+                </button>
+
+                <Button size="sm" variant="outline" type="button" onClick={handleRemoveAvatar}>
+                  Remove
+                </Button>
+
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                />
+              </div>
             </div>
-          </form>
+          </div>
+
+          {/* Phone */}
+          <div className="mb-6">
+            <Label>Phone</Label>
+            <Input type="text" value={phone} onChange={(e: any) => setPhone(e.target.value)} />
+          </div>
+
+          {/* Read-only */}
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
+            <div>
+              <Label>First Name (Read-only)</Label>
+              <Input type="text" value={profile.fname} readOnly />
+            </div>
+            <div>
+              <Label>Last Name (Read-only)</Label>
+              <Input type="text" value={profile.lname} readOnly />
+            </div>
+            <div className="lg:col-span-2">
+              <Label>Email (Read-only)</Label>
+              <Input type="text" value={profile.email} readOnly />
+            </div>
+            <div className="lg:col-span-2">
+              <Label>Position (Read-only)</Label>
+              <Input type="text" value={profile.position} readOnly />
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="mt-8 flex items-center justify-end gap-3">
+            <Button size="sm" variant="outline" onClick={closeModal} type="button" disabled={saving}>
+              Close
+            </Button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-2 text-sm font-medium text-white shadow-md hover:shadow-lg disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
         </div>
-      </Modal>
+      </ModalShell>
     </>
   );
 }

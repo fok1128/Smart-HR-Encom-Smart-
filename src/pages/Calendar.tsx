@@ -1,8 +1,12 @@
+// src/pages/Calendar.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";
 import { buildThaiHolidayMapAround } from "../services/utils/thHolidays";
-import { listenMyFieldWorkRequests, type FieldWorkRequestDoc } from "../services/fieldWorkRequests";
+import {
+  listenMyFieldWorkRequests,
+  type FieldWorkRequestDoc,
+} from "../services/fieldWorkRequests";
 
 // ===== Types =====
 type LeaveCategory =
@@ -55,22 +59,87 @@ type BarSeg = {
   date: string; // YYYY-MM-DD
   isStart: boolean;
   isEnd: boolean;
+
+  // ✅ NEW: สำหรับ timed event วันเดียว ให้รู้ว่าเป็น timed
+  isTimedSingleDay?: boolean;
 };
 
 const dayLabelsMonFirst = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
-const datePart = (s: string) => s.split("T")[0];
+const datePart = (s: string) => String(s || "").split("T")[0];
 
-const toISODate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const toISODate = (d: Date) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
 const sameDay = (a: Date, b: Date) =>
-  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
 
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 const addMonths = (d: Date, m: number) => new Date(d.getFullYear(), d.getMonth() + m, 1);
 
+/**
+ * ✅ Normalize datetime string ให้ parseLocalDateTime ทำงานชัวร์
+ * - รับ "YYYY-MM-DD" => คืนแบบเดิม
+ * - รับ "YYYY-MM-DDTHH:mm" => คืนแบบเดิม
+ * - อื่น ๆ => แปลงเป็น Date แล้วคืนเป็น YYYY-MM-DD หรือ YYYY-MM-DDTHH:mm
+ */
+function ensureISODateTime(v: any): string {
+  if (!v) return toISODate(new Date());
+
+  // string
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return toISODate(new Date());
+
+    // already ok
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return s.slice(0, 16);
+
+    // try parse
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const ymd = toISODate(d);
+      const hh = pad2(d.getHours());
+      const mm = pad2(d.getMinutes());
+      return `${ymd}T${hh}:${mm}`;
+    }
+    return toISODate(new Date());
+  }
+
+  // Firestore timestamp
+  if (typeof v?.toDate === "function") {
+    const d = v.toDate();
+    const ymd = toISODate(d);
+    const hh = pad2(d.getHours());
+    const mm = pad2(d.getMinutes());
+    return `${ymd}T${hh}:${mm}`;
+  }
+
+  // Date object
+  if (v instanceof Date) {
+    const ymd = toISODate(v);
+    const hh = pad2(v.getHours());
+    const mm = pad2(v.getMinutes());
+    return `${ymd}T${hh}:${mm}`;
+  }
+
+  // number / other
+  const d = new Date(v);
+  if (!isNaN(d.getTime())) {
+    const ymd = toISODate(d);
+    const hh = pad2(d.getHours());
+    const mm = pad2(d.getMinutes());
+    return `${ymd}T${hh}:${mm}`;
+  }
+
+  return toISODate(new Date());
+}
+
 function parseLocalDateTime(input: string): Date {
-  const [dPart, tPartRaw] = input.split("T");
+  const safe = String(input || "");
+  const [dPart, tPartRaw] = safe.split("T");
   const [y, m, d] = dPart.split("-").map(Number);
   let hh = 0,
     mm = 0;
@@ -380,14 +449,14 @@ export default function Calendar() {
 
       const startAt =
         typeof r.startAt === "string"
-          ? r.startAt
+          ? ensureISODateTime(r.startAt)
           : r.startTime
           ? toTimedISO(startDateISO, r.startTime)
           : startDateISO;
 
       const endAt =
         typeof r.endAt === "string"
-          ? r.endAt
+          ? ensureISODateTime(r.endAt)
           : r.endTime
           ? toTimedISO(endDateISO, r.endTime)
           : endDateISO;
@@ -415,8 +484,8 @@ export default function Calendar() {
         category: "ปฏิบัติงานนอกสถานที่",
         subType: "FIELD_WORK",
         status: "อนุมัติ", // auto approve
-        startAt: r.startAt,
-        endAt: r.endAt,
+        startAt: ensureISODateTime(r.startAt),
+        endAt: ensureISODateTime(r.endAt),
         note: `${r.place}${r.note ? ` • ${r.note}` : ""}`,
       };
     });
@@ -458,6 +527,7 @@ export default function Calendar() {
 
   const barMap = useMemo(() => {
     const m = new Map<string, BarSeg[]>();
+
     for (const ev of leaveEvents) {
       const sISO = datePart(ev.startAt);
       const eISO = datePart(ev.endAt);
@@ -466,6 +536,7 @@ export default function Calendar() {
       const hasTimeEnd = ev.endAt.includes("T");
       const allDay = !(hasTimeStart && hasTimeEnd);
 
+      // 1) allDay วันเดียว
       if (allDay && sISO === eISO) {
         const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
         if (!m.has(sISO)) m.set(sISO, []);
@@ -473,6 +544,15 @@ export default function Calendar() {
         continue;
       }
 
+      // 2) ✅ timed วันเดียว (เช่น field work) -> ทำ mini bar ให้ด้วย
+      if (!allDay && sISO === eISO) {
+        const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true, isTimedSingleDay: true };
+        if (!m.has(sISO)) m.set(sISO, []);
+        m.get(sISO)!.push(seg);
+        continue;
+      }
+
+      // 3) หลายวัน -> ทำ bar ต่อเนื่อง
       if (sISO === eISO) continue;
 
       const days = eachDayISOInRange(sISO, eISO);
@@ -643,13 +723,15 @@ export default function Calendar() {
           </div>
 
           <div className="mt-2 grid grid-cols-7 gap-2">
-            {cells.map((d) => {
+            {cells.map((d, idx) => {
               const inMonth = d.getMonth() === currentMonth.getMonth();
               const isToday = sameDay(d, today);
               const isSelected = sameDay(d, selectedDate);
               const iso = toISODate(d);
 
-              const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+              // ✅ บริษัททำงาน จ-ส => weekend = อาทิตย์เท่านั้น
+              const isSunday = d.getDay() === 0;
+
               const holidays = holidayMap.get(iso) ?? [];
               const isHoliday = holidays.length > 0;
 
@@ -657,7 +739,8 @@ export default function Calendar() {
               const occs = occMap.get(iso) ?? [];
               const timedOccs = occs.filter((o) => !o.allDay);
 
-              const dowIndex = (d.getDay() - 1 + 7) % 7;
+              // ✅ ใช้ "ตำแหน่งใน grid" หา column index ให้ถูกกับ weekStartsOn=1
+              const colIndex = idx % 7; // 0=จันทร์ ... 5=เสาร์ ... 6=อาทิตย์
 
               const maxBars = 2;
               const showBars = barSegs.slice(0, maxBars);
@@ -685,13 +768,16 @@ export default function Calendar() {
                     {showBars.map((seg, i) => {
                       const ev = seg.event;
                       const style = catStyle[ev.category];
-                      const leftRound = seg.isStart || dowIndex === 0;
-                      const rightRound = seg.isEnd || dowIndex === 6;
+
+                      // ✅ rounded ขอบซ้าย/ขวา ถูกต้องกับ Monday-first
+                      const leftRound = seg.isStart || colIndex === 0;
+                      const rightRound = seg.isEnd || colIndex === 6;
 
                       const base = "absolute left-[-4px] right-[-4px]";
                       const roundCls = `${leftRound ? "rounded-l-lg" : ""} ${rightRound ? "rounded-r-lg" : ""}`;
 
-                      const barH = 14;
+                      // ✅ timed single day ทำให้เป็น bar ที่ “บางลงนิดนึง” (อ่านง่าย)
+                      const barH = seg.isTimedSingleDay ? 12 : 14;
                       const barGap = 4;
                       const baseBottom = 6;
                       const bottom = baseBottom + i * (barH + barGap);
@@ -699,11 +785,14 @@ export default function Calendar() {
                       return (
                         <div
                           key={`${ev.id}-${i}`}
-                          className={`${base} ${roundCls} ${style.barBg} ${style.border} border h-[14px]`}
-                          style={{ bottom }}
+                          className={`${base} ${roundCls} ${style.barBg} ${style.border} border`}
+                          style={{ bottom, height: barH }}
                         >
-                          {(seg.isStart || dowIndex === 0) && (
-                            <div className={`px-2 text-[10px] font-semibold leading-[14px] ${style.barText} truncate`}>
+                          {(seg.isStart || colIndex === 0) && (
+                            <div
+                              className={`px-2 text-[10px] font-semibold leading-[${barH}px] ${style.barText} truncate`}
+                              style={{ lineHeight: `${barH}px` }}
+                            >
                               {leaveLabel(ev)}
                             </div>
                           )}
@@ -718,7 +807,8 @@ export default function Calendar() {
                       isToday ? "text-brand-500" : "text-gray-900 dark:text-gray-100",
                       !inMonth ? "text-gray-600 dark:text-gray-400" : "",
                       isHoliday ? "text-red-600 dark:text-red-300" : "",
-                      !isHoliday && inMonth && isWeekend ? "text-red-600/80 dark:text-red-300/80" : "",
+                      // ✅ แดงเฉพาะ "อาทิตย์" (เสาร์เป็นวันทำงาน)
+                      !isHoliday && inMonth && isSunday ? "text-red-600/80 dark:text-red-300/80" : "",
                     ].join(" ")}
                   >
                     {d.getDate()}
@@ -733,22 +823,36 @@ export default function Calendar() {
 
                   {(timedOccs.length > 0 || barSegs.length > 0) && (
                     <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
-                      {Array.from(new Set([...barSegs.map((b) => b.event.category), ...timedOccs.map((o) => o.event.category)]))
+                      {Array.from(
+                        new Set([
+                          ...barSegs.map((b) => b.event.category),
+                          ...timedOccs.map((o) => o.event.category),
+                        ])
+                      )
                         .slice(0, 3)
                         .map((cat) => (
-                          <span key={cat} className={`inline-flex h-2 w-2 rounded-full ${catStyle[cat].dot}`} title={cat} />
+                          <span
+                            key={cat}
+                            className={`inline-flex h-2 w-2 rounded-full ${catStyle[cat].dot}`}
+                            title={cat}
+                          />
                         ))}
                       {moreBars > 0 && (
-                        <span className="ml-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">+{moreBars}</span>
+                        <span className="ml-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
+                          +{moreBars}
+                        </span>
                       )}
                     </div>
                   )}
 
-                  {!isHoliday && timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
-                    <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
-                      {formatTimeFromMinutes(timedOccs[0].startMin)}–{formatTimeFromMinutes(timedOccs[0].endMin)}
-                    </div>
-                  )}
+                  {!isHoliday &&
+                    timedOccs[0]?.startMin != null &&
+                    timedOccs[0]?.endMin != null && (
+                      <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
+                        {formatTimeFromMinutes(timedOccs[0].startMin)}–
+                        {formatTimeFromMinutes(timedOccs[0].endMin)}
+                      </div>
+                    )}
                 </button>
               );
             })}
@@ -774,7 +878,12 @@ export default function Calendar() {
             <div>
               <div className="text-base font-semibold text-gray-900 dark:text-gray-100">รายละเอียดวันที่เลือก</div>
               <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {new Intl.DateTimeFormat("th-TH", { weekday: "long", year: "numeric", month: "long", day: "numeric" }).format(selectedDate)}
+                {new Intl.DateTimeFormat("th-TH", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                }).format(selectedDate)}
               </div>
             </div>
 
