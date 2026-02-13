@@ -71,21 +71,11 @@ export type MeResponse = MeResponseRaw & {
 type AuthContextType = {
   user: MeResponse | null;
   loading: boolean;
-  login: (email: string, password: boolean | string, remember: boolean) => Promise<MeResponse>;
-  logout: () => Promise<void>;
-};
-
-// NOTE: type ของ login ในของเดิมคุณคือ (email: string, password: string, remember: boolean)
-// แต่ใน snippet ด้านบน accidental typing ผิดได้ง่าย
-// ✅ เราจะประกาศใหม่ให้ถูกต้องด้านล่างแทน
-type AuthContextTypeFixed = {
-  user: MeResponse | null;
-  loading: boolean;
   login: (email: string, password: string, remember: boolean) => Promise<MeResponse>;
   logout: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextTypeFixed | undefined>(undefined);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
@@ -189,13 +179,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("profile-updated", onUpdated);
   }, []);
 
-  const login: AuthContextTypeFixed["login"] = async (email, password, remember) => {
+  const login: AuthContextType["login"] = async (email, password, remember) => {
     setLoading(true);
     try {
-      await setPersistence(
-        auth,
-        remember ? browserLocalPersistence : browserSessionPersistence
-      );
+      await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
 
       try {
         await signOut(auth);
@@ -217,7 +204,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const logout: AuthContextTypeFixed["logout"] = async () => {
+  const logout: AuthContextType["logout"] = async () => {
     setLoading(true);
     try {
       await signOut(auth);
@@ -227,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading]);
+  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading, login, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
