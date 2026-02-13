@@ -25,10 +25,11 @@ import MyLeaveRequestsPage from "./pages/MyLeaveRequestsPage";
 // ✅ Field Work
 import FieldWorkSubmitPage from "./pages/FieldWorkSubmitPage";
 import FieldWorkHistoryPage from "./pages/FieldWorkHistoryPage"; // <<< ต้องมีไฟล์นี้จริง
-
+import { DialogCenterProvider } from "./components/common/DialogCenter";
 export default function App() {
   return (
     <ToastCenterProvider>
+      <DialogCenterProvider>
       <ScrollToTop />
       <TitleLock />
 
@@ -65,6 +66,7 @@ export default function App() {
 
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </DialogCenterProvider>
     </ToastCenterProvider>
   );
 }

@@ -10,7 +10,10 @@ import { LeaveProvider } from "./context/LeaveContext";
 import { SidebarProvider } from "./context/SidebarContext";
 import { ThemeProvider } from "./context/ThemeContext";
 
-// ===== DEBUG: กันจอขาวแบบเงียบ =====
+// ✅ เพิ่ม
+import { DialogCenterProvider } from "./components/common/DialogCenter";
+// (ถ้าคุณใช้ ToastCenterProvider ด้วย ให้ import และครอบตรงนี้ด้วย)
+
 window.addEventListener("error", (e) => {
   console.error("[window.error]", (e as any).message, (e as any).error);
 });
@@ -20,7 +23,6 @@ window.addEventListener("unhandledrejection", (e: any) => {
 
 console.log("[main] booting...");
 
-// ✅ โหลด devtools แบบไม่ทำให้เว็บพัง
 if (import.meta.env.DEV) {
   import("./devtools")
     .then((m) => m.installDevTools())
@@ -36,7 +38,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <AuthProvider>
           <LeaveProvider>
             <SidebarProvider>
-              <App />
+              {/* ✅ ครอบ provider ตรงนี้ */}
+              <DialogCenterProvider>
+                <App />
+              </DialogCenterProvider>
             </SidebarProvider>
           </LeaveProvider>
         </AuthProvider>

@@ -5,7 +5,7 @@ import { createLeaveRequestWithFiles } from "../services/leaveRequests";
 import { useNavigate } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
-import { createPortal } from "react-dom";
+import { useDialogCenter } from "../components/common/DialogCenter";
 
 // ✅ เปลี่ยน path ให้ตรงกับ Router ของคุณ
 const MY_LEAVES_PATH = "/my-leaves";
@@ -333,102 +333,120 @@ function useLockScroll(locked: boolean) {
   }, [locked]);
 }
 
-type PopupState =
-  | null
-  | {
-      type: "success" | "error";
-      title: string;
-      subtitle?: string;
-      requestNo?: string;
-    };
+//type PopupState =
+//  | null
+//  | {
+//      type: "success" | "error";
+//      title: string;
+//      subtitle?: string;
+//      requestNo?: string;
+//    };
 
-/** ✅ Popup แบบ Portal (แก้ fixed หลุด viewport เพราะ parent มี transform) */
-function PopupModal({ state, onOk }: { state: PopupState; onOk: () => void }) {
-  const open = !!state;
-  useLockScroll(open);
+/** ✅ Popup แบบ Portal (กลางจอแบบการ์ดจริง ไม่เป็นแถบยาว) */
+// /** ✅ Popup แบบ Portal (กลางจอแบบการ์ดจริง ไม่เป็นแถบยาว) */
+// function PopupModal({ state, onOk }: { state: PopupState; onOk: () => void }) {
+//   const open = !!state;
+//   useLockScroll(open);
 
-  if (!state) return null;
+//   // ESC เพื่อปิด
+//   useEffect(() => {
+//     if (!open) return;
+//     const onKey = (e: KeyboardEvent) => {
+//       if (e.key === "Escape") onOk();
+//     };
+//     document.addEventListener("keydown", onKey);
+//     return () => document.removeEventListener("keydown", onKey);
+//   }, [open, onOk]);
 
-  const isSuccess = state.type === "success";
+//   if (!state) return null;
 
-  const node = (
-    <div
-      className={["fixed inset-0 z-[999999] flex items-center justify-center p-4", "bg-black/25 backdrop-blur-md"].join(" ")}
-      aria-modal="true"
-      role="dialog"
-      onWheel={(e) => e.preventDefault()}
-      onTouchMove={(e) => e.preventDefault()}
-      onMouseDown={(e) => {
-        e.preventDefault();
-      }}
-    >
-      <div className="w-[92vw] max-w-4xl">
-        <div
-          className={[
-            "flex items-center justify-between gap-4 rounded-2xl border px-5 py-4 shadow-xl",
-            isSuccess
-              ? "border-emerald-200 bg-emerald-50/95 dark:border-emerald-900/40 dark:bg-emerald-900/25"
-              : "border-red-200 bg-red-50/95 dark:border-red-900/40 dark:bg-red-900/25",
-          ].join(" ")}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <div
-              className={[
-                "grid h-11 w-11 shrink-0 place-items-center rounded-full",
-                isSuccess
-                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-100"
-                  : "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-100",
-              ].join(" ")}
-            >
-              {isSuccess ? <CheckIcon /> : <AlertIcon />}
-            </div>
+//   const isSuccess = state.type === "success";
 
-            <div className="min-w-0">
-              <div
-                className={[
-                  "text-base font-extrabold tracking-wide truncate",
-                  isSuccess ? "text-emerald-800 dark:text-emerald-100" : "text-red-800 dark:text-red-100",
-                ].join(" ")}
-              >
-                {state.title}
-              </div>
+//   const node = (
+//     <div
+//       className="fixed inset-0 z-[2147483647] flex items-center justify-center p-4 bg-black/35 backdrop-blur-md"
+//       aria-modal="true"
+//       role="dialog"
+//       onMouseDown={(e) => {
+//         if (e.target === e.currentTarget) onOk();
+//       }}
+//     >
+//       <div className="w-[92vw] max-w-md">
+//         <div
+//           className={[
+//             "relative rounded-2xl border bg-white px-6 py-6 shadow-2xl",
+//             "dark:bg-gray-900",
+//             isSuccess ? "border-emerald-200 dark:border-emerald-900/40" : "border-red-200 dark:border-red-900/40",
+//             "animate-[modalIn_180ms_ease-out]",
+//           ].join(" ")}
+//         >
+//           <button
+//             type="button"
+//             onClick={onOk}
+//             className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+//             aria-label="Close"
+//             title="ปิด"
+//           >
+//             <XIcon />
+//           </button>
 
-              {(state.requestNo || state.subtitle) && (
-                <div
-                  className={[
-                    "mt-0.5 text-sm font-semibold truncate",
-                    isSuccess ? "text-emerald-800/80 dark:text-emerald-100/80" : "text-red-800/80 dark:text-red-100/80",
-                  ].join(" ")}
-                >
-                  {state.requestNo ? (
-                    <>
-                      เลขคำร้อง: <span className="font-extrabold">{state.requestNo}</span>
-                    </>
-                  ) : (
-                    state.subtitle
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+//           <div
+//             className={[
+//               "mx-auto grid h-14 w-14 place-items-center rounded-full",
+//               isSuccess
+//                 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-100"
+//                 : "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-100",
+//             ].join(" ")}
+//           >
+//             {isSuccess ? <CheckIcon className="h-7 w-7" /> : <AlertIcon className="h-7 w-7" />}
+//           </div>
 
-          <button
-            type="button"
-            onClick={onOk}
-            className={[
-              "shrink-0 rounded-xl px-6 py-2.5 text-sm font-extrabold shadow-sm",
-              isSuccess ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-red-600 text-white hover:bg-red-700",
-            ].join(" ")}
-          >
-            ตกลง
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+//           <div className="mt-4 text-center">
+//             <div
+//               className={[
+//                 "text-lg font-extrabold",
+//                 isSuccess ? "text-emerald-800 dark:text-emerald-100" : "text-red-800 dark:text-red-100",
+//               ].join(" ")}
+//             >
+//               {state.title}
+//             </div>
 
-  return createPortal(node, document.body);
-}
+//             {state.requestNo ? (
+//               <div className="mt-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
+//                 เลขคำร้อง: <span className="font-extrabold">{state.requestNo}</span>
+//               </div>
+//             ) : state.subtitle ? (
+//               <div className="mt-2 text-sm font-semibold text-gray-700 dark:text-gray-200">{state.subtitle}</div>
+//             ) : null}
+//           </div>
+
+//           <button
+//             type="button"
+//             onClick={onOk}
+//             className={[
+//               "mt-6 w-full rounded-xl px-5 py-3 text-sm font-extrabold text-white",
+//               "transition-transform active:scale-[0.98]",
+//               isSuccess ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700",
+//             ].join(" ")}
+//           >
+//             ตกลง
+//           </button>
+
+//           <style>{`
+//             @keyframes modalIn {
+//               from { opacity: 0; transform: translateY(8px) scale(0.98); }
+//               to { opacity: 1; transform: translateY(0) scale(1); }
+//             }
+//           `}</style>
+//         </div>
+//       </div>
+//     </div>
+//   );
+
+//   return createPortal(node, document.body);
+// }
+
+
 
 /** ✅ การ์ดสรุปสิทธิ (ใช้ร่วมกันทุกประเภท) + progress bar แบบเดียวกัน */
 function YearEntitlementCard({
@@ -577,11 +595,10 @@ function EntitlementRow({
     </div>
   );
 }
-
 export default function LeaveSubmitPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-
+  const dialog = useDialogCenter();
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
 
@@ -600,10 +617,7 @@ export default function LeaveSubmitPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [uploadPct, setUploadPct] = useState<number>(0);
-
-  // ✅ Popup state (แทน alert บนหน้า)
-  const [popup, setPopup] = useState<PopupState>(null);
-
+  
   useEffect(() => {
     setSubType("");
     setErrors((prev) => {
@@ -922,21 +936,30 @@ export default function LeaveSubmitPage() {
   const summarySickUsed = summaryUsedMap[usedKey("ลาป่วย")] || 0;
   const summaryVacationUsed = summaryUsedMap[usedKey("ลาพักร้อน")] || 0;
 
-  const resetAll = () => {
-    setCategory("");
-    setSubType("");
-    setMode("allDay");
-    setStartDate(todayISODate());
-    setEndDate(todayISODate());
-    setStartDT(toISODateTimeLocal(new Date()));
-    setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
-    setReason("");
-    setRetroReason("");
-    setFiles([]);
-    setErrors({});
-    setSubmitting(false);
-    setUploadPct(0);
-  };
+  const resetAll = async () => {
+const handleResetClick = async () => {
+  const ok = await dialog.confirm("ต้องการล้างฟอร์มนี้ใช่ไหม?", {
+    title: "ยืนยันการล้างฟอร์ม",
+    variant: "danger",
+    confirmText: "ล้างฟอร์ม",
+    cancelText: "ยกเลิก",
+    size: "md",
+  });
+  if (ok) resetAll();
+};
+  setCategory("");
+  setSubType("");
+  setMode("allDay");
+  setStartDate(todayISODate());
+  setEndDate(todayISODate());
+  setStartDT(toISODateTimeLocal(new Date()));
+  setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+  setReason("");
+  setRetroReason("");
+  setFiles([]);
+  setErrors({});
+  setUploadPct(0);
+};
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -1037,97 +1060,86 @@ export default function LeaveSubmitPage() {
   };
 
   const handleSubmit = async (ev: FormEvent<HTMLFormElement>) => {
-    ev.preventDefault();
+  ev.preventDefault();
 
-    if (!user?.uid) {
-      setPopup({ type: "error", title: "ส่งคำร้องไม่สำเร็จ", subtitle: "ยังไม่เข้าสู่ระบบ" });
-      return;
-    }
+  if (!user?.uid) {
+    await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "sm" });
+    return;
+  }
 
-    const e = validate();
-    if (Object.keys(e).length > 0) {
-      const msg = Object.values(e).join(" • ");
-      setPopup({ type: "error", title: "ส่งคำร้องไม่สำเร็จ", subtitle: msg });
-      console.log("VALIDATE_ERRORS:", e);
-      return;
-    }
+  const e = validate();
+  if (Object.keys(e).length > 0) {
+    const msg = Object.values(e).join(" • ");
+    await dialog.alert(msg, { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "md" });
+    console.log("VALIDATE_ERRORS:", e);
+    return;
+  }
 
-    setSubmitting(true);
+  setSubmitting(true);
+  setUploadPct(0);
+
+  try {
+    const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
+    const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
+      (user as any)?.lname,
+      (user as any)?.lastName
+    )}`.trim();
+    const phone = pickStr((user as any)?.phone, (user as any)?.tel, (user as any)?.mobile);
+
+    const payload: any = {
+      uid: user.uid,
+      email: user.email ?? null,
+
+      createdByEmail: user.email ?? null,
+      employeeNo: employeeNo || null,
+      employeeName: employeeName || null,
+      phone: phone || null,
+
+      category: category as any,
+      subType: subType as any,
+      mode,
+      startAt: mode === "allDay" ? startDate : startDT,
+      endAt: mode === "allDay" ? endDate : endDT,
+      reason,
+
+      workdaysCount: workdaysCount || 0,
+
+      isRetroactive: !!isRetroactive,
+      retroReason: isRetroactive ? retroReason.trim() : null,
+
+      requireMedicalCert: !!needMedicalCert,
+      medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
+
+      medicalCertProvided: !!needMedicalCert ? files.length > 0 : false,
+      medicalCertSubmittedAt: !!needMedicalCert && files.length > 0 ? new Date().toISOString() : null,
+      medicalCertSource: !!needMedicalCert && files.length > 0 ? "UPLOADED_WITH_REQUEST" : null,
+    };
+
+    const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
+
+    await loadYearUsageAll();
+    await loadUsageAllByYear(toAdYear(summaryYearTH));
+
+    setErrors({});
+    setFiles([]);
     setUploadPct(0);
+    setRetroReason("");
 
-    try {
-      const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
-      const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
-        (user as any)?.lname,
-        (user as any)?.lastName
-      )}`.trim();
-      const phone = pickStr((user as any)?.phone, (user as any)?.tel, (user as any)?.mobile);
+    const requestNo = created.requestNo ?? created.id ?? "-";
 
-      const payload: any = {
-        uid: user.uid,
-        email: user.email ?? null,
+    // ✅ popup แบบเดียวทั้งเว็บ
+    await dialog.alert(`เลขคำร้อง: ${requestNo}`, { title: "ส่งคำร้องสำเร็จ", variant: "success", size: "md" });
 
-        createdByEmail: user.email ?? null,
-        employeeNo: employeeNo || null,
-        employeeName: employeeName || null,
-        phone: phone || null,
-
-        category: category as any,
-        subType: subType as any,
-        mode,
-        startAt: mode === "allDay" ? startDate : startDT,
-        endAt: mode === "allDay" ? endDate : endDT,
-        reason,
-
-        workdaysCount: workdaysCount || 0,
-
-        isRetroactive: !!isRetroactive,
-        retroReason: isRetroactive ? retroReason.trim() : null,
-
-        requireMedicalCert: !!needMedicalCert,
-        medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
-
-        medicalCertProvided: !!needMedicalCert ? files.length > 0 : false,
-        medicalCertSubmittedAt: !!needMedicalCert && files.length > 0 ? new Date().toISOString() : null,
-        medicalCertSource: !!needMedicalCert && files.length > 0 ? "UPLOADED_WITH_REQUEST" : null,
-      };
-
-      const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
-
-      // ✅ รีโหลด usage ปีปัจจุบัน (สำหรับ ConditionsBox)
-      await loadYearUsageAll();
-
-      // ✅ รีโหลด summary year ที่เลือกอยู่ (เผื่อยื่นในปีเดียวกัน)
-      await loadUsageAllByYear(toAdYear(summaryYearTH));
-
-      setErrors({});
-      setFiles([]);
-      setUploadPct(0);
-      setRetroReason("");
-
-      setPopup({
-        type: "success",
-        title: "ส่งคำร้องสำเร็จ",
-        requestNo: created.requestNo ?? created.id ?? "-",
-      });
-    } catch (err: any) {
-      console.error(err);
-      setPopup({ type: "error", title: "ส่งคำร้องไม่สำเร็จ", subtitle: err?.message || String(err) });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // ✅ popup: กดตกลง -> ถ้าสำเร็จ เด้งไปหน้าใบลาของฉัน
-  const handlePopupOk = () => {
-    if (popup?.type === "success") {
-      setPopup(null);
-      resetAll();
-      navigate(MY_LEAVES_PATH);
-      return;
-    }
-    setPopup(null);
-  };
+    // ✅ หลังปิด dialog ค่อยเด้งหน้า (เหมือน flow เดิม)
+    resetAll();
+    navigate(MY_LEAVES_PATH);
+  } catch (err: any) {
+    console.error(err);
+    await dialog.alert(err?.message || String(err), { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "lg" });
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   // =======================
   // ✅ ConditionsBox: ทำรูปแบบเดียวกันทุกประเภท + เงื่อนไขอยู่ด้านบน
@@ -1181,7 +1193,6 @@ export default function LeaveSubmitPage() {
         </div>
       );
     }
-
     // 2) ลาป่วย
     if (category === "ลาป่วย") {
       return (
@@ -1369,8 +1380,6 @@ export default function LeaveSubmitPage() {
 
   return (
     <div className="space-y-6">
-      <PopupModal state={popup} onOk={handlePopupOk} />
-
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ยื่นใบลา</h1>
@@ -1378,10 +1387,9 @@ export default function LeaveSubmitPage() {
             <span className="text-teal-600">หน้าหลัก</span> <span className="mx-2">›</span> ยื่นใบลา
           </div>
         </div>
-
         <button
           type="button"
-          onClick={resetAll}
+          onClick={() => resetAll()}
           disabled={submitting}
           className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
         >
@@ -1602,15 +1610,6 @@ export default function LeaveSubmitPage() {
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={resetAll}
-            disabled={submitting}
-            className="rounded-lg border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
-            ล้างฟอร์ม
-          </button>
-
           <button
             type="submit"
             disabled={submitting}

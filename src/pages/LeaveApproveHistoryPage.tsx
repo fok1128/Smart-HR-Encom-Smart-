@@ -1,4 +1,4 @@
-// LeaveApproveHistoryPage.tsx
+// src/pages/LeaveApproveHistoryPage.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
   collection,
@@ -12,7 +12,10 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { useToastCenter } from "../components/common/ToastCenter";
 import { exportApprovalHistoryPdf } from "../utils/pdf/exportApprovalHistoryPdf";
+import ModalShell from "../components/common/ModalShell";
+import { useDialogCenter } from "../components/common/DialogCenter";
 
 type LeaveRow = any;
 
@@ -32,9 +35,7 @@ function tsToMs(ts: any): number {
 }
 
 function fmtDate(ts: any) {
-  const d =
-    ts?.toDate?.() ? ts.toDate() : ts instanceof Date ? ts : ts ? new Date(ts) : null;
-
+  const d = ts?.toDate?.() ? ts.toDate() : ts instanceof Date ? ts : ts ? new Date(ts) : null;
   if (!d || isNaN(d.getTime())) return "-";
   return d.toLocaleString("th-TH", {
     year: "numeric",
@@ -56,10 +57,8 @@ function showStatus(raw: any) {
 function statusTH(status: any) {
   const s = String(status ?? "").trim().toUpperCase();
   if (s.includes("APPROV") || s.includes("อนุมัติ".toUpperCase())) return "อนุมัติ";
-  if (s.includes("REJECT") || s.includes("DENY") || s.includes("ไม่อนุมัติ".toUpperCase()))
-    return "ไม่อนุมัติ";
-  if (s.includes("PEND") || s.includes("WAIT") || s.includes("รอดำเนินการ".toUpperCase()))
-    return "รอดำเนินการ";
+  if (s.includes("REJECT") || s.includes("DENY") || s.includes("ไม่อนุมัติ".toUpperCase())) return "ไม่อนุมัติ";
+  if (s.includes("PEND") || s.includes("WAIT") || s.includes("รอดำเนินการ".toUpperCase())) return "รอดำเนินการ";
   return String(status ?? "").trim() || "-";
 }
 
@@ -93,7 +92,6 @@ function decidedAtMs(r: any) {
   );
 }
 
-// ✅ ครอบคลุมหลายชื่อ field เก่า/ใหม่
 function pickStr(...vals: any[]) {
   for (const v of vals) {
     const s = String(v ?? "").trim();
@@ -108,84 +106,13 @@ function getRowEmail(r: any) {
   return pickStr(r?.createdByEmail, r?.email, r?.userEmail).toLowerCase();
 }
 function getRowEmployeeNo(r: any) {
-  return pickStr(
-    r?.employeeNo,
-    r?.empNo,
-    r?.employee_id,
-    r?.employeeId,
-    r?.createdByEmployeeNo,
-    r?.userEmployeeNo
-  );
+  return pickStr(r?.employeeNo, r?.empNo, r?.employee_id, r?.employeeId, r?.createdByEmployeeNo, r?.userEmployeeNo);
 }
 function getRowEmployeeNameSnapshot(r: any) {
   return pickStr(r?.employeeName, r?.createdByName, r?.fullName, r?.requesterName);
 }
 function getRowPhoneSnapshot(r: any) {
   return pickStr(r?.phone, r?.createdByPhone, r?.tel, r?.mobile);
-}
-
-type ConfirmModalProps = {
-  open: boolean;
-  title: string;
-  description?: string;
-  confirmText?: string;
-  danger?: boolean;
-  disabled?: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  children?: React.ReactNode;
-};
-
-function ConfirmModal({
-  open,
-  title,
-  description,
-  confirmText = "ยืนยัน",
-  danger,
-  disabled,
-  onClose,
-  onConfirm,
-  children,
-}: ConfirmModalProps) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-[99999]">
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-md" onClick={onClose} />
-      <div className="relative z-[100000] flex min-h-screen items-center justify-center p-4">
-        <div className="w-[96%] max-w-xl rounded-2xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-900">
-          <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">{title}</div>
-          {description ? (
-            <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">{description}</div>
-          ) : null}
-
-          {children ? <div className="mt-4">{children}</div> : null}
-
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-            >
-              ยกเลิก
-            </button>
-
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onConfirm}
-              className={cn(
-                "rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-60",
-                danger ? "bg-red-600 hover:bg-red-700" : "bg-teal-600 hover:bg-teal-700"
-              )}
-            >
-              {confirmText}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 async function batchDeleteByRefs(refs: Array<{ ref: any }>) {
@@ -204,7 +131,6 @@ async function batchDeleteByRefs(refs: Array<{ ref: any }>) {
 
 type AccountOption = { uid: string; label: string };
 
-// ✅ ดึงข้อมูล "ผู้ออกรายงาน" ให้แน่น: fname/lname/position top-level ก่อน
 function getExporterProfile(u: any) {
   const fname = pickStr(u?.fname, u?.firstName, u?.profile?.fname, u?.user?.fname, u?.employee?.fname);
   const lname = pickStr(u?.lname, u?.lastName, u?.profile?.lname, u?.user?.lname, u?.employee?.lname);
@@ -212,10 +138,14 @@ function getExporterProfile(u: any) {
   return { fname, lname, position };
 }
 
+type DeleteMode = "DEL_UID" | "DEL_SELECTED" | "DEL_ONE" | null;
+
 export default function LeaveApproveHistoryPage() {
   const { user } = useAuth();
-  const role = String(user?.role || "").toUpperCase();
+  const { showToast } = useToastCenter();
+  const { confirm } = useDialogCenter();
 
+  const role = String((user as any)?.role || "").toUpperCase();
   const canView = APPROVER_ROLES.includes(role);
   const canDelete = DELETE_ROLES.includes(role);
   const canExport = EXPORT_ROLES.includes(role);
@@ -241,22 +171,26 @@ export default function LeaveApproveHistoryPage() {
   const [accountUid, setAccountUid] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
-  const [m1Open, setM1Open] = useState(false);
-  const [m2Open, setM2Open] = useState(false);
-  const [modalMode, setModalMode] = useState<"DEL_UID" | "DEL_SELECTED" | "DEL_ONE" | null>(null);
-  const [selectedPreviewOpen, setSelectedPreviewOpen] = useState(false);
-  const [deleteOneTarget, setDeleteOneTarget] = useState<any | null>(null);
+  // ----- Modal states (ใช้ของกลาง) -----
+  const [previewOpen, setPreviewOpen] = useState(false);
 
+  const [deleteMode, setDeleteMode] = useState<DeleteMode>(null);
+  const [deleteOneTarget, setDeleteOneTarget] = useState<any | null>(null);
+  const [confirm2Open, setConfirm2Open] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState("");
   const deletePhraseOk = deletePhrase.trim().toUpperCase() === "DELETE";
 
-  // ✅ employees map: employeeNo -> {name, phone}
-  // หมายเหตุ: history ห้ามอ่าน users ของคนอื่น -> ใช้ employees หรือ snapshot เท่านั้น
+  const resetDeleteFlow = () => {
+    setDeleteMode(null);
+    setDeleteOneTarget(null);
+    setConfirm2Open(false);
+    setDeletePhrase("");
+  };
+
   const [empMap, setEmpMap] = useState<Record<string, { name: string; phone: string }>>({});
   const [empLoading, setEmpLoading] = useState(false);
 
-  // ✅ โหลด employees ทั้งหมดครั้งเดียว (สำหรับ approver)
-  // ถ้า collection ใหญ่จริง ค่อย optimize ภายหลังเป็น "โหลดเฉพาะ empNo ที่ต้องใช้"
+  // ✅ โหลด employees ทั้งหมดครั้งเดียว
   useEffect(() => {
     let alive = true;
 
@@ -273,8 +207,6 @@ export default function LeaveApproveHistoryPage() {
 
         empSnap.docs.forEach((d) => {
           const e: any = d.data();
-
-          // ✅ key: เอา doc.id เป็นหลัก (employees/{EMPxxx}) + fallback field ใน doc
           const no = pickStr(d.id, e?.employeeNo, e?.empNo, e?.employee_id, e?.employeeId);
           if (!no) return;
 
@@ -283,7 +215,6 @@ export default function LeaveApproveHistoryPage() {
           const name = `${fname} ${lname}`.trim();
 
           const phone = pickStr(e?.phone, e?.tel, e?.mobile, e?.phones?.[0]);
-
           out[no] = { name: name || "-", phone: phone || "-" };
         });
 
@@ -303,7 +234,7 @@ export default function LeaveApproveHistoryPage() {
     };
   }, [canView]);
 
-  // ✅ 2) โหลด history
+  // ✅ โหลด history
   useEffect(() => {
     if (!user?.uid || !canView) {
       setRows([]);
@@ -314,10 +245,7 @@ export default function LeaveApproveHistoryPage() {
     setLoading(true);
 
     const colRef = collection(db, "leave_requests");
-    const qy = query(
-      colRef,
-      where("status", "in", ["อนุมัติ", "ไม่อนุมัติ", "APPROVED", "REJECTED"])
-    );
+    const qy = query(colRef, where("status", "in", ["อนุมัติ", "ไม่อนุมัติ", "APPROVED", "REJECTED"]));
 
     const unsub = onSnapshot(
       qy,
@@ -331,13 +259,13 @@ export default function LeaveApproveHistoryPage() {
         console.error("LeaveApproveHistoryPage snapshot error:", err);
         setRows([]);
         setLoading(false);
+        showToast("โหลดข้อมูลไม่สำเร็จ", { title: "ผิดพลาด", variant: "danger" });
       }
     );
 
     return () => unsub();
   }, [user?.uid, canView]);
 
-  // ✅ options สำหรับลบประวัติ “คนนี้”
   const accountOptionsFallback = useMemo(() => {
     const map = new Map<string, AccountOption>();
     rows.forEach((r: any) => {
@@ -353,7 +281,6 @@ export default function LeaveApproveHistoryPage() {
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, "th"));
   }, [rows]);
 
-  // ✅ ชื่อ: snapshot -> employees -> fallback (empNo/email/uid)
   const fullNameOf = (r: any) => {
     const snapName = getRowEmployeeNameSnapshot(r);
     if (snapName) return snapName;
@@ -367,7 +294,6 @@ export default function LeaveApproveHistoryPage() {
     return pickStr(empNo, email, uid, "-");
   };
 
-  // ✅ เบอร์: snapshot -> employees -> "-"
   const phoneOf = (r: any) => {
     const snapPhone = getRowPhoneSnapshot(r);
     if (snapPhone) return snapPhone;
@@ -383,13 +309,9 @@ export default function LeaveApproveHistoryPage() {
     return (Array.isArray(rows) ? rows : []).filter((r: any) => {
       const st = showStatus(r?.status);
       const okStatus =
-        statusFilter === "ALL"
-          ? true
-          : statusFilter === "APPROVED"
-          ? st === "อนุมัติ"
-          : st === "ไม่อนุมัติ";
-
+        statusFilter === "ALL" ? true : statusFilter === "APPROVED" ? st === "อนุมัติ" : st === "ไม่อนุมัติ";
       if (!okStatus) return false;
+
       if (!q) return true;
 
       const uid = getRowUid(r);
@@ -399,17 +321,7 @@ export default function LeaveApproveHistoryPage() {
       const fullName = fullNameOf(r);
       const phone = phoneOf(r);
 
-      const hay = [
-        fullName,
-        phone,
-        empNo,
-        email,
-        r?.requestNo,
-        uid,
-        r?.category,
-        r?.subType,
-        r?.reason,
-      ]
+      const hay = [fullName, phone, empNo, email, r?.requestNo, uid, r?.category, r?.subType, r?.reason]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -449,9 +361,7 @@ export default function LeaveApproveHistoryPage() {
     return (
       <div className="p-6">
         <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-          <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
-            ไม่มีสิทธิ์เข้าหน้านี้
-          </div>
+          <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ไม่มีสิทธิ์เข้าหน้านี้</div>
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             เฉพาะ HR / MANAGER / EXECUTIVE_MANAGER / ADMIN
           </div>
@@ -479,24 +389,21 @@ export default function LeaveApproveHistoryPage() {
 
       const refs = Array.from(refsMap.values()).map((ref) => ({ ref }));
       if (refs.length === 0) {
-        alert("ไม่พบรายการประวัติของบัญชีนี้");
+        showToast("ไม่พบรายการประวัติของบัญชีนี้", { title: "ไม่พบข้อมูล", variant: "warning" });
         return;
       }
 
       const deleted = await batchDeleteByRefs(refs);
 
-      alert(`ลบประวัติสำเร็จ ${deleted} รายการ`);
+      showToast(`ลบประวัติสำเร็จ ${deleted} รายการ`, { title: "สำเร็จ", variant: "success", durationMs: 2200 });
       setAccountUid("");
       setSelectedIds(new Set());
     } catch (e: any) {
       console.error(e);
-      alert(`ลบไม่สำเร็จ: ${e?.message || e}`);
+      showToast(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusy(false);
-      setM1Open(false);
-      setM2Open(false);
-      setModalMode(null);
-      setDeleteOneTarget(null);
+      resetDeleteFlow();
     }
   };
 
@@ -509,17 +416,14 @@ export default function LeaveApproveHistoryPage() {
       const refs = ids.map((id) => ({ ref: doc(db, "leave_requests", id) }));
       const deleted = await batchDeleteByRefs(refs);
 
-      alert(`ลบรายการที่เลือกสำเร็จ ${deleted} รายการ`);
+      showToast(`ลบรายการที่เลือกสำเร็จ ${deleted} รายการ`, { title: "สำเร็จ", variant: "success", durationMs: 2200 });
       setSelectedIds(new Set());
     } catch (e: any) {
       console.error(e);
-      alert(`ลบไม่สำเร็จ: ${e?.message || e}`);
+      showToast(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusy(false);
-      setM1Open(false);
-      setM2Open(false);
-      setModalMode(null);
-      setDeleteOneTarget(null);
+      resetDeleteFlow();
     }
   };
 
@@ -530,7 +434,8 @@ export default function LeaveApproveHistoryPage() {
     setBusy(true);
     try {
       await deleteDoc(doc(db, "leave_requests", id));
-      alert("ลบรายการนี้สำเร็จ");
+      showToast("ลบรายการนี้สำเร็จ", { title: "สำเร็จ", variant: "success", durationMs: 1800 });
+
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -538,24 +443,25 @@ export default function LeaveApproveHistoryPage() {
       });
     } catch (e: any) {
       console.error(e);
-      alert(`ลบไม่สำเร็จ: ${e?.message || e}`);
+      showToast(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusy(false);
-      setM1Open(false);
-      setM2Open(false);
-      setModalMode(null);
-      setDeleteOneTarget(null);
+      resetDeleteFlow();
     }
   };
 
-  const handleExportPDF = async () => {
-    const statusLabel =
-      statusFilter === "ALL" ? "ทั้งหมด" : statusFilter === "APPROVED" ? "อนุมัติ" : "ไม่อนุมัติ";
+  const runDeleteAction = async () => {
+    if (!deletePhraseOk) return;
+    if (deleteMode === "DEL_UID") return doDeleteByUid();
+    if (deleteMode === "DEL_SELECTED") return doDeleteSelected();
+    if (deleteMode === "DEL_ONE") return doDeleteOne();
+  };
 
+  const handleExportPDF = async () => {
+    const statusLabel = statusFilter === "ALL" ? "ทั้งหมด" : statusFilter === "APPROVED" ? "อนุมัติ" : "ไม่อนุมัติ";
     const fromLabel = dateFrom ? dateFrom : "-";
     const toLabel = dateTo ? dateTo : "-";
 
-    // ✅ ใส่ employeeName/phone ให้ PDF ใช้แบบชัวร์ (ไม่ต้องไปอ่าน users)
     const exportRowsWithSnapshot = exportRows.map((r: any) => ({
       ...r,
       employeeName: fullNameOf(r),
@@ -565,29 +471,38 @@ export default function LeaveApproveHistoryPage() {
     const approvedCount = exportRowsWithSnapshot.filter((r: any) => statusTH(r.status) === "อนุมัติ").length;
     const rejectedCount = exportRowsWithSnapshot.filter((r: any) => statusTH(r.status) === "ไม่อนุมัติ").length;
 
-    const exporter = getExporterProfile(user);
+    try {
+      const exporter = getExporterProfile(user);
 
-    await exportApprovalHistoryPdf(exportRowsWithSnapshot, {
-      title: "รายงานประวัติการอนุมัติใบลา",
-      orgLine1: "Smart Leave System",
-      orgLine2: "ฝ่ายทรัพยากรบุคคล (HR)",
+      await exportApprovalHistoryPdf(exportRowsWithSnapshot, {
+        title: "รายงานประวัติการอนุมัติใบลา",
+        orgLine1: "Smart Leave System",
+        orgLine2: "ฝ่ายทรัพยากรบุคคล (HR)",
 
-      exportedByProfile: exporter,
-      exportedBy: `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() || user?.email || user?.uid || "-",
-      exportedAt: new Date(),
+        exportedByProfile: exporter,
+        exportedBy: `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() || (user as any)?.email || (user as any)?.uid || "-",
+        exportedAt: new Date(),
 
-      filtersText: `ค้นหา: ${qText?.trim() || "-"} | สถานะ: ${statusLabel}`,
-      dateRangeText: `อ้างอิงวันอนุมัติ/อัปเดต: ${fromLabel} ถึง ${toLabel}`,
-      summary: {
-        total: exportRowsWithSnapshot.length,
-        approved: approvedCount,
-        rejected: rejectedCount,
-      },
+        filtersText: `ค้นหา: ${qText?.trim() || "-"} | สถานะ: ${statusLabel}`,
+        dateRangeText: `อ้างอิงวันอนุมัติ/อัปเดต: ${fromLabel} ถึง ${toLabel}`,
+        summary: {
+          total: exportRowsWithSnapshot.length,
+          approved: approvedCount,
+          rejected: rejectedCount,
+        },
 
-      logoUrl: "/company-logo2.png",
-      signatureTitle: "รักษาการกรรมการผู้จัดการใหญ่",
-      signatureName: "นายจิรศักดิ์ บุญนาค",
-    });
+        logoUrl: "/company-logo2.png",
+        signatureTitle: "รักษาการกรรมการผู้จัดการใหญ่",
+        signatureName: "นายจิรศักดิ์ บุญนาค",
+
+        notify: (msg: string, opts?: any) => showToast(msg, { title: opts?.title, variant: opts?.variant }),
+      });
+
+      showToast("Export PDF สำเร็จ", { title: "สำเร็จ", variant: "success", durationMs: 1800 });
+    } catch (e: any) {
+      console.error(e);
+      showToast(e?.message || String(e), { title: "Export ไม่สำเร็จ", variant: "danger" });
+    }
   };
 
   const statusBadge = (st: string) => {
@@ -598,23 +513,25 @@ export default function LeaveApproveHistoryPage() {
         ? "text-red-700 bg-red-50 border-red-200 dark:text-red-200 dark:bg-red-500/10 dark:border-red-900/40"
         : "text-gray-700 bg-gray-50 border-gray-200 dark:text-gray-200 dark:bg-gray-800/40 dark:border-gray-700";
 
-    return (
-      <span className={cn("inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold", cls)}>
-        {st}
-      </span>
-    );
+    return <span className={cn("inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold", cls)}>{st}</span>;
   };
+
+  const deleteTitle2 =
+    deleteMode === "DEL_UID"
+      ? "ยืนยันครั้งที่ 2: ลบประวัติจริง"
+      : deleteMode === "DEL_SELECTED"
+      ? "ยืนยันครั้งที่ 2: ลบรายการที่เลือกจริง"
+      : deleteMode === "DEL_ONE"
+      ? "ยืนยันครั้งที่ 2: ลบรายการนี้จริง"
+      : "ยืนยันครั้งที่ 2";
 
   return (
     <div className="p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-            ประวัติการอนุมัติใบลา
-          </h1>
+          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">ประวัติการอนุมัติใบลา</h1>
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            แสดงเฉพาะรายการ “อนุมัติ/ไม่อนุมัติ”
-            {empLoading ? " • กำลังโหลดรายชื่อพนักงาน..." : ""}
+            แสดงเฉพาะรายการ “อนุมัติ/ไม่อนุมัติ”{empLoading ? " • กำลังโหลดรายชื่อพนักงาน..." : ""}
           </div>
         </div>
 
@@ -658,6 +575,7 @@ export default function LeaveApproveHistoryPage() {
               onClick={() => {
                 setDateFrom("");
                 setDateTo("");
+                showToast("ล้างช่วงวันที่เรียบร้อย", { title: "สำเร็จ", variant: "success", durationMs: 1400 });
               }}
               className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
             >
@@ -697,10 +615,19 @@ export default function LeaveApproveHistoryPage() {
             <button
               type="button"
               disabled={!accountUid || busy}
-              onClick={() => {
-                setModalMode("DEL_UID");
-                setM1Open(true);
+              onClick={async () => {
+                // ยืนยันครั้งที่ 1 ด้วย DialogCenter (ของกลาง)
+                const ok = await confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)", {
+                title: "ยืนยันการลบ",
+                confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                cancelText: "ยกเลิก",
+                variant: "danger",
+              });
+                if (!ok) return;
+
+                setDeleteMode("DEL_UID");
                 setDeletePhrase("");
+                setConfirm2Open(true);
               }}
               className="h-10 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-60"
             >
@@ -710,7 +637,7 @@ export default function LeaveApproveHistoryPage() {
             <button
               type="button"
               disabled={selectedIds.size === 0 || busy}
-              onClick={() => setSelectedPreviewOpen(true)}
+              onClick={() => setPreviewOpen(true)}
               className="h-10 rounded-xl border border-red-200 bg-white px-4 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-900/40 dark:bg-gray-900 dark:text-red-200 dark:hover:bg-red-500/10"
             >
               ลบรายการที่เลือก ({selectedIds.size})
@@ -767,13 +694,10 @@ export default function LeaveApproveHistoryPage() {
               <div key={r.id} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                      {fullNameOf(r)}
-                    </div>
+                    <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{fullNameOf(r)}</div>
 
                     <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      อีเมล: {email || "-"}
-                      <span className="ml-2">• เบอร์: {phone}</span>
+                      อีเมล: {email || "-"} <span className="ml-2">• เบอร์: {phone}</span>
                       {empNo ? <span className="ml-2">• รหัสพนักงาน: {empNo}</span> : null}
                     </div>
 
@@ -805,11 +729,24 @@ export default function LeaveApproveHistoryPage() {
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => {
+                          onClick={async () => {
                             setDeleteOneTarget(r);
-                            setModalMode("DEL_ONE");
+
+                            // ยืนยันครั้งที่ 1 ด้วย DialogCenter
+                            const ok = await confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)", {
+                            title: "ยืนยันการลบรายการ",
+                            confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                            cancelText: "ยกเลิก",
+                            variant: "danger",
+                          });
+                            if (!ok) {
+                              setDeleteOneTarget(null);
+                              return;
+                            }
+
+                            setDeleteMode("DEL_ONE");
                             setDeletePhrase("");
-                            setM1Open(true);
+                            setConfirm2Open(true);
                           }}
                           className="rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
                         >
@@ -832,29 +769,55 @@ export default function LeaveApproveHistoryPage() {
         </div>
       )}
 
-      {/* preview selected */}
-      <ConfirmModal
-        open={selectedPreviewOpen}
+      {/* ---------- Preview selected (ModalShell ของกลาง) ---------- */}
+      <ModalShell
+        open={previewOpen}
         title={`ลบรายการที่เลือก (${selectedRows.length})`}
         description="ตรวจสอบรายการที่เลือกก่อน แล้วกด “ไปขั้นยืนยัน”"
-        confirmText="ไปขั้นยืนยัน"
-        danger
-        disabled={selectedRows.length === 0}
-        onClose={() => setSelectedPreviewOpen(false)}
-        onConfirm={() => {
-          setSelectedPreviewOpen(false);
-          setModalMode("DEL_SELECTED");
-          setDeletePhrase("");
-          setM1Open(true);
-        }}
+        widthClassName="max-w-xl"
+        onClose={() => setPreviewOpen(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(false)}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+            >
+              ปิด
+            </button>
+
+            <button
+              type="button"
+              disabled={selectedRows.length === 0 || busy}
+              onClick={async () => {
+                setPreviewOpen(false);
+
+                const ok = await confirm(`คุณต้องการลบรายการที่เลือกทั้งหมด ${selectedRows.length} รายการใช่ไหม? (ขั้นที่ 1)`, {
+                title: "ยืนยันการลบรายการที่เลือก",
+                confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                cancelText: "ยกเลิก",
+                variant: "danger",
+              });
+                if (!ok) return;
+
+                setDeleteMode("DEL_SELECTED");
+                setDeletePhrase("");
+                setConfirm2Open(true);
+              }}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60 hover:bg-red-700"
+            >
+              ไปขั้นยืนยัน
+            </button>
+          </div>
+        }
       >
-        <div className="max-h-[50vh] overflow-auto rounded-xl border border-gray-200 bg-white p-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+        <div className="max-h-[50vh] overflow-auto rounded-2xl border border-gray-200 bg-white p-3 text-sm dark:border-gray-800 dark:bg-gray-950">
           {selectedRows.length === 0 ? (
             <div className="text-sm text-gray-500">ยังไม่ได้เลือกรายการ</div>
           ) : (
             <ul className="space-y-2">
               {selectedRows.map((r: any) => (
-                <li key={r.id} className="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <li key={r.id} className="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
                   <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
                     {r.requestNo || "-"} • {showStatus(r.status)}
                   </div>
@@ -867,60 +830,46 @@ export default function LeaveApproveHistoryPage() {
             </ul>
           )}
         </div>
-      </ConfirmModal>
+      </ModalShell>
 
-      {/* confirm step1 */}
-      <ConfirmModal
-        open={m1Open}
-        title={"ยืนยันการลบ?"}
-        description="นี่คือการยืนยันครั้งที่ 1 (ยังไม่ลบจริง)"
-        confirmText="ไปยืนยันครั้งที่ 2"
-        danger
-        disabled={busy}
-        onClose={() => {
-          setM1Open(false);
-          setModalMode(null);
-          setDeleteOneTarget(null);
-          setDeletePhrase("");
-        }}
-        onConfirm={() => {
-          setM1Open(false);
-          setM2Open(true);
-        }}
-      />
-
-      {/* confirm step2 */}
-      <ConfirmModal
-        open={m2Open}
-        title={
-          modalMode === "DEL_UID"
-            ? "ยืนยันครั้งที่ 2: ลบประวัติจริง"
-            : modalMode === "DEL_SELECTED"
-            ? "ยืนยันครั้งที่ 2: ลบรายการที่เลือกจริง"
-            : modalMode === "DEL_ONE"
-            ? "ยืนยันครั้งที่ 2: ลบรายการนี้จริง"
-            : "ยืนยันครั้งที่ 2"
-        }
+      {/* ---------- Confirm step2 (ModalShell ของกลาง + พิมพ์ DELETE) ---------- */}
+      <ModalShell
+        open={confirm2Open}
+        title={deleteTitle2}
         description="การลบย้อนกลับไม่ได้แน่นอน"
-        confirmText={busy ? "กำลังลบ..." : "ลบเลย"}
-        danger
-        disabled={busy || !deletePhraseOk}
+        widthClassName="max-w-lg"
+        closeOnBackdrop={!busy}
         onClose={() => {
           if (busy) return;
-          setM2Open(false);
-          setModalMode(null);
-          setDeleteOneTarget(null);
-          setDeletePhrase("");
+          resetDeleteFlow();
         }}
-        onConfirm={() => {
-          if (!deletePhraseOk) return;
-          if (modalMode === "DEL_UID") return doDeleteByUid();
-          if (modalMode === "DEL_SELECTED") return doDeleteSelected();
-          if (modalMode === "DEL_ONE") return doDeleteOne();
-        }}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => resetDeleteFlow()}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+            >
+              ยกเลิก
+            </button>
+
+            <button
+              type="button"
+              disabled={busy || !deletePhraseOk}
+              onClick={runDeleteAction}
+              className={cn(
+                "rounded-xl px-4 py-2 text-sm font-bold text-white",
+                busy || !deletePhraseOk ? "bg-red-400 opacity-60" : "bg-red-600 hover:bg-red-700"
+              )}
+            >
+              {busy ? "กำลังลบ..." : "ลบเลย"}
+            </button>
+          </div>
+        }
       >
         <div className="space-y-3">
-          <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               เพื่อยืนยัน ให้พิมพ์คำว่า <span className="text-red-600">DELETE</span>
             </div>
@@ -930,12 +879,10 @@ export default function LeaveApproveHistoryPage() {
               placeholder="DELETE"
               className="mt-3 h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
             />
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              ปุ่ม “ลบเลย” จะกดได้เมื่อพิมพ์ DELETE ถูกต้อง
-            </div>
+            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">ปุ่ม “ลบเลย” จะกดได้เมื่อพิมพ์ DELETE ถูกต้อง</div>
           </div>
         </div>
-      </ConfirmModal>
+      </ModalShell>
     </div>
   );
 }

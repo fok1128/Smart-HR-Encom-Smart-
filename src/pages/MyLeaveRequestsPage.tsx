@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import { useAuth } from "../context/AuthContext";
+import { useToastCenter } from "../components/common/ToastCenter";
 import {
   LeaveRequestDoc,
   listenMyLeaveRequests,
@@ -18,7 +19,8 @@ type Row =
 
 function badgeClass(status: string) {
   const s = String(status || "").toUpperCase();
-  if (s === "APPROVED") return "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200";
+  if (s === "APPROVED")
+    return "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200";
   if (s === "REJECTED") return "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-200";
   if (s === "CANCELED") return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200";
   return "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-200";
@@ -40,7 +42,8 @@ function fmtDateTime(ts: any) {
       if (!isNaN(d.getTime())) return d.toLocaleString("th-TH");
     }
     if (ts?.toDate) return ts.toDate().toLocaleString("th-TH");
-    if (typeof ts?.seconds === "number") return new Date(ts.seconds * 1000).toLocaleString("th-TH");
+    if (typeof ts?.seconds === "number")
+      return new Date(ts.seconds * 1000).toLocaleString("th-TH");
     const d = ts instanceof Date ? ts : new Date(ts);
     return isNaN(d.getTime()) ? "-" : d.toLocaleString("th-TH");
   } catch {
@@ -84,6 +87,7 @@ function fmtDateOnly(iso: string | null | undefined) {
 
 export default function MyLeaveRequestsPage() {
   const { user } = useAuth();
+  const { showToast } = useToastCenter();
 
   const [leaveRows, setLeaveRows] = useState<LeaveRequestDoc[]>([]);
   const [fieldRows, setFieldRows] = useState<FieldWorkRequestDoc[]>([]);
@@ -114,6 +118,7 @@ export default function MyLeaveRequestsPage() {
         setErrorMsg(msg || "โหลดใบลาของฉันไม่สำเร็จ");
         setLeaveRows([]);
         setLoadingLeave(false);
+        showToast(msg || "โหลดใบลาของฉันไม่สำเร็จ", { title: "เกิดข้อผิดพลาด", variant: "danger" });
       }
     );
 
@@ -125,10 +130,10 @@ export default function MyLeaveRequestsPage() {
         setLoadingField(false);
       },
       (msg) => {
-        // ไม่ให้ทับ error เดิมถ้ามีแล้ว
         if (!errorMsg) setErrorMsg(msg || "โหลดงานนอกสถานที่ไม่สำเร็จ");
         setFieldRows([]);
         setLoadingField(false);
+        showToast(msg || "โหลดงานนอกสถานที่ไม่สำเร็จ", { title: "เกิดข้อผิดพลาด", variant: "danger" });
       }
     );
 
@@ -173,19 +178,26 @@ export default function MyLeaveRequestsPage() {
   }
 
   async function handleAttachSubmit(targetRow: LeaveRequestDoc) {
+    const fail = (msg: string) => {
+      setAttachError(msg);
+      showToast(msg, { title: "แนบไฟล์ไม่สำเร็จ", variant: "danger" });
+    };
+
     setAttachError("");
 
-    if (!user?.uid) return setAttachError("ยังไม่เข้าสู่ระบบ");
-    if (!targetRow?.id) return setAttachError("ไม่พบ id ของคำร้อง");
+    if (!user?.uid) return fail("ยังไม่เข้าสู่ระบบ");
+    if (!targetRow?.id) return fail("ไม่พบ id ของคำร้อง");
 
     const MAX_FILES = 5;
     const MAX_MB = 15;
     const okTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
-    if (!attachFiles.length) return setAttachError("กรุณาเลือกไฟล์ใบรับรองแพทย์");
-    if (attachFiles.length > MAX_FILES) return setAttachError(`แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`);
-    if (attachFiles.some((f) => f.size > MAX_MB * 1024 * 1024)) return setAttachError(`ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`);
-    if (attachFiles.some((f) => f.type && !okTypes.has(f.type))) return setAttachError("อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)");
+    if (!attachFiles.length) return fail("กรุณาเลือกไฟล์ใบรับรองแพทย์");
+    if (attachFiles.length > MAX_FILES) return fail(`แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`);
+    if (attachFiles.some((f) => f.size > MAX_MB * 1024 * 1024))
+      return fail(`ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`);
+    if (attachFiles.some((f) => f.type && !okTypes.has(f.type)))
+      return fail("อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)");
 
     setAttaching(true);
     setAttachPct(0);
@@ -195,8 +207,12 @@ export default function MyLeaveRequestsPage() {
       setAttachFiles([]);
       setAttachPct(0);
       setAttachError("");
+
+      showToast("อัปโหลดไฟล์เรียบร้อย", { title: "แนบใบรับรองสำเร็จ", variant: "success" });
     } catch (e: any) {
-      setAttachError(e?.message || String(e));
+      const m = e?.message || String(e);
+      setAttachError(m);
+      showToast(m, { title: "แนบไฟล์ไม่สำเร็จ", variant: "danger" });
     } finally {
       setAttaching(false);
     }
@@ -205,7 +221,6 @@ export default function MyLeaveRequestsPage() {
   const mergedRows: Row[] = useMemo(() => {
     const a = leaveRows.map((x) => ({ kind: "LEAVE" as const, ...x }));
     const b = fieldRows.map((x) => ({ kind: "FIELD" as const, ...x }));
-
     const all = [...a, ...b];
 
     all.sort((r1, r2) => {
@@ -262,13 +277,20 @@ export default function MyLeaveRequestsPage() {
               const endAt = (r as any).endAt;
               const status = (r as any).status;
 
-              const attachments = isLeave ? (Array.isArray((r as any).attachments) ? (r as any).attachments : []) : [];
+              const attachments = isLeave
+                ? Array.isArray((r as any).attachments)
+                  ? (r as any).attachments
+                  : []
+                : [];
               const legacyFiles = isLeave ? (Array.isArray((r as any).files) ? (r as any).files : []) : [];
               const showDueWarn = isLeave ? needWarnDue(r as LeaveRequestDoc) : false;
               const provided = isLeave ? isProvided(r as LeaveRequestDoc) : true;
 
               return (
-                <div key={`${r.kind}-${r.id}`} className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]">
+                <div
+                  key={`${r.kind}-${r.id}`}
+                  className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]"
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-[240px]">
                       <div className="flex items-center gap-2">
@@ -300,7 +322,7 @@ export default function MyLeaveRequestsPage() {
                       </div>
                     </div>
 
-                    {/* Right actions: เฉพาะ LEAVE ที่มีไฟล์ */}
+                    {/* Right actions: เฉพาะ LEAVE */}
                     {isLeave && (
                       <div className="flex flex-wrap items-center gap-2">
                         {attachments.length > 0 && (
@@ -310,7 +332,10 @@ export default function MyLeaveRequestsPage() {
                               try {
                                 await openAttachment(attachments[0]);
                               } catch (e: any) {
-                                alert(e?.message || String(e));
+                                showToast(e?.message || String(e), {
+                                  title: "เปิดไฟล์ไม่สำเร็จ",
+                                  variant: "danger",
+                                });
                               }
                             }}
                             className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
@@ -328,6 +353,12 @@ export default function MyLeaveRequestsPage() {
                               setAttachError("");
                               setAttachPct(0);
                               setTimeout(() => fileInputRef.current?.click(), 50);
+
+                              showToast("เลือกไฟล์แล้วกด “ยืนยันแนบใบรับรอง”", {
+                                title: "แนบใบรับรองแพทย์",
+                                variant: "info",
+                                durationMs: 1600,
+                              });
                             }}
                             className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
                           >
@@ -338,7 +369,7 @@ export default function MyLeaveRequestsPage() {
                     )}
                   </div>
 
-                  {/* Notes: leave reason OR field note */}
+                  {/* Notes */}
                   {(isLeave ? (r as LeaveRequestDoc).reason : (r as FieldWorkRequestDoc).note) && (
                     <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
                       <div className="font-semibold">{isLeave ? "เหตุผล/รายละเอียด" : "รายละเอียดงาน"}</div>
@@ -362,7 +393,8 @@ export default function MyLeaveRequestsPage() {
 
                           {(r as any).medicalCertDueAt && (
                             <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                              เดดไลน์แนบ: <span className="font-semibold">{fmtDateOnly((r as any).medicalCertDueAt)}</span>
+                              เดดไลน์แนบ:{" "}
+                              <span className="font-semibold">{fmtDateOnly((r as any).medicalCertDueAt)}</span>
                             </div>
                           )}
                         </div>
@@ -391,7 +423,10 @@ export default function MyLeaveRequestsPage() {
                                 try {
                                   await openAttachment(a);
                                 } catch (e: any) {
-                                  alert(e?.message || String(e));
+                                  showToast(e?.message || String(e), {
+                                    title: "เปิดไฟล์ไม่สำเร็จ",
+                                    variant: "danger",
+                                  });
                                 }
                               }}
                               className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
