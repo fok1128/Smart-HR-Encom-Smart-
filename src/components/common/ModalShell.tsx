@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { popupTheme } from "../ui/theme/popupTheme";
+import { useLockScroll } from "./useLockScroll";
 
 type ModalShellProps = {
   open: boolean;
@@ -19,10 +20,10 @@ type ModalShellProps = {
   durationMs?: number;
 
   // ✅ เพิ่มเพื่อให้ DialogCenter/ConfirmDialog ใช้ได้
-  panelClassName?: string;      // เปลี่ยนกรอบ/แสง/สไตล์การ์ด
-  showTopBar?: boolean;         // เปิด/ปิดแถบด้านบน
-  closeOnEsc?: boolean;         // เปิด/ปิดปิดด้วย ESC
-  canClose?: () => boolean;     // เงื่อนไขปิด (กันตอน loading/busy)
+  panelClassName?: string; // เปลี่ยนกรอบ/แสง/สไตล์การ์ด
+  showTopBar?: boolean; // เปิด/ปิดแถบด้านบน
+  closeOnEsc?: boolean; // เปิด/ปิดปิดด้วย ESC
+  canClose?: () => boolean; // เงื่อนไขปิด (กันตอน loading/busy)
 };
 
 export default function ModalShell({
@@ -46,6 +47,9 @@ export default function ModalShell({
   closeOnEsc = true,
   canClose,
 }: ModalShellProps) {
+  // ✅ ล็อกสกรอลด้วย hook มาตรฐานตัวเดียว
+  useLockScroll(open);
+
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
 
@@ -73,24 +77,6 @@ export default function ModalShell({
       onClose();
     }, durationMs);
   };
-
-  // lock scroll + กัน modal ซ้อน
-  useEffect(() => {
-    if (!mounted) return;
-
-    const body = document.body as any;
-    const prevOverflow = document.body.style.overflow;
-
-    body.__modalLockCount = (body.__modalLockCount || 0) + 1;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      body.__modalLockCount = Math.max(0, (body.__modalLockCount || 1) - 1);
-      if (body.__modalLockCount === 0) {
-        document.body.style.overflow = prevOverflow;
-      }
-    };
-  }, [mounted]);
 
   // เปิด/ปิดจาก prop open
   useEffect(() => {
@@ -191,8 +177,12 @@ export default function ModalShell({
           )}
 
           {children ? <div className="px-5 pb-5 pt-3">{children}</div> : null}
-          {footer ? (<div className="border-t border-white/15 px-5 py-4"><div className="flex justify-center">{footer}</div>
-          </div>) : null}
+
+          {footer ? (
+            <div className="border-t border-white/15 px-5 py-4">
+              <div className="flex justify-center">{footer}</div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

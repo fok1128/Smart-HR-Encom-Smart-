@@ -766,31 +766,32 @@ export default function LeaveSubmitPage() {
   const summarySickUsed = summaryUsedMap[usedKey("ลาป่วย")] || 0;
   const summaryVacationUsed = summaryUsedMap[usedKey("ลาพักร้อน")] || 0;
 
-  const resetAll = async () => {
-const handleResetClick = async () => {
-  const ok = await dialog.confirm("ต้องการล้างฟอร์มนี้ใช่ไหม?", {
-    title: "ยืนยันการล้างฟอร์ม",
-    variant: "danger",
-    confirmText: "ล้างฟอร์ม",
-    cancelText: "ยกเลิก",
-    size: "md",
-  });
-  if (ok) resetAll();
-};
-  setCategory("");
-  setSubType("");
-  setMode("allDay");
-  setStartDate(todayISODate());
-  setEndDate(todayISODate());
-  setStartDT(toISODateTimeLocal(new Date()));
-  setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
-  setReason("");
-  setRetroReason("");
-  setFiles([]);
-  setErrors({});
-  setUploadPct(0);
-};
+  const resetAll = () => {
+      setCategory("");
+      setSubType("");
+      setMode("allDay");
+      setStartDate(todayISODate());
+      setEndDate(todayISODate());
+      setStartDT(toISODateTimeLocal(new Date()));
+      setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+      setReason("");
+      setRetroReason("");
+      setFiles([]);
+      setErrors({});
+      setUploadPct(0);
+    };
 
+    const handleResetClick = async () => {
+      const ok = await dialog.confirm("ต้องการล้างฟอร์มนี้ใช่ไหม?", {
+        title: "ยืนยันการล้างฟอร์ม",
+        variant: "danger",
+        confirmText: "ล้างฟอร์ม",
+        cancelText: "ยกเลิก",
+        size: "md",
+      });
+
+      if (ok) resetAll();
+    };
   const validate = () => {
     const e: Record<string, string> = {};
 
@@ -1218,13 +1219,13 @@ const handleResetClick = async () => {
           </div>
         </div>
         <button
-          type="button"
-          onClick={() => resetAll()}
-          disabled={submitting}
-          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-        >
-          ล้างฟอร์ม
-        </button>
+        type="button"
+        onClick={handleResetClick}
+        disabled={submitting}
+        className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+      >
+        ล้างฟอร์ม
+      </button>
       </div>
 
       {/* ✅ เงื่อนไข: แสดง “เฉพาะประเภทที่เลือก” */}
