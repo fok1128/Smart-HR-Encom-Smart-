@@ -30,7 +30,6 @@ type DialogState = {
   cancelText?: string;
   size?: DialogSize;
 
-  // ✅ PROMPT
   inputLabel?: string;
   inputPlaceholder?: string;
   inputValue?: string;
@@ -83,8 +82,6 @@ type DialogContextType = {
   alert: (message: string, opts?: AlertOpts) => Promise<void>;
   confirm: (message: string, opts?: ConfirmOpts) => Promise<boolean>;
   success: (message: string, opts?: SuccessOpts) => Promise<void>;
-
-  // ✅ ใหม่: prompt ให้กรอกข้อความ (คืนค่า string หรือ null ถ้ายกเลิก)
   prompt: (message: string, opts?: PromptOpts) => Promise<string | null>;
 };
 
@@ -168,7 +165,6 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
     [alertFn]
   );
 
-  // ✅ PROMPT: คืนค่า string | null
   const promptFn = useCallback(async (message: string, opts?: PromptOpts) => {
     return new Promise<string | null>((resolve) => {
       resolverRef.current = resolve;
@@ -201,6 +197,7 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
   const v: PopupVariant = state.variant || "info";
   const iconWrap = popupTheme.iconWrapByVariant[v];
   const icon = popupTheme.iconByVariant[v];
+
   const confirmBtnClass = v === "danger" ? popupTheme.btnConfirmDanger : popupTheme.btnConfirmSuccess;
 
   const canSubmitPrompt = (() => {
@@ -216,7 +213,6 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
   const submitPrompt = () => {
     const raw = String(state.inputValue ?? "");
     const trimmed = raw.trim();
-    // validate
     if (state.inputRequired && !trimmed) {
       setState((s) => ({ ...s, inputError: "กรุณากรอกเหตุผล" }));
       return;
@@ -232,10 +228,15 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
     finish(trimmed);
   };
 
+  const closeBehavior = () => {
+    if (state.type === "CONFIRM") finish(false);
+    else if (state.type === "PROMPT") finish(null);
+    else finish(undefined);
+  };
+
   return (
     <DialogCenterContext.Provider value={value}>
       {children}
-      <style>{popupTheme.css}</style>
 
       <ModalShell
         open={state.open}
@@ -243,14 +244,14 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
         description={undefined}
         widthClassName={sizeToWidth(state.size)}
         zIndexClassName={popupTheme.z.confirm}
-        panelClassName={popupTheme.cardStrongPurple}
         showTopBar={false}
-        onClose={() => {
-          // close behavior
-          if (state.type === "CONFIRM") finish(false);
-          else if (state.type === "PROMPT") finish(null);
-          else finish(undefined);
-        }}
+        glow={true}
+        glowVariant="purpleStrong" // ✅ แสงม่วง “แรงกว่าเดิม”
+        panelClassName="bg-white"
+        closeOnEsc={true}
+        closeOnBackdrop={true}
+        canClose={() => true}
+        onClose={closeBehavior}
         footer={
           <div className="flex items-center justify-center gap-2">
             {state.type !== "ALERT" && (
@@ -263,7 +264,6 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
                 className={[
                   popupTheme.btnBase,
                   "bg-white text-gray-900 ring-1 ring-gray-200 hover:bg-gray-50",
-                  "dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-800 dark:hover:bg-gray-800",
                 ].join(" ")}
               >
                 {state.cancelText || "ยกเลิก"}
@@ -291,7 +291,7 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
           </div>
         }
       >
-        <div className="relative px-5 pt-5 pb-2">
+        <div className="relative px-5 pt-5 pb-2 bg-white">
           <button
             type="button"
             onClick={() => finish(state.type === "CONFIRM" ? false : state.type === "PROMPT" ? null : undefined)}
@@ -306,17 +306,17 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
               <span className="text-2xl font-black leading-none">{icon}</span>
             </div>
 
-            <div className="mt-3 text-lg font-extrabold text-gray-900 dark:text-gray-50">{state.title}</div>
+            <div className="mt-3 text-lg font-extrabold text-gray-900">{state.title}</div>
 
             {state.message ? (
-              <div className="mt-3 text-sm font-semibold text-gray-700 dark:text-gray-200 whitespace-pre-wrap break-words">
+              <div className="mt-3 text-sm font-semibold text-gray-700 whitespace-pre-wrap break-words">
                 {state.message}
               </div>
             ) : null}
 
             {state.type === "PROMPT" ? (
               <div className="mt-4 w-full text-left">
-                <div className="text-xs font-extrabold text-gray-700 dark:text-gray-200 mb-1">
+                <div className="text-xs font-extrabold text-gray-700 mb-1">
                   {state.inputLabel || "เหตุผล"}
                 </div>
 
@@ -335,13 +335,12 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
                   className={[
                     "w-full rounded-2xl border px-4 py-3 text-sm font-semibold outline-none",
                     "bg-white text-gray-900 border-gray-200 focus:ring-2 focus:ring-violet-300",
-                    "dark:bg-gray-950 dark:text-gray-100 dark:border-gray-800 dark:focus:ring-violet-600/40",
                   ].join(" ")}
                 />
 
                 <div className="mt-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-red-600">{state.inputError || ""}</div>
-                  <div className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">
+                  <div className="text-[11px] font-semibold text-gray-500">
                     {(state.inputValue?.length ?? 0)}/{state.inputMaxLen ?? 500}
                   </div>
                 </div>

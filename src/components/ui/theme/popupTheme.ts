@@ -54,10 +54,17 @@ export const popupTheme = {
   }
 `,
 
+  // ลดความเข้ม/blur นิด เพื่อให้ไม่ “แว้บ” เวลาเปิด-ปิด
   backdrop: (visible: boolean) =>
-    ["absolute inset-0", "bg-black/35", "backdrop-blur-sm", visible ? "opacity-100" : "opacity-0"].join(" "),
+    [
+      "absolute inset-0",
+      "bg-black/30",
+      "backdrop-blur-[6px]",
+      visible ? "opacity-100" : "opacity-0",
+    ].join(" "),
 
-  centerWrap: (zClass: string) => ["fixed inset-0", zClass, "flex items-center justify-center px-4"].join(" "),
+  centerWrap: (zClass: string) =>
+    ["fixed inset-0", zClass, "flex items-center justify-center px-4"].join(" "),
 
   cardBase: [
     "w-full overflow-hidden rounded-3xl",
@@ -66,7 +73,7 @@ export const popupTheme = {
     "shadow-2xl popup-glow",
   ].join(" "),
 
-  // ✅ เปลี่ยนให้ใช้ glow ม่วงชัดขึ้น
+  // ✅ อันนี้แรงมาก: แนะนำใช้เฉพาะ dialog แบบ confirm/alert ไม่ใช้กับ modal edit form
   cardStrongPurple: [
     "w-full overflow-hidden rounded-3xl shadow-2xl popup-glow-purple",
     "bg-white dark:bg-gray-900",
@@ -75,7 +82,9 @@ export const popupTheme = {
   ].join(" "),
 
   topBarPurple: "h-[5px] w-full bg-gradient-to-r from-purple-600 via-purple-500 to-purple-600",
-  topBarSoft: "h-[4px] w-full bg-gradient-to-r from-fuchsia-400/70 via-purple-400/45 to-pink-400/60",
+
+  // ✅ ทำให้ “soft” กว่าเดิมนิด (ยังสวย แต่ไม่เด่นจนเหมือนแว้บ)
+  topBarSoft: "h-[4px] w-full bg-gradient-to-r from-fuchsia-300/60 via-purple-300/35 to-pink-300/55",
 
   title: "text-xl font-extrabold text-gray-900 dark:text-gray-50",
   desc: "mt-1 text-sm font-semibold text-gray-700 dark:text-gray-200",
@@ -91,7 +100,7 @@ export const popupTheme = {
     success:
       "border-emerald-200/60 bg-emerald-50 text-emerald-700 dark:border-emerald-200/10 dark:bg-emerald-500/10 dark:text-emerald-200",
     warning:
-      "border-amber-200/70 bg-amber-50 text-amber-800 dark:border-amber-200/10 dark:bg-amber-500/10 dark:text-amber-200",
+      "border-amber-200/70 bg-amber-50 text-amber-800 dark:border-amber-200/10 dark:bg-amber-500/10 dark:text-amber-emerald-200",
     danger:
       "border-rose-200/70 bg-rose-50 text-rose-800 dark:border-rose-200/10 dark:bg-rose-500/10 dark:text-rose-200",
   } as const,
@@ -130,8 +139,10 @@ export const popupTheme = {
   btnBase: ["h-11 rounded-2xl px-5 text-sm font-extrabold transition", "active:scale-[0.99]"].join(" "),
   btnConfirm: "text-white shadow-lg",
 
-  btnConfirmSuccess: ["bg-emerald-600 hover:bg-emerald-700","focus:ring-emerald-500/30","text-white",].join(" "),
-  btnConfirmDanger: ["bg-red-600 hover:bg-red-700","focus:ring-red-500/30","text-white",].join(" "),
+  btnConfirmSuccess: ["bg-emerald-600 hover:bg-emerald-700", "focus:ring-emerald-500/30", "text-white"].join(
+    " "
+  ),
+  btnConfirmDanger: ["bg-red-600 hover:bg-red-700", "focus:ring-red-500/30", "text-white"].join(" "),
 
   btnCancelDanger:
     "bg-red-50 text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-950/45",

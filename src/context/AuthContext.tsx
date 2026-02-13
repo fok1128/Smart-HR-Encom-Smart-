@@ -26,7 +26,6 @@ type ApiUser = {
   lname?: string;
   avatarUrl?: string;
 
-  // ✅ เพิ่ม
   employeeNo?: string;
   phone?: string;
 };
@@ -37,7 +36,6 @@ type Employee = {
   position?: string;
   avatarUrl?: string;
 
-  // ✅ เพิ่ม
   employeeNo?: string;
   phone?: string;
 };
@@ -60,14 +58,12 @@ type MeResponseRaw = {
   claimSync?: ClaimSync;
 };
 
-// ✅ ตัวที่ UI ใช้จริง
 export type MeResponse = MeResponseRaw & {
   fname?: string;
   lname?: string;
   position?: string;
   avatarUrl?: string;
 
-  // ✅ เพิ่มให้หน้าอื่นๆ ใช้ได้เลย
   employeeNo?: string;
   phone?: string;
 };
@@ -75,11 +71,21 @@ export type MeResponse = MeResponseRaw & {
 type AuthContextType = {
   user: MeResponse | null;
   loading: boolean;
+  login: (email: string, password: boolean | string, remember: boolean) => Promise<MeResponse>;
+  logout: () => Promise<void>;
+};
+
+// NOTE: type ของ login ในของเดิมคุณคือ (email: string, password: string, remember: boolean)
+// แต่ใน snippet ด้านบน accidental typing ผิดได้ง่าย
+// ✅ เราจะประกาศใหม่ให้ถูกต้องด้านล่างแทน
+type AuthContextTypeFixed = {
+  user: MeResponse | null;
+  loading: boolean;
   login: (email: string, password: string, remember: boolean) => Promise<MeResponse>;
   logout: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextTypeFixed | undefined>(undefined);
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
@@ -92,14 +98,12 @@ function pickStr(...vals: any[]) {
   return "";
 }
 
-// ✅ map ข้อมูลจาก backend ให้เป็นรูปเดียวกับที่ UI อ่านง่าย
 function normalizeMe(raw: MeResponseRaw): MeResponse {
   const fname = raw.employee?.fname ?? raw.user?.fname;
   const lname = raw.employee?.lname ?? raw.user?.lname;
   const position = raw.employee?.position;
   const avatarUrl = raw.employee?.avatarUrl ?? raw.user?.avatarUrl;
 
-  // ✅ เพิ่ม: employeeNo/phone (พยายามหยิบจาก employee ก่อน)
   const employeeNo = pickStr(raw.employee?.employeeNo, raw.user?.employeeNo);
   const phone = pickStr(raw.employee?.phone, raw.user?.phone);
 
@@ -169,7 +173,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
-  const login: AuthContextType["login"] = async (email, password, remember) => {
+  // ✅ เมื่อมีการอัปเดตโปรไฟล์ (phone/avatar) ให้ refetch /me เพื่อให้ทั้งเว็บอัปเดตทันที
+  useEffect(() => {
+    const onUpdated = async () => {
+      const fbUser = auth.currentUser;
+      if (!fbUser) return;
+      try {
+        const me = await fetchMeWithClaimsRefresh(fbUser);
+        setUser(me);
+      } catch (e) {
+        console.error("Auth refresh after profile-updated error:", e);
+      }
+    };
+    window.addEventListener("profile-updated", onUpdated);
+    return () => window.removeEventListener("profile-updated", onUpdated);
+  }, []);
+
+  const login: AuthContextTypeFixed["login"] = async (email, password, remember) => {
     setLoading(true);
     try {
       await setPersistence(
@@ -197,7 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const logout: AuthContextType["logout"] = async () => {
+  const logout: AuthContextTypeFixed["logout"] = async () => {
     setLoading(true);
     try {
       await signOut(auth);

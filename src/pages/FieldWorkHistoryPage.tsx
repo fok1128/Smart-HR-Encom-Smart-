@@ -17,15 +17,9 @@ import { getSignedUrl } from "../services/files";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 
-// ✅ Modal กลาง (ไฟล์แนบทั้งหมด) — คงไว้ได้
+// ✅ Modal กลาง (ไฟล์แนบทั้งหมด)
 import { Modal } from "../components/ui/modal";
 
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-function toISODate(d: Date) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
 function dateTimeText(dtLocal?: string) {
   if (!dtLocal) return "-";
   return dtLocal.replace("T", " ");
@@ -40,10 +34,24 @@ function tsToMs(ts: any): number {
     return 0;
   }
 }
-function withinRange(row: FieldWorkRequestDoc, fromISO: string, toISO: string) {
+
+/**
+ * ✅ ถ้าไม่เลือกวัน -> ไม่กรอง (ผ่านหมด)
+ * ✅ ถ้าเลือกแค่ from -> กรองตั้งแต่ from ขึ้นไป
+ * ✅ ถ้าเลือกแค่ to -> กรองถึง to
+ * ✅ ถ้าเลือกครบ -> กรอง between
+ */
+function withinRange(row: FieldWorkRequestDoc, fromISO?: string, toISO?: string) {
   const d = (row.startAt || "").slice(0, 10);
   if (!d) return true;
-  return d >= fromISO && d <= toISO;
+
+  const f = String(fromISO || "").trim();
+  const t = String(toISO || "").trim();
+
+  if (!f && !t) return true;
+  if (f && !t) return d >= f;
+  if (!f && t) return d <= t;
+  return d >= f && d <= t;
 }
 
 type UserMini = { fullName: string; phone: string };
@@ -96,15 +104,9 @@ export default function FieldWorkHistoryPage() {
   const [rows, setRows] = useState<FieldWorkRequestDoc[]>([]);
   const [err, setErr] = useState<string>("");
 
-  const defaultRange = useMemo(() => {
-    const t = new Date();
-    const from = new Date(t);
-    from.setMonth(from.getMonth() - 1);
-    return { fromISO: toISODate(from), toISO: toISODate(t) };
-  }, []);
-
-  const [fromISO, setFromISO] = useState<string>(() => defaultRange.fromISO);
-  const [toISO, setToISO] = useState<string>(() => defaultRange.toISO);
+  // ✅ เปลี่ยน: เริ่มต้น "ไม่กรองวัน" ให้เป็นค่าว่าง
+  const [fromISO, setFromISO] = useState<string>("");
+  const [toISO, setToISO] = useState<string>("");
   const [q, setQ] = useState<string>("");
 
   const [userMap, setUserMap] = useState<Record<string, UserMini>>({});
@@ -115,7 +117,9 @@ export default function FieldWorkHistoryPage() {
     requestNo: "",
     attachments: [],
   });
-
+ useEffect(() => {
+    if (canSeeAll) setScope("all");
+  }, [canSeeAll]);
   useEffect(() => {
     if (!myUid) {
       setRows([]);
@@ -230,7 +234,9 @@ export default function FieldWorkHistoryPage() {
         const snapName =
           String(s?.fullName || "").trim() ||
           [String(s?.fname || "").trim(), String(s?.lname || "").trim()].filter(Boolean).join(" ").trim();
-        const snapPhone = String(s?.phone || "").trim() || String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
+        const snapPhone =
+          String(s?.phone || "").trim() ||
+          String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
 
         const hay = `${r.requestNo} ${r.place} ${r.note || ""} ${(r as any)?.email || ""} ${p.fullName} ${p.phone} ${pe.fullName} ${pe.phone} ${snapName} ${snapPhone}`.toLowerCase();
 
@@ -289,11 +295,12 @@ export default function FieldWorkHistoryPage() {
     setAttModal({ open: false, requestNo: "", attachments: [] });
   }
 
+  // ✅ เปลี่ยน: “ล้างวันที่” = กลับไปไม่กรองวัน
   function resetDates() {
-    setFromISO(defaultRange.fromISO);
-    setToISO(defaultRange.toISO);
+    setFromISO("");
+    setToISO("");
   }
-  const isDateDefault = fromISO === defaultRange.fromISO && toISO === defaultRange.toISO;
+  const isDateDefault = !fromISO && !toISO;
 
   const colCount = canDelete ? 8 : 7;
 
@@ -309,7 +316,13 @@ export default function FieldWorkHistoryPage() {
       `}</style>
 
       {/* ✅ Modal กลาง: ไฟล์แนบทั้งหมด */}
-      <Modal isOpen={attModal.open} onClose={closeAllFiles} title="ไฟล์แนบทั้งหมด" closeOnBackdrop zIndexClassName="z-[2147483646]">
+      <Modal
+        isOpen={attModal.open}
+        onClose={closeAllFiles}
+        title="ไฟล์แนบทั้งหมด"
+        closeOnBackdrop
+        zIndexClassName="z-[2147483646]"
+      >
         <div className="text-sm font-semibold text-gray-500 dark:text-gray-400">{attModal.requestNo}</div>
 
         <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
@@ -320,7 +333,9 @@ export default function FieldWorkHistoryPage() {
               attModal.attachments.map((a, idx) => (
                 <div key={`${a.storagePath}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0 flex-1 pr-2">
-                    <div className="break-words text-sm font-extrabold text-gray-900 dark:text-gray-100">{normalizeAttName(a.name)}</div>
+                    <div className="break-words text-sm font-extrabold text-gray-900 dark:text-gray-100">
+                      {normalizeAttName(a.name)}
+                    </div>
                   </div>
 
                   <button
@@ -350,8 +365,12 @@ export default function FieldWorkHistoryPage() {
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6 transition">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">ประวัติแจ้งปฏิบัติงานนอกสถานที่</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูย้อนหลัง + เปิดไฟล์แนบ {canDelete ? "+ (สิทธิ) ลบรายการ" : ""}</p>
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">
+              ประวัติแจ้งปฏิบัติงานนอกสถานที่
+            </h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              แสดงทั้งหมดของบัญชีนี้ (เลือกช่วงวันที่เพื่อกรองเอง) {canDelete ? "+ (สิทธิ) ลบรายการ" : ""}
+            </p>
           </div>
 
           {canSeeAll && (
@@ -421,7 +440,7 @@ export default function FieldWorkHistoryPage() {
                     ? "cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-500"
                     : "border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800",
                 ].join(" ")}
-                title="ล้างวันที่ (กลับเป็นค่าเริ่มต้น: ย้อนหลัง 1 เดือน)"
+                title="ล้างวันที่ (กลับเป็นไม่กรองวัน)"
               >
                 ล้างวันที่
               </button>
@@ -468,9 +487,13 @@ export default function FieldWorkHistoryPage() {
                 filtered.map((r) => {
                   const submittedMs = tsToMs(r.submittedAt);
                   const submittedText = submittedMs
-                    ? new Intl.DateTimeFormat("th-TH", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(
-                        new Date(submittedMs)
-                      )
+                    ? new Intl.DateTimeFormat("th-TH", {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      }).format(new Date(submittedMs))
                     : "-";
 
                   const pByUid = userMap[r.uid] || { fullName: "", phone: "" };
@@ -481,7 +504,9 @@ export default function FieldWorkHistoryPage() {
                   const snapName =
                     String(s?.fullName || "").trim() ||
                     [String(s?.fname || "").trim(), String(s?.lname || "").trim()].filter(Boolean).join(" ").trim();
-                  const snapPhone = String(s?.phone || "").trim() || String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
+                  const snapPhone =
+                    String(s?.phone || "").trim() ||
+                    String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
 
                   const fullName = snapName || pByUid.fullName || pByEmail.fullName || (r as any)?.email || r.uid || "-";
                   const phone = snapPhone || pByUid.phone || pByEmail.phone || "";
@@ -509,7 +534,12 @@ export default function FieldWorkHistoryPage() {
                         {r.note ? (
                           <div
                             className="whitespace-normal break-words leading-5 text-sm"
-                            style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}
+                            style={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical" as any,
+                              overflow: "hidden",
+                            }}
                           >
                             {r.note}
                           </div>
@@ -536,7 +566,11 @@ export default function FieldWorkHistoryPage() {
                             ))}
 
                             {atts.length > 2 && (
-                              <button type="button" onClick={() => openAllFiles(r.requestNo, atts)} className="text-left text-[11px] font-extrabold text-brand-600 hover:text-brand-700">
+                              <button
+                                type="button"
+                                onClick={() => openAllFiles(r.requestNo, atts)}
+                                className="text-left text-[11px] font-extrabold text-brand-600 hover:text-brand-700"
+                              >
                                 ดูทั้งหมด ({atts.length} ไฟล์)
                               </button>
                             )}
@@ -546,7 +580,11 @@ export default function FieldWorkHistoryPage() {
 
                       {canDelete && (
                         <td className="px-4 py-3 text-left align-top">
-                          <button type="button" onClick={() => handleDelete(r.id, r.requestNo, fullName)} className="text-sm font-extrabold text-red-600 hover:text-red-700">
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(r.id, r.requestNo, fullName)}
+                            className="text-sm font-extrabold text-red-600 hover:text-red-700"
+                          >
                             ลบ
                           </button>
                         </td>
