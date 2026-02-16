@@ -20,7 +20,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ✅ ตอบ OPTIONS ให้ชัด
+app.options("*", cors(corsOptions)); // ✅ ตอบ OPTIONS ให้ชัด/เร็ว
 
 // (เสริม) บาง proxy แปลก ๆ ชอบลืม maxAge ใส่ซ้ำให้ชัวร์
 app.use((req, res, next) => {
@@ -113,6 +113,9 @@ async function syncRoleClaimFromFirestore(uid) {
 // ----------------- Auth Middleware -----------------
 async function requireAuth(req, res, next) {
   try {
+    // ✅ สำคัญ: OPTIONS ไม่ต้อง auth (กัน preflight เข้า verifyIdToken)
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+
     const authHeader = req.headers.authorization || "";
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
 
@@ -147,7 +150,8 @@ async function requireAuth(req, res, next) {
 }
 
 // ----------------- Basic Routes -----------------
-app.get("/health", (req, res) => res.json({ ok: true }));
+// ✅ health สำหรับ warm-up (เบาๆ)
+app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
 app.get("/debug-project", (req, res) => {
   res.json({
@@ -260,7 +264,6 @@ app.post("/admin/set-role", requireAuth, async (req, res) => {
 });
 
 // ----------------- ✅ Files Router (Supabase) -----------------
-// ✅ ใช้ router ตัวเดียวให้ชัดเจน (กันแก้คนละไฟล์แล้วงง)
 const filesRouter = require("./files.supabase.routes");
 app.use("/files", filesRouter);
 

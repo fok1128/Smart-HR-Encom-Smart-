@@ -72,6 +72,22 @@ function decidedAtMs(r: any) {
   );
 }
 
+// ✅ ช่วงวันที่ลา (ยึด startAt/endAt เป็นหลัก และโชว์วัน+เวลาเสมอ)
+function leaveStartMs(r: any) {
+  return tsToMs(r?.startAt) || tsToMs(r?.startDate) || 0;
+}
+function leaveEndMs(r: any) {
+  return tsToMs(r?.endAt) || tsToMs(r?.endDate) || 0;
+}
+function fmtLeaveRange(r: any) {
+  const s = leaveStartMs(r);
+  const e = leaveEndMs(r);
+  if (!s && !e) return "-";
+  if (s && !e) return `${fmtDate(s)} (เริ่มลา)`;
+  if (!s && e) return `${fmtDate(e)} (สิ้นสุดลา)`;
+  return `${fmtDate(s)} ถึง ${fmtDate(e)}`;
+}
+
 function pickStr(...vals: any[]) {
   for (const v of vals) {
     const s = String(v ?? "").trim();
@@ -356,6 +372,8 @@ export default function LeaveApproveHistoryPage() {
         const atts = attachmentsOf(r);
         const attNames = atts.map((a: any) => a.name).join(" ");
 
+        const leaveRange = fmtLeaveRange(r); // ✅ เพิ่มให้ค้นหาเจอ
+
         const hay = [
           fullName,
           phone,
@@ -367,6 +385,7 @@ export default function LeaveApproveHistoryPage() {
           reason,
           attNames,
           statusLabelTH(r?.status),
+          leaveRange,
         ]
           .filter(Boolean)
           .join(" ")
@@ -513,7 +532,6 @@ export default function LeaveApproveHistoryPage() {
     try {
       const exporter = getExporterProfile(user);
 
-      // ✅ ทำ summary เป็น any ตัวเดียว (กัน TS แดงจุกจิก)
       const summary: any = {
         total: exportRowsWithSnapshot.length,
         approved: approvedCount,
@@ -602,7 +620,7 @@ export default function LeaveApproveHistoryPage() {
             <input
               value={qText}
               onChange={(e) => setQText(e.target.value)}
-              placeholder="ค้นหา: ชื่อ/เบอร์/อีเมล/เลขคำร้อง/ประเภท/ไฟล์แนบ/สถานะ(ยกเลิก)"
+              placeholder="ค้นหา: ชื่อ/เบอร์/อีเมล/เลขคำร้อง/ประเภท/ไฟล์แนบ/สถานะ(ยกเลิก)/ช่วงวันที่ลา"
               className={cn("mt-2", inputTheme.purple)}
             />
           </div>
@@ -765,6 +783,9 @@ export default function LeaveApproveHistoryPage() {
             const decidedAt = fmtDate(
               r.decidedAt || r.approvedAt || r.rejectedAt || r.canceledAt || r.cancelledAt || r.updatedAt
             );
+
+            const leaveRange = fmtLeaveRange(r); // ✅ ใช้แสดงผล
+
             const stTH = statusLabelTH(r.status);
             const checked = selectedIds.has(r.id);
 
@@ -796,6 +817,11 @@ export default function LeaveApproveHistoryPage() {
 
                       <div>
                         ประเภท: <span className="font-semibold">{leaveTypeText}</span>
+                      </div>
+
+                      {/* ✅ เพิ่ม: ช่วงวันที่ลา (เริ่ม–สิ้นสุด) */}
+                      <div>
+                        ช่วงวันที่ลา (เริ่ม–สิ้นสุด): <span className="font-semibold">{leaveRange}</span>
                       </div>
 
                       <div>
@@ -951,6 +977,12 @@ export default function LeaveApproveHistoryPage() {
                     {r.requestNo || "-"} • {statusLabelTH(r.status)}
                   </div>
                   <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">{fullNameOf(r)}</div>
+
+                  {/* ✅ เพิ่ม: ช่วงวันที่ลา */}
+                  <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    ช่วงวันที่ลา: {fmtLeaveRange(r)}
+                  </div>
+
                   <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
                     ตัดสินใจ/อัปเดต:{" "}
                     {fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt || r.canceledAt || r.cancelledAt || r.updatedAt)}
