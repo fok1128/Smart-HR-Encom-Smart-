@@ -1,15 +1,6 @@
 // src/pages/LeaveApproveHistoryPage.tsx
 import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  query,
-  where,
-  writeBatch,
-} from "firebase/firestore";
+import { collection, deleteDoc, doc, getDocs, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { useToastCenter } from "../components/common/ToastCenter";
@@ -143,7 +134,19 @@ type DeleteMode = "DEL_UID" | "DEL_SELECTED" | "DEL_ONE" | null;
 export default function LeaveApproveHistoryPage() {
   const { user } = useAuth();
   const { showToast } = useToastCenter();
-  const { confirm } = useDialogCenter();
+
+  // ✅ ใช้ DialogCenter เป็นหลัก แต่กันพังด้วย fallback
+  const dialog: any = useDialogCenter();
+  const confirm: any = dialog?.confirm ?? dialog?.dialog?.confirm; // เผื่อ shape ต่างกัน
+  const alert: any = dialog?.alert ?? dialog?.dialog?.alert;
+
+  const notify = (msg: string, opts?: { title?: string; variant?: any; durationMs?: number }) => {
+    if (typeof alert === "function") {
+      return alert(msg, { title: opts?.title, variant: opts?.variant });
+    }
+    // fallback (กันหน้าหาย/กันโปรเจกต์ยังไม่รองรับ alert)
+    return showToast(msg, { title: opts?.title, variant: opts?.variant, durationMs: opts?.durationMs });
+  };
 
   const role = String((user as any)?.role || "").toUpperCase();
   const canView = APPROVER_ROLES.includes(role);
@@ -259,7 +262,7 @@ export default function LeaveApproveHistoryPage() {
         console.error("LeaveApproveHistoryPage snapshot error:", err);
         setRows([]);
         setLoading(false);
-        showToast("โหลดข้อมูลไม่สำเร็จ", { title: "ผิดพลาด", variant: "danger" });
+        notify("โหลดข้อมูลไม่สำเร็จ", { title: "ผิดพลาด", variant: "danger" });
       }
     );
 
@@ -389,18 +392,18 @@ export default function LeaveApproveHistoryPage() {
 
       const refs = Array.from(refsMap.values()).map((ref) => ({ ref }));
       if (refs.length === 0) {
-        showToast("ไม่พบรายการประวัติของบัญชีนี้", { title: "ไม่พบข้อมูล", variant: "warning" });
+        notify("ไม่พบรายการประวัติของบัญชีนี้", { title: "ไม่พบข้อมูล", variant: "warning" });
         return;
       }
 
       const deleted = await batchDeleteByRefs(refs);
 
-      showToast(`ลบประวัติสำเร็จ ${deleted} รายการ`, { title: "สำเร็จ", variant: "success", durationMs: 2200 });
+      notify(`ลบประวัติสำเร็จ ${deleted} รายการ`, { title: "สำเร็จ", variant: "success" });
       setAccountUid("");
       setSelectedIds(new Set());
     } catch (e: any) {
       console.error(e);
-      showToast(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
+      notify(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusy(false);
       resetDeleteFlow();
@@ -416,11 +419,11 @@ export default function LeaveApproveHistoryPage() {
       const refs = ids.map((id) => ({ ref: doc(db, "leave_requests", id) }));
       const deleted = await batchDeleteByRefs(refs);
 
-      showToast(`ลบรายการที่เลือกสำเร็จ ${deleted} รายการ`, { title: "สำเร็จ", variant: "success", durationMs: 2200 });
+      notify(`ลบรายการที่เลือกสำเร็จ ${deleted} รายการ`, { title: "สำเร็จ", variant: "success" });
       setSelectedIds(new Set());
     } catch (e: any) {
       console.error(e);
-      showToast(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
+      notify(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusy(false);
       resetDeleteFlow();
@@ -434,7 +437,7 @@ export default function LeaveApproveHistoryPage() {
     setBusy(true);
     try {
       await deleteDoc(doc(db, "leave_requests", id));
-      showToast("ลบรายการนี้สำเร็จ", { title: "สำเร็จ", variant: "success", durationMs: 1800 });
+      notify("ลบรายการนี้สำเร็จ", { title: "สำเร็จ", variant: "success" });
 
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -443,7 +446,7 @@ export default function LeaveApproveHistoryPage() {
       });
     } catch (e: any) {
       console.error(e);
-      showToast(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
+      notify(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusy(false);
       resetDeleteFlow();
@@ -480,7 +483,8 @@ export default function LeaveApproveHistoryPage() {
         orgLine2: "ฝ่ายทรัพยากรบุคคล (HR)",
 
         exportedByProfile: exporter,
-        exportedBy: `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() || (user as any)?.email || (user as any)?.uid || "-",
+        exportedBy:
+          `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() || (user as any)?.email || (user as any)?.uid || "-",
         exportedAt: new Date(),
 
         filtersText: `ค้นหา: ${qText?.trim() || "-"} | สถานะ: ${statusLabel}`,
@@ -495,13 +499,14 @@ export default function LeaveApproveHistoryPage() {
         signatureTitle: "รักษาการกรรมการผู้จัดการใหญ่",
         signatureName: "นายจิรศักดิ์ บุญนาค",
 
-        notify: (msg: string, opts?: any) => showToast(msg, { title: opts?.title, variant: opts?.variant }),
+        // ✅ ให้ popup เหมือนโค้ดกลาง
+        notify: (msg: string, opts?: any) => notify(msg, { title: opts?.title, variant: opts?.variant }),
       });
 
-      showToast("Export PDF สำเร็จ", { title: "สำเร็จ", variant: "success", durationMs: 1800 });
+      notify("Export PDF สำเร็จ", { title: "สำเร็จ", variant: "success" });
     } catch (e: any) {
       console.error(e);
-      showToast(e?.message || String(e), { title: "Export ไม่สำเร็จ", variant: "danger" });
+      notify(e?.message || String(e), { title: "Export ไม่สำเร็จ", variant: "danger" });
     }
   };
 
@@ -575,7 +580,7 @@ export default function LeaveApproveHistoryPage() {
               onClick={() => {
                 setDateFrom("");
                 setDateTo("");
-                showToast("ล้างช่วงวันที่เรียบร้อย", { title: "สำเร็จ", variant: "success", durationMs: 1400 });
+                notify("ล้างช่วงวันที่เรียบร้อย", { title: "สำเร็จ", variant: "success" });
               }}
               className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
             >
@@ -616,13 +621,15 @@ export default function LeaveApproveHistoryPage() {
               type="button"
               disabled={!accountUid || busy}
               onClick={async () => {
-                // ยืนยันครั้งที่ 1 ด้วย DialogCenter (ของกลาง)
-                const ok = await confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)", {
-                title: "ยืนยันการลบ",
-                confirmText: "ไปขั้นยืนยันครั้งที่ 2",
-                cancelText: "ยกเลิก",
-                variant: "danger",
-              });
+                const ok =
+                  typeof confirm === "function"
+                    ? await confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)", {
+                        title: "ยืนยันการลบ",
+                        confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                        cancelText: "ยกเลิก",
+                        variant: "danger",
+                      })
+                    : window.confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)");
                 if (!ok) return;
 
                 setDeleteMode("DEL_UID");
@@ -732,13 +739,16 @@ export default function LeaveApproveHistoryPage() {
                           onClick={async () => {
                             setDeleteOneTarget(r);
 
-                            // ยืนยันครั้งที่ 1 ด้วย DialogCenter
-                            const ok = await confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)", {
-                            title: "ยืนยันการลบรายการ",
-                            confirmText: "ไปขั้นยืนยันครั้งที่ 2",
-                            cancelText: "ยกเลิก",
-                            variant: "danger",
-                          });
+                            const ok =
+                              typeof confirm === "function"
+                                ? await confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)", {
+                                    title: "ยืนยันการลบรายการ",
+                                    confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                                    cancelText: "ยกเลิก",
+                                    variant: "danger",
+                                  })
+                                : window.confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)");
+
                             if (!ok) {
                               setDeleteOneTarget(null);
                               return;
@@ -792,12 +802,15 @@ export default function LeaveApproveHistoryPage() {
               onClick={async () => {
                 setPreviewOpen(false);
 
-                const ok = await confirm(`คุณต้องการลบรายการที่เลือกทั้งหมด ${selectedRows.length} รายการใช่ไหม? (ขั้นที่ 1)`, {
-                title: "ยืนยันการลบรายการที่เลือก",
-                confirmText: "ไปขั้นยืนยันครั้งที่ 2",
-                cancelText: "ยกเลิก",
-                variant: "danger",
-              });
+                const ok =
+                  typeof confirm === "function"
+                    ? await confirm(`คุณต้องการลบรายการที่เลือกทั้งหมด ${selectedRows.length} รายการใช่ไหม? (ขั้นที่ 1)`, {
+                        title: "ยืนยันการลบรายการที่เลือก",
+                        confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                        cancelText: "ยกเลิก",
+                        variant: "danger",
+                      })
+                    : window.confirm(`คุณต้องการลบรายการที่เลือกทั้งหมด ${selectedRows.length} รายการใช่ไหม? (ขั้นที่ 1)`);
                 if (!ok) return;
 
                 setDeleteMode("DEL_SELECTED");

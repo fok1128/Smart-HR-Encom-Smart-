@@ -1,23 +1,57 @@
-import { useMemo } from "react";
+// src/components/common/AppHeader.tsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSidebar } from "../context/SidebarContext";
 import { useAuth } from "../context/AuthContext";
+import { getSignedUrl } from "../services/files";
 
-// ✅ type ชั่วคราวให้ TS ไม่ฟ้อง (เพราะ MeResponse ยังไม่ประกาศ field พวกนี้)
+// ✅ type ชั่วคราวให้ TS ไม่ฟ้อง
 type UserProfile = {
-  email?: string;
+  uid?: string;
+  email?: string | null;
+
   fname?: string;
   lname?: string;
   position?: string;
-  avatarUrl?: string;
+
+  // ชื่อที่เจอบ่อย ๆ
+  avatarUrl?: string;      // อาจเป็น https://... หรือ storagePath
+  avatar?: string;         // fallback
+  photoURL?: string;       // firebase-style
+  photoUrl?: string;
+  profilePhoto?: string;
+  avatarPath?: string;     // supabase key
+  storagePath?: string;    // เผื่อเธอเก็บชื่อนี้
+
   displayName?: string;
   name?: string;
 };
 
 function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/);
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
   const a = parts[0]?.[0] ?? "";
   const b = parts[1]?.[0] ?? "";
   return (a + b).toUpperCase() || "U";
+}
+
+function pickStr(...vals: any[]) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function looksLikeHttpUrl(s: string) {
+  return /^https?:\/\//i.test(s);
+}
+
+// heuristics: supabase key มักไม่มี http และมักมี / หรือ โฟลเดอร์
+function looksLikeStoragePath(s: string) {
+  if (!s) return false;
+  if (looksLikeHttpUrl(s)) return false;
+  // กันค่าแปลกๆ เช่น "U" หรือ "N/A"
+  if (s.length < 6) return false;
+  return s.includes("/") || s.includes("avatars") || s.includes("profile") || s.includes("uploads");
 }
 
 const AppHeader: React.FC = () => {
@@ -34,14 +68,82 @@ const AppHeader: React.FC = () => {
 
   const employeeName = useMemo(() => {
     const full = [u?.fname, u?.lname].filter(Boolean).join(" ").trim();
-    return full || u?.displayName || u?.name || u?.email || "พนักงาน";
-  }, [u]);
+    return full || u?.displayName || u?.name || (u?.email ?? "") || "พนักงาน";
+  }, [u?.fname, u?.lname, u?.displayName, u?.name, u?.email]);
 
   const employeePosition = useMemo(() => {
     return u?.position || "พนักงาน";
-  }, [u]);
+  }, [u?.position]);
 
-  const avatarUrl = u?.avatarUrl || "";
+  // ====== Avatar resolve ======
+  // รวมทุก field ที่อาจเป็นรูป
+  const rawAvatar = useMemo(() => {
+    return pickStr(
+      u?.avatarUrl,
+      u?.avatar,
+      u?.photoURL,
+      u?.photoUrl,
+      u?.profilePhoto,
+      u?.avatarPath,
+      u?.storagePath
+    );
+  }, [u?.avatarUrl, u?.avatar, u?.photoURL, u?.photoUrl, u?.profilePhoto, u?.avatarPath, u?.storagePath]);
+
+  // แปลงเป็น url จริงไว้ใช้ render
+  const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string>("");
+  const lastKeyRef = useRef<string>("");
+
+  useEffect(() => {
+    let alive = true;
+
+    const run = async () => {
+      const key = (rawAvatar || "").trim();
+      // ถ้าไม่มีรูป -> เคลียร์
+      if (!key) {
+        lastKeyRef.current = "";
+        if (alive) setResolvedAvatarUrl("");
+        return;
+      }
+
+      // กันยิงซ้ำถ้า key เดิม
+      if (lastKeyRef.current === key && resolvedAvatarUrl) return;
+
+      lastKeyRef.current = key;
+
+      try {
+        // ถ้าเป็นลิงก์ http อยู่แล้ว ใช้ได้เลย
+        if (looksLikeHttpUrl(key)) {
+          if (alive) setResolvedAvatarUrl(key);
+          return;
+        }
+
+        // ถ้าเป็น storagePath -> ขอ signed url
+        if (looksLikeStoragePath(key)) {
+          const url = await getSignedUrl(key);
+          if (alive) setResolvedAvatarUrl(url || "");
+          return;
+        }
+
+        // fallback: ถ้า key ไม่เหมือน url และไม่เหมือน path ก็ลองใช้เป็น url ตรงๆ (บางคนเก็บเป็น relative)
+        if (alive) setResolvedAvatarUrl(key);
+      } catch (e) {
+        console.error("resolve avatar error:", e);
+        if (alive) setResolvedAvatarUrl("");
+      }
+    };
+
+    run();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawAvatar]);
+
+  // ✅ กันรูปแตก: ถ้าโหลดไม่ได้ให้ fallback เป็น initials
+  const [imgOk, setImgOk] = useState(true);
+  useEffect(() => {
+    setImgOk(true);
+  }, [resolvedAvatarUrl]);
 
   return (
     <header className="sticky top-0 z-40 flex w-full bg-white border-gray-200 dark:border-gray-800 dark:bg-gray-900 lg:border-b">
@@ -84,19 +186,17 @@ const AppHeader: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-3 rounded-xl px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">
             <div className="text-right leading-tight">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {employeeName}
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {employeePosition}
-              </div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{employeeName}</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{employeePosition}</div>
             </div>
 
-            {avatarUrl ? (
+            {resolvedAvatarUrl && imgOk ? (
               <img
-                src={avatarUrl}
+                src={resolvedAvatarUrl}
                 alt="employee avatar"
                 className="h-9 w-9 rounded-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setImgOk(false)}
               />
             ) : (
               <div className="grid h-9 w-9 place-items-center rounded-full bg-gray-200 text-sm font-semibold text-gray-700 dark:bg-gray-700 dark:text-gray-100">

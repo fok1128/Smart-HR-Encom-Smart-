@@ -6,14 +6,28 @@ const admin = require("firebase-admin");
 
 // ----------------- Express -----------------
 const app = express();
-app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN
-      ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean)
-      : true,
-    credentials: true,
-  })
-);
+
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean)
+  : true;
+
+const corsOptions = {
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  maxAge: 86400, // ✅ 24h ให้ browser cache preflight
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // ✅ ตอบ OPTIONS ให้ชัด
+
+// (เสริม) บาง proxy แปลก ๆ ชอบลืม maxAge ใส่ซ้ำให้ชัวร์
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Max-Age", "86400");
+  next();
+});
+
 app.use(express.json());
 
 // ----------------- Firebase Admin Init -----------------

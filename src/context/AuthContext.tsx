@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -128,6 +129,7 @@ async function fetchMeWithClaimsRefresh(fbUser: FirebaseUser): Promise<MeRespons
   const me1 = await fetchMe(token1);
 
   if (me1?.claimSync?.changed) {
+    // ✅ บังคับ refresh token เพื่อดึง claim ใหม่
     await fbUser.getIdToken(true);
     const token2 = await fbUser.getIdToken();
     const me2 = await fetchMe(token2);
@@ -141,26 +143,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // ✅ ใช้สำหรับให้ login() รอผลจาก onAuthStateChanged()
+  const pendingLoginRef = useRef<{
+    resolve: (me: MeResponse) => void;
+    reject: (e: unknown) => void;
+    timer: any;
+  } | null>(null);
+
+  const resolvePendingLogin = (me: MeResponse) => {
+    const p = pendingLoginRef.current;
+    if (!p) return;
+    clearTimeout(p.timer);
+    pendingLoginRef.current = null;
+    p.resolve(me);
+  };
+
+  const rejectPendingLogin = (e: unknown) => {
+    const p = pendingLoginRef.current;
+    if (!p) return;
+    clearTimeout(p.timer);
+    pendingLoginRef.current = null;
+    p.reject(e);
+  };
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       setLoading(true);
       try {
         if (!fbUser) {
           setUser(null);
+          // ถ้ากำลัง login แล้วโดนตัดเป็น null ให้ reject
+          rejectPendingLogin(new Error("AUTH_SIGNED_OUT"));
           return;
         }
 
+        // ✅ จุดเดียวที่ยิง /me ตอน auth state เปลี่ยน
         const me = await fetchMeWithClaimsRefresh(fbUser);
         setUser(me);
+
+        // ✅ ถ้า login() กำลังรออยู่ ให้ตอบกลับตรงนี้ (โดยไม่ยิง /me ซ้ำ)
+        resolvePendingLogin(me);
       } catch (e) {
         console.error("Auth bootstrap error:", e);
         setUser(null);
+        rejectPendingLogin(e);
       } finally {
         setLoading(false);
       }
     });
 
     return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ✅ เมื่อมีการอัปเดตโปรไฟล์ (phone/avatar) ให้ refetch /me เพื่อให้ทั้งเว็บอัปเดตทันที
@@ -169,10 +202,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fbUser = auth.currentUser;
       if (!fbUser) return;
       try {
+        setLoading(true);
         const me = await fetchMeWithClaimsRefresh(fbUser);
         setUser(me);
       } catch (e) {
         console.error("Auth refresh after profile-updated error:", e);
+      } finally {
+        setLoading(false);
       }
     };
     window.addEventListener("profile-updated", onUpdated);
@@ -181,24 +217,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login: AuthContextType["login"] = async (email, password, remember) => {
     setLoading(true);
+
+    // กันกด login ซ้ำ ๆ
+    if (pendingLoginRef.current) {
+      throw new Error("LOGIN_IN_PROGRESS");
+    }
+
     try {
-      await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+      await setPersistence(
+        auth,
+        remember ? browserLocalPersistence : browserSessionPersistence
+      );
 
-      try {
-        await signOut(auth);
-      } catch {
-        // ignore
-      }
+      // ❗️ไม่จำเป็นต้อง signOut ก่อน signIn (มันทำให้ state กระตุก/ยิง event เพิ่ม)
+      // ถ้าอยากคงไว้จริง ๆ ก็ทำได้ แต่จะเสี่ยงเกิด state change เพิ่ม
+      // try { await signOut(auth); } catch {}
 
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      const fbUser = cred.user;
+      // ✅ สร้าง promise รอ onAuthStateChanged() fetch /me แล้วค่อย resolve
+      const waitMe = new Promise<MeResponse>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pendingLoginRef.current = null;
+          reject(new Error("LOGIN_TIMEOUT_WAITING_ME"));
+        }, 15000); // 15s กันค้าง
+        pendingLoginRef.current = { resolve, reject, timer };
+      });
 
-      const fbEmail = fbUser?.email ?? auth.currentUser?.email ?? null;
-      if (!fbEmail) throw new Error("FIREBASE_NO_CURRENT_USER");
+      await signInWithEmailAndPassword(auth, email, password);
 
-      const me = await fetchMeWithClaimsRefresh(fbUser);
-      setUser(me);
-      return me;
+      // ✅ คืนค่า me จาก onAuthStateChanged (ไม่ยิง /me ซ้ำ)
+      return await waitMe;
     } finally {
       setLoading(false);
     }
@@ -207,6 +254,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout: AuthContextType["logout"] = async () => {
     setLoading(true);
     try {
+      // ถ้ามี login pending อยู่ ให้ยกเลิก
+      rejectPendingLogin(new Error("LOGOUT_DURING_LOGIN"));
       await signOut(auth);
       setUser(null);
     } finally {
@@ -214,7 +263,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading, login, logout]);
+  const value = useMemo(
+    () => ({ user, loading, login, logout }),
+    [user, loading]
+  );
+
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
