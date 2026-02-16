@@ -1,12 +1,12 @@
 // src/pages/Calendar.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type SelectHTMLAttributes } from "react";
 import { useLeave } from "../context/LeaveContext";
 import { useAuth } from "../context/AuthContext";
 import { buildThaiHolidayMapAround } from "../services/utils/thHolidays";
-import {
-  listenMyFieldWorkRequests,
-  type FieldWorkRequestDoc,
-} from "../services/fieldWorkRequests";
+import { listenMyFieldWorkRequests, type FieldWorkRequestDoc } from "../services/fieldWorkRequests";
+import AppButton from "../components/common/AppButton";
+import { useDialogCenter } from "../components/common/DialogCenter";
+import { inputTheme } from "../components/ui/theme/inputTheme";
 
 // ===== Types =====
 type LeaveCategory =
@@ -59,8 +59,6 @@ type BarSeg = {
   date: string; // YYYY-MM-DD
   isStart: boolean;
   isEnd: boolean;
-
-  // ✅ NEW: สำหรับ timed event วันเดียว ให้รู้ว่าเป็น timed
   isTimedSingleDay?: boolean;
 };
 
@@ -68,13 +66,10 @@ const dayLabelsMonFirst = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const datePart = (s: string) => String(s || "").split("T")[0];
 
-const toISODate = (d: Date) =>
-  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const toISODate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
 const sameDay = (a: Date, b: Date) =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth() === b.getMonth() &&
-  a.getDate() === b.getDate();
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 const addMonths = (d: Date, m: number) => new Date(d.getFullYear(), d.getMonth() + m, 1);
@@ -88,16 +83,13 @@ const addMonths = (d: Date, m: number) => new Date(d.getFullYear(), d.getMonth()
 function ensureISODateTime(v: any): string {
   if (!v) return toISODate(new Date());
 
-  // string
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return toISODate(new Date());
 
-    // already ok
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return s.slice(0, 16);
 
-    // try parse
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
       const ymd = toISODate(d);
@@ -108,7 +100,6 @@ function ensureISODateTime(v: any): string {
     return toISODate(new Date());
   }
 
-  // Firestore timestamp
   if (typeof v?.toDate === "function") {
     const d = v.toDate();
     const ymd = toISODate(d);
@@ -117,7 +108,6 @@ function ensureISODateTime(v: any): string {
     return `${ymd}T${hh}:${mm}`;
   }
 
-  // Date object
   if (v instanceof Date) {
     const ymd = toISODate(v);
     const hh = pad2(v.getHours());
@@ -125,7 +115,6 @@ function ensureISODateTime(v: any): string {
     return `${ymd}T${hh}:${mm}`;
   }
 
-  // number / other
   const d = new Date(v);
   if (!isNaN(d.getTime())) {
     const ymd = toISODate(d);
@@ -340,7 +329,6 @@ function normalizeCategory(x?: string): LeaveCategory {
     x === "ปฏิบัติงานนอกสถานที่"
   )
     return x;
-
   if (x === "ลาคลอด" || x === "ลาราชการทหาร" || x === "ลาเพื่อทำหมัน") return "ลากรณีพิเศษ";
   return "ลากิจ";
 }
@@ -362,7 +350,6 @@ function normalizeSubType(x?: string, cat?: LeaveCategory): LeaveSubType {
 
   if (x && all.includes(x as LeaveSubType)) return x as LeaveSubType;
 
-  // ✅ fix: ถ้าเจอคำว่า "ทำหมัน" ให้เป็น "ลาเพื่อทำหมัน" ไม่ใช่ "อื่นๆ"
   if (typeof x === "string" && x.includes("ทำหมัน")) return "ลาเพื่อทำหมัน";
 
   if (cat === "ปฏิบัติงานนอกสถานที่") return "FIELD_WORK";
@@ -392,9 +379,43 @@ function getRequestOwnerUid(r: RequestLike): string {
   return String(uid || "").trim();
 }
 
+// ✅ Select ธีมกลาง (ใช้ inputTheme.control + ทำลูกศรให้สวย/คุมได้)
+function ThemedSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
+  const { className = "", children, ...rest } = props;
+
+  return (
+    <div className="relative">
+      <select
+        {...rest}
+        className={[
+          inputTheme.control,
+          "h-9 py-0 text-sm font-semibold",
+          "appearance-none pr-10",
+          className,
+        ].join(" ")}
+      >
+        {children}
+      </select>
+
+      <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-500 dark:text-gray-300">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M6 9l6 6 6-6"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 export default function Calendar() {
   const { calendarRequests, loadingCalendar } = useLeave();
   const { user } = useAuth() as any;
+  const dialog = useDialogCenter();
 
   const myUid: string = String(user?.uid || "").trim();
 
@@ -536,7 +557,6 @@ export default function Calendar() {
       const hasTimeEnd = ev.endAt.includes("T");
       const allDay = !(hasTimeStart && hasTimeEnd);
 
-      // 1) allDay วันเดียว
       if (allDay && sISO === eISO) {
         const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
         if (!m.has(sISO)) m.set(sISO, []);
@@ -544,7 +564,6 @@ export default function Calendar() {
         continue;
       }
 
-      // 2) ✅ timed วันเดียว (เช่น field work) -> ทำ mini bar ให้ด้วย
       if (!allDay && sISO === eISO) {
         const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true, isTimedSingleDay: true };
         if (!m.has(sISO)) m.set(sISO, []);
@@ -552,7 +571,6 @@ export default function Calendar() {
         continue;
       }
 
-      // 3) หลายวัน -> ทำ bar ต่อเนื่อง
       if (sISO === eISO) continue;
 
       const days = eachDayISOInRange(sISO, eISO);
@@ -596,9 +614,26 @@ export default function Calendar() {
       .sort((a, b) => (a.startAt < b.startAt ? -1 : 1));
   }, [leaveEvents, currentMonth]);
 
-  const resetFilters = () => {
+  // ✅ ล้างตัวกรอง + popup confirm กลาง
+  const resetFilters = async () => {
+    const alreadyDefault = statusFilter === "ทั้งหมด" && categoryFilter === "ทั้งหมด";
+    if (alreadyDefault) {
+      await dialog.alert("ตอนนี้ไม่มีตัวกรองให้ล้าง", { title: "แจ้งเตือน", variant: "info" });
+      return;
+    }
+
+    const ok = await dialog.confirm("ต้องการล้างตัวกรองทั้งหมดใช่ไหม?", {
+      title: "ยืนยันการล้างตัวกรอง",
+      confirmText: "ล้างตัวกรอง",
+      cancelText: "ยกเลิก",
+      variant: "warning",
+    });
+
+    if (!ok) return;
+
     setStatusFilter("ทั้งหมด");
     setCategoryFilter("ทั้งหมด");
+    await dialog.success("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ" });
   };
 
   return (
@@ -606,10 +641,7 @@ export default function Calendar() {
       <div className="flex items-start justify-between gap-3">
         <div className="w-full">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">ปฏิทินวันลา</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            วันหยุดไทย + วันลา + งานนอกสถานที่ • ลาหลายวันเป็นแถบต่อเนื่อง • รองรับระบุเวลา
-            {loadingCalendar ? " • กำลังโหลด..." : ""}
-          </p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{loadingCalendar ? " • กำลังโหลด..." : ""}</p>
 
           {fwErr && (
             <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
@@ -621,54 +653,36 @@ export default function Calendar() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">สถานะ</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-              >
+              <ThemedSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
                 <option value="ทั้งหมด">ทั้งหมด</option>
                 <option value="รอดำเนินการ">รอดำเนินการ</option>
                 <option value="อนุมัติ">อนุมัติ</option>
                 <option value="ไม่อนุมัติ">ไม่อนุมัติ</option>
-              </select>
+              </ThemedSelect>
             </div>
 
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">ประเภท</span>
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
-                className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-              >
+              <ThemedSelect value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}>
                 <option value="ทั้งหมด">ทั้งหมด</option>
                 <option value="ลากิจ">ลากิจ</option>
                 <option value="ลาป่วย">ลาป่วย</option>
                 <option value="ลาพักร้อน">ลาพักร้อน</option>
                 <option value="ลากรณีพิเศษ">ลากรณีพิเศษ</option>
                 <option value="ปฏิบัติงานนอกสถานที่">ปฏิบัติงานนอกสถานที่</option>
-              </select>
+              </ThemedSelect>
             </div>
 
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-            >
+            <AppButton variant="outline" size="sm" onClick={resetFilters} className="h-9">
               ล้างตัวกรอง
-            </button>
+            </AppButton>
 
             <div className="ml-auto flex items-center gap-3">
-              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                แสดง {leaveEvents.length} รายการ
-              </span>
+              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">แสดง {leaveEvents.length} รายการ</span>
 
-              <button
-                type="button"
-                onClick={goToday}
-                className="h-9 rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-              >
+              <AppButton variant="outline" size="sm" onClick={goToday} className="h-9 px-4">
                 วันนี้
-              </button>
+              </AppButton>
             </div>
           </div>
 
@@ -685,27 +699,29 @@ export default function Calendar() {
         <div className="xl:col-span-2 rounded-2xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 sm:p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
+              <AppButton
+                variant="outline"
+                size="sm"
                 onClick={() => setCurrentMonth((d) => addMonths(d, -1))}
-                className="grid h-10 w-10 place-items-center rounded-xl border border-gray-200 bg-white hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800"
+                className="h-10 w-10 px-0"
                 aria-label="Previous month"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              </button>
+              </AppButton>
 
-              <button
-                type="button"
+              <AppButton
+                variant="outline"
+                size="sm"
                 onClick={() => setCurrentMonth((d) => addMonths(d, 1))}
-                className="grid h-10 w-10 place-items-center rounded-xl border border-gray-200 bg-white hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800"
+                className="h-10 w-10 px-0"
                 aria-label="Next month"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              </button>
+              </AppButton>
             </div>
 
             <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
@@ -739,8 +755,7 @@ export default function Calendar() {
               const occs = occMap.get(iso) ?? [];
               const timedOccs = occs.filter((o) => !o.allDay);
 
-              // ✅ ใช้ "ตำแหน่งใน grid" หา column index ให้ถูกกับ weekStartsOn=1
-              const colIndex = idx % 7; // 0=จันทร์ ... 5=เสาร์ ... 6=อาทิตย์
+              const colIndex = idx % 7; // 0=จันทร์ ... 6=อาทิตย์
 
               const maxBars = 2;
               const showBars = barSegs.slice(0, maxBars);
@@ -760,7 +775,10 @@ export default function Calendar() {
                     inMonth
                       ? "border-gray-200 bg-white hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800"
                       : "border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-400 dark:hover:bg-gray-800/80",
-                    isSelected ? "ring-3 ring-brand-500/20 border-brand-300 dark:border-brand-800" : "",
+                    // ✅ selected -> ม่วงเข้ม
+                    isSelected
+                      ? "ring-4 ring-violet-900/30 border-violet-800 shadow-sm shadow-violet-900/10 dark:border-violet-500/50"
+                      : "",
                     isHoliday ? "bg-red-50/60 dark:bg-red-900/10" : "",
                   ].join(" ")}
                 >
@@ -769,14 +787,12 @@ export default function Calendar() {
                       const ev = seg.event;
                       const style = catStyle[ev.category];
 
-                      // ✅ rounded ขอบซ้าย/ขวา ถูกต้องกับ Monday-first
                       const leftRound = seg.isStart || colIndex === 0;
                       const rightRound = seg.isEnd || colIndex === 6;
 
                       const base = "absolute left-[-4px] right-[-4px]";
                       const roundCls = `${leftRound ? "rounded-l-lg" : ""} ${rightRound ? "rounded-r-lg" : ""}`;
 
-                      // ✅ timed single day ทำให้เป็น bar ที่ “บางลงนิดนึง” (อ่านง่าย)
                       const barH = seg.isTimedSingleDay ? 12 : 14;
                       const barGap = 4;
                       const baseBottom = 6;
@@ -790,7 +806,7 @@ export default function Calendar() {
                         >
                           {(seg.isStart || colIndex === 0) && (
                             <div
-                              className={`px-2 text-[10px] font-semibold leading-[${barH}px] ${style.barText} truncate`}
+                              className={`px-2 text-[10px] font-semibold ${style.barText} truncate`}
                               style={{ lineHeight: `${barH}px` }}
                             >
                               {leaveLabel(ev)}
@@ -804,10 +820,10 @@ export default function Calendar() {
                   <div
                     className={[
                       "absolute top-2 left-2 z-20 text-sm font-semibold leading-none",
-                      isToday ? "text-brand-500" : "text-gray-900 dark:text-gray-100",
+                      // ✅ today -> ม่วงเข้ม
+                      isToday ? "text-violet-800 dark:text-violet-300" : "text-gray-900 dark:text-gray-100",
                       !inMonth ? "text-gray-600 dark:text-gray-400" : "",
                       isHoliday ? "text-red-600 dark:text-red-300" : "",
-                      // ✅ แดงเฉพาะ "อาทิตย์" (เสาร์เป็นวันทำงาน)
                       !isHoliday && inMonth && isSunday ? "text-red-600/80 dark:text-red-300/80" : "",
                     ].join(" ")}
                   >
@@ -831,28 +847,19 @@ export default function Calendar() {
                       )
                         .slice(0, 3)
                         .map((cat) => (
-                          <span
-                            key={cat}
-                            className={`inline-flex h-2 w-2 rounded-full ${catStyle[cat].dot}`}
-                            title={cat}
-                          />
+                          <span key={cat} className={`inline-flex h-2 w-2 rounded-full ${catStyle[cat].dot}`} title={cat} />
                         ))}
                       {moreBars > 0 && (
-                        <span className="ml-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
-                          +{moreBars}
-                        </span>
+                        <span className="ml-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">+{moreBars}</span>
                       )}
                     </div>
                   )}
 
-                  {!isHoliday &&
-                    timedOccs[0]?.startMin != null &&
-                    timedOccs[0]?.endMin != null && (
-                      <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
-                        {formatTimeFromMinutes(timedOccs[0].startMin)}–
-                        {formatTimeFromMinutes(timedOccs[0].endMin)}
-                      </div>
-                    )}
+                  {!isHoliday && timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
+                    <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
+                      {formatTimeFromMinutes(timedOccs[0].startMin)}–{formatTimeFromMinutes(timedOccs[0].endMin)}
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -933,7 +940,6 @@ export default function Calendar() {
                     const timeText = occ.allDay
                       ? "ทั้งวัน"
                       : `${formatTimeFromMinutes(occ.startMin!)}–${formatTimeFromMinutes(occ.endMin!)}`;
-
                     const durMin = occ.allDay ? 0 : occ.endMin! - occ.startMin!;
                     const durText = occ.allDay ? "ทั้งวัน" : formatDurationMinutes(durMin);
 

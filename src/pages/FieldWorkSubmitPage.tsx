@@ -1,9 +1,10 @@
 // src/pages/FieldWorkSubmitPage.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import { useAuth } from "../context/AuthContext";
 import { useDialogCenter } from "../components/common/DialogCenter";
+import AppButton from "../components/common/AppButton";
 import {
   createFieldWorkRequestWithFiles,
   uploadFieldWorkFiles,
@@ -11,11 +12,18 @@ import {
   type FieldWorkSubmitter,
 } from "../services/fieldWorkRequests";
 
+// ✅ ใช้ธีม input จริงของโปรเจกต์
+import { inputTheme } from "../components/ui/theme/inputTheme";
+// ✅ ถ้าไฟล์นี้อยู่คนละ path ปรับให้ตรง
+import { tableTheme } from "../components/ui/theme/tableTheme";
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 function toISODateTimeLocal(d: Date) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(
+    d.getMinutes()
+  )}`;
 }
 function isValidDTLocal(s: string) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s);
@@ -23,6 +31,12 @@ function isValidDTLocal(s: string) {
 function formatKB(bytes: number) {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
+function formatMB(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+const MAX_FILE_MB = 10;
+const MAX_FILES = 10;
 
 export default function FieldWorkSubmitPage() {
   const { user } = useAuth() as any;
@@ -41,6 +55,11 @@ export default function FieldWorkSubmitPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const totalBytes = useMemo(() => files.reduce((sum, f) => sum + (f?.size || 0), 0), [files]);
+  const hasPendingFiles = files.length > 0 && uploaded.length === 0;
+
   function validate(): string {
     if (!user?.uid) return "ยังไม่เข้าสู่ระบบ";
     if (!place.trim()) return "กรุณากรอกสถานที่/หน่วยงานที่ไปปฏิบัติงาน";
@@ -53,26 +72,63 @@ export default function FieldWorkSubmitPage() {
     return "";
   }
 
+  function isAllowedMime(m: string) {
+    return m === "application/pdf" || String(m).startsWith("image/");
+  }
+
   function onPickFiles(list: FileList | null) {
     if (!list) return;
+    setErr("");
+
     const picked = Array.from(list);
+    const next: File[] = [];
+    const problems: string[] = [];
+
+    for (const f of picked) {
+      if (!isAllowedMime(f.type)) {
+        problems.push(`ไฟล์ "${f.name}" ชนิดไม่รองรับ`);
+        continue;
+      }
+      if (f.size > MAX_FILE_MB * 1024 * 1024) {
+        problems.push(`ไฟล์ "${f.name}" ใหญ่เกิน ${MAX_FILE_MB}MB`);
+        continue;
+      }
+      next.push(f);
+    }
 
     setFiles((prev) => {
-      const key = (f: File) => `${f.name}_${f.size}`;
+      const key = (f: File) => `${f.name}__${f.size}__${f.lastModified}`;
       const prevSet = new Set(prev.map(key));
-      const next = [...prev];
-      for (const f of picked) {
-        if (!prevSet.has(key(f))) next.push(f);
+      const merged = [...prev];
+
+      for (const f of next) {
+        if (merged.length >= MAX_FILES) break;
+        if (!prevSet.has(key(f))) merged.push(f);
       }
-      return next;
+
+      if (prev.length + next.length > MAX_FILES) {
+        problems.push(`เลือกไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`);
+      }
+
+      return merged;
     });
 
     setUploaded([]);
+
+    if (problems.length) {
+      dialog.alert(problems.join("\n"), { title: "ไฟล์บางรายการไม่ถูกเพิ่ม", variant: "warning" });
+    }
   }
 
   function removeFile(idx: number) {
     setFiles((prev) => prev.filter((_, i) => i !== idx));
     setUploaded([]);
+  }
+
+  function clearFiles() {
+    setFiles([]);
+    setUploaded([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function onUploadFiles() {
@@ -140,7 +196,7 @@ export default function FieldWorkSubmitPage() {
       const result = await createFieldWorkRequestWithFiles({
         uid: user!.uid,
         email: user?.email ?? null,
-        submitter, // snapshot ผู้ยื่น
+        submitter,
         startAt,
         endAt,
         place: place.trim(),
@@ -157,6 +213,7 @@ export default function FieldWorkSubmitPage() {
       setNote("");
       setFiles([]);
       setUploaded([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (e: any) {
       const m = e?.message || String(e);
       setErr(m);
@@ -166,9 +223,6 @@ export default function FieldWorkSubmitPage() {
     }
   }
 
-  const hasPendingFiles = files.length > 0 && uploaded.length === 0;
-
-  // ✅ กันเคส user หลุด: เคลียร์ error ทุกครั้งที่ login เปลี่ยน
   useEffect(() => {
     setErr("");
   }, [user?.uid]);
@@ -178,28 +232,57 @@ export default function FieldWorkSubmitPage() {
       <PageMeta title="Field Work | Smart HR" description="Field work submit page" />
       <PageBreadcrumb pageTitle="แจ้งปฏิบัติงานนอกสถานที่" />
 
+      {/* ✅ เหลือกรอบเดียว ไม่ซ้อน */}
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">แจ้งปฏิบัติงานนอกสถานที่</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">บันทึกแล้ว “อนุมัติอัตโนมัติ” (ไม่ต้องให้ผู้อนุมัติกด)</p>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white/90">แจ้งปฏิบัติงานนอกสถานที่</h3>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              บันทึกแล้ว “อนุมัติอัตโนมัติ” (ไม่ต้องให้ผู้อนุมัติกด)
+            </p>
           </div>
+
+          <AppButton
+            variant="outline"
+            disabled={saving || uploading || (!place && !note && !files.length)}
+            onClick={async () => {
+              if (saving || uploading) return;
+              const ok = await dialog.confirm("ต้องการล้างฟอร์มทั้งหมดหรือไม่?", {
+                title: "ยืนยันการล้างฟอร์ม",
+                variant: "warning",
+                confirmText: "ล้างฟอร์ม",
+                cancelText: "ยกเลิก",
+              });
+              if (!ok) return;
+
+              setPlace("");
+              setNote("");
+              setStartAt(toISODateTimeLocal(new Date()));
+              setEndAt(toISODateTimeLocal(new Date()));
+              clearFiles();
+              setErr("");
+            }}
+          >
+            ล้างฟอร์ม
+          </AppButton>
         </div>
 
+        {/* Form */}
         <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div>
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">สถานที่/หน่วยงาน</label>
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200">สถานที่/หน่วยงาน</label>
             <input
               value={place}
               onChange={(e) => setPlace(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+              className={`${inputTheme.purple} mt-2`}
               placeholder="เช่น โรงงานสาขา A / ลูกค้า XYZ / หน่วยงานภายนอก"
             />
           </div>
           <div />
 
           <div>
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">วัน/เวลาเริ่มต้น</label>
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200">วัน/เวลาเริ่มต้น</label>
             <input
               type="datetime-local"
               value={startAt}
@@ -208,119 +291,160 @@ export default function FieldWorkSubmitPage() {
                 setStartAt(v);
                 if (endAt && v && endAt < v) setEndAt(v);
               }}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+              className={`${inputTheme.control} mt-2`}
             />
           </div>
 
           <div>
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">วัน/เวลาสิ้นสุด</label>
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200">วัน/เวลาสิ้นสุด</label>
             <input
               type="datetime-local"
               min={startAt || undefined}
               value={endAt}
               onChange={(e) => setEndAt(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+              className={`${inputTheme.control} mt-2`}
             />
           </div>
 
           <div className="lg:col-span-2">
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">หมายเหตุ (ถ้ามี)</label>
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200">หมายเหตุ (ถ้ามี)</label>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
-              className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+              className={`${inputTheme.textarea} mt-2 min-h-[92px]`}
               placeholder="รายละเอียดงาน / ผู้ติดต่อ / อื่นๆ"
             />
           </div>
 
+          {/* Attachments */}
           <div className="lg:col-span-2">
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">ไฟล์แนบ (PDF/รูปภาพ)</label>
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200">ไฟล์แนบ (PDF/รูปภาพ)</label>
 
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              <label className="inline-flex h-11 cursor-pointer items-center rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800">
-                เลือกไฟล์
-                <input type="file" className="hidden" multiple accept="application/pdf,image/*" onChange={(e) => onPickFiles(e.target.files)} />
-              </label>
+            {/* ✅ เอาม่วงฟุ้งออก ใช้กรอบเทาเรียบๆ */}
+            <div className="mt-2 rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/20">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    multiple
+                    accept="application/pdf,image/*"
+                    onChange={(e) => onPickFiles(e.target.files)}
+                  />
 
-              <button
-                type="button"
-                disabled={!files.length || uploading}
-                onClick={onUploadFiles}
-                className="h-11 rounded-xl border border-brand-200 bg-brand-50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-100 disabled:opacity-60 dark:border-brand-900/40 dark:bg-brand-900/10 dark:text-brand-200 dark:hover:bg-brand-900/20"
-              >
-                {uploading ? "กำลังอัปโหลด..." : "อัปโหลดไฟล์"}
-              </button>
+                  <AppButton variant="outline" disabled={saving || uploading} onClick={() => fileInputRef.current?.click()}>
+                    เลือกไฟล์
+                  </AppButton>
 
-              {uploaded.length > 0 ? (
-                <span className="text-xs font-semibold text-green-600 dark:text-green-300">อัปโหลดแล้ว {uploaded.length} ไฟล์ ✅</span>
-              ) : (
-                <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">เลือกได้หลายไฟล์ • แนะนำกด “อัปโหลดไฟล์” ก่อนบันทึก</span>
+                  <AppButton
+                    variant="primary"
+                    disabled={!files.length || uploading || saving}
+                    loading={uploading}
+                    onClick={onUploadFiles}
+                  >
+                    อัปโหลดไฟล์
+                  </AppButton>
+
+                  <AppButton
+                    variant="danger"
+                    size="sm"
+                    disabled={saving || uploading || !files.length}
+                    onClick={async () => {
+                      const ok = await dialog.confirm("ต้องการลบไฟล์ที่เลือกทั้งหมดหรือไม่?", {
+                        title: "ยืนยันการลบไฟล์",
+                        variant: "warning",
+                        confirmText: "ลบทั้งหมด",
+                        cancelText: "ยกเลิก",
+                      });
+                      if (!ok) return;
+                      clearFiles();
+                    }}
+                  >
+                    ลบทั้งหมด
+                  </AppButton>
+                </div>
+
+                <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                  {files.length ? (
+                    <>
+                      {files.length} ไฟล์ • รวม {totalBytes >= 1024 * 1024 ? formatMB(totalBytes) : formatKB(totalBytes)} •
+                      จำกัด {MAX_FILES} ไฟล์/ไม่เกิน {MAX_FILE_MB}MB ต่อไฟล์
+                    </>
+                  ) : (
+                    <>จำกัด {MAX_FILES} ไฟล์/ไม่เกิน {MAX_FILE_MB}MB ต่อไฟล์</>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3">
+                {uploaded.length > 0 ? (
+                  <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-xs font-semibold text-green-700 dark:border-green-900/40 dark:bg-green-900/10 dark:text-green-200">
+                    อัปโหลดแล้ว {uploaded.length} ไฟล์ ✅
+                  </div>
+                ) : (
+                  <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    เลือกได้หลายไฟล์ • แนะนำกด “อัปโหลดไฟล์” ก่อนบันทึก (หรือปล่อยให้ระบบอัปโหลดตอนบันทึกได้)
+                  </div>
+                )}
+              </div>
+
+              {files.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
+                  <table className={tableTheme.table}>
+                    <thead className={tableTheme.thead}>
+                      <tr>
+                        <th className={tableTheme.th}>ไฟล์</th>
+                        <th className={tableTheme.th}>ขนาด</th>
+                        <th className={tableTheme.th}>สถานะ</th>
+                        <th className={`${tableTheme.th} text-right`}>จัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className={tableTheme.tbody}>
+                      {files.map((f, idx) => (
+                        <tr key={`${f.name}-${f.size}-${f.lastModified}`}>
+                          <td className={`${tableTheme.td} font-semibold text-gray-900 dark:text-gray-100`}>{f.name}</td>
+                          <td className={tableTheme.td}>{formatKB(f.size)}</td>
+                          <td className={tableTheme.td}>
+                            {uploaded.length > 0 ? (
+                              <span className="text-xs font-semibold text-green-600 dark:text-green-300">อัปโหลดแล้ว</span>
+                            ) : (
+                              <span className="text-xs font-semibold text-amber-600 dark:text-amber-300">รออัปโหลด</span>
+                            )}
+                          </td>
+                          <td className={`${tableTheme.td} text-right`}>
+                            <AppButton variant="danger" size="sm" disabled={saving || uploading} onClick={() => removeFile(idx)}>
+                              ลบ
+                            </AppButton>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {hasPendingFiles && (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
+                  ตอนนี้ไฟล์ยัง “รออัปโหลด” อยู่ — ถ้ากดบันทึก ระบบจะอัปโหลดให้ตอนบันทึก (แนะนำกด “อัปโหลดไฟล์” ก่อน)
+                </div>
               )}
             </div>
-
-            {files.length > 0 && (
-              <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
-                    <tr>
-                      <th className="px-3 py-2 font-semibold">ไฟล์</th>
-                      <th className="px-3 py-2 font-semibold">ขนาด</th>
-                      <th className="px-3 py-2 font-semibold">สถานะ</th>
-                      <th className="px-3 py-2 font-semibold text-right">จัดการ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                    {files.map((f, idx) => (
-                      <tr key={`${f.name}-${idx}`}>
-                        <td className="px-3 py-2 font-semibold text-gray-900 dark:text-gray-100">{f.name}</td>
-                        <td className="px-3 py-2 text-gray-700 dark:text-gray-200">{formatKB(f.size)}</td>
-                        <td className="px-3 py-2">
-                          {uploaded.length > 0 ? (
-                            <span className="text-xs font-semibold text-green-600 dark:text-green-300">อัปโหลดแล้ว</span>
-                          ) : (
-                            <span className="text-xs font-semibold text-amber-600 dark:text-amber-300">รออัปโหลด</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            type="button"
-                            onClick={() => removeFile(idx)}
-                            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200 dark:hover:bg-red-900/20"
-                          >
-                            ลบ
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {hasPendingFiles && (
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
-                ตอนนี้ไฟล์ยัง “รออัปโหลด” อยู่ — ถ้ากดบันทึก ระบบจะอัปโหลดให้ตอนบันทึก (แนะนำกด “อัปโหลดไฟล์” ก่อน)
-              </div>
-            )}
           </div>
         </div>
 
         {err && (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
             {err}
           </div>
         )}
 
+        {/* ✅ ปุ่มบันทึกกลับไปขวาล่างเหมือนเดิม */}
         <div className="mt-5 flex justify-end">
-          <button
-            type="button"
-            disabled={saving || uploading}
-            onClick={onSubmit}
-            className="h-11 rounded-xl bg-brand-600 px-6 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-          >
-            {saving ? "กำลังบันทึก..." : "บันทึก (อนุมัติอัตโนมัติ)"}
-          </button>
+          <AppButton variant="primary" disabled={saving || uploading} loading={saving} onClick={onSubmit}>
+            บันทึก (อนุมัติอัตโนมัติ)
+          </AppButton>
         </div>
       </div>
     </>

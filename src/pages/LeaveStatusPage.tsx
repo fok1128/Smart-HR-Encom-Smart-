@@ -3,6 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import ModalShell from "../components/common/ModalShell";
 import { useDialogCenter } from "../components/common/DialogCenter";
+import AppButton from "../components/common/AppButton";
+import { inputTheme } from "../components/ui/theme/inputTheme";
+import { tableTheme } from "../components/ui/theme/tableTheme";
+
 import { listenMyLeaveRequests, type LeaveRequestDoc } from "../services/leaveRequests";
 import { listenMyFieldWorkRequests } from "../services/fieldWorkRequests";
 import { getSignedUrl } from "../services/files";
@@ -90,7 +94,7 @@ function normTime(s: any) {
 
 export default function LeaveStatusPage() {
   const { user } = useAuth();
-  const { alert } = useDialogCenter();
+  const dialog = useDialogCenter();
 
   // raw data
   const [leaveItems, setLeaveItems] = useState<LeaveRequestDoc[]>([]);
@@ -245,7 +249,7 @@ export default function LeaveStatusPage() {
       }
 
       if (!url && att?.path) {
-        alert("ไฟล์นี้เป็นข้อมูลเก่าที่เก็บแบบ Firebase path — ตอนนี้ระบบเปลี่ยนเป็น Supabase แล้ว", {
+        await dialog.alert("ไฟล์นี้เป็นข้อมูลเก่าที่เก็บแบบ Firebase path — ตอนนี้ระบบเปลี่ยนเป็น Supabase แล้ว", {
           title: "เปิดไฟล์ไม่ได้",
           variant: "warning",
         });
@@ -253,7 +257,10 @@ export default function LeaveStatusPage() {
       }
 
       if (!url) {
-        alert("ไฟล์แนบรายการนี้ยังไม่มีลิงก์/พาธสำหรับดู", { title: "เปิดไฟล์ไม่ได้", variant: "warning" });
+        await dialog.alert("ไฟล์แนบรายการนี้ยังไม่มีลิงก์/พาธสำหรับดู", {
+          title: "เปิดไฟล์ไม่ได้",
+          variant: "warning",
+        });
         return;
       }
 
@@ -262,7 +269,7 @@ export default function LeaveStatusPage() {
       setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
-      alert(e?.message || String(e), { title: "เปิดไฟล์ไม่ได้", variant: "danger" });
+      await dialog.alert(e?.message || String(e), { title: "เปิดไฟล์ไม่ได้", variant: "danger" });
     } finally {
       setPreviewLoading(false);
     }
@@ -280,22 +287,18 @@ export default function LeaveStatusPage() {
         footer={
           <div className="flex justify-end gap-2">
             {previewUrl ? (
-              <button
+              <AppButton
+                variant="outline"
                 type="button"
                 onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800"
               >
                 เปิดในแท็บใหม่
-              </button>
+              </AppButton>
             ) : null}
 
-            <button
-              type="button"
-              onClick={closePreview}
-              className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-extrabold text-white hover:bg-black/90 dark:bg-white dark:text-gray-900"
-            >
+            <AppButton variant="primary" type="button" onClick={closePreview}>
               ปิด
-            </button>
+            </AppButton>
           </div>
         }
       >
@@ -324,13 +327,13 @@ export default function LeaveStatusPage() {
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300">
               <div className="font-semibold">ไฟล์ชนิดนี้แสดงในหน้าเว็บไม่ได้</div>
-              <button
+              <AppButton
+                variant="primary"
                 type="button"
                 onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
-                className="rounded-xl bg-purple-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-purple-700"
               >
                 เปิดดูในแท็บใหม่
-              </button>
+              </AppButton>
             </div>
           )}
         </div>
@@ -349,7 +352,7 @@ export default function LeaveStatusPage() {
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+              className={`${inputTheme.control} mt-2`}
             >
               {typeOptions.map((t) => (
                 <option key={t} value={t}>
@@ -364,7 +367,7 @@ export default function LeaveStatusPage() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+              className={`${inputTheme.control} mt-2`}
             >
               {statusOptions.map((s) => (
                 <option key={s} value={s}>
@@ -380,17 +383,18 @@ export default function LeaveStatusPage() {
               {unifiedRows.length} รายการ
             </div>
 
-            <button
+            <AppButton
               type="button"
-              onClick={() => {
+              variant="outline"
+              disabled={previewLoading}
+              onClick={async () => {
                 setTypeFilter("ALL");
                 setStatusFilter("ALL");
-                alert("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ", variant: "success" });
+                await dialog.alert("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ", variant: "success" });
               }}
-              className="h-11 rounded-xl border border-gray-200 bg-white px-5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-gray-800"
             >
               ล้างตัวกรอง
-            </button>
+            </AppButton>
           </div>
         </div>
       </div>
@@ -402,24 +406,25 @@ export default function LeaveStatusPage() {
           <div className="text-sm text-gray-500 dark:text-gray-400">{filteredRows.length} รายการ</div>
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+        <div className={tableTheme.wrap}>
+        <div className={tableTheme.shell}>
+          <table className={tableTheme.table}>
+            <thead className={tableTheme.thead}>
               <tr>
-                <th className="px-3 py-2 font-semibold">เลขคำร้อง</th>
-                <th className="px-3 py-2 font-semibold">ประเภท</th>
-                <th className="px-3 py-2 font-semibold">ช่วงเวลา</th>
-                <th className="px-3 py-2 font-semibold">สถานะ</th>
-                <th className="px-3 py-2 font-semibold">ยื่นเมื่อ</th>
-                <th className="px-3 py-2 font-semibold">ไฟล์แนบ</th>
+                <th className={tableTheme.th}>เลขคำร้อง</th>
+                <th className={tableTheme.th}>ประเภท</th>
+                <th className={tableTheme.th}>ช่วงเวลา</th>
+                <th className={tableTheme.th}>สถานะ</th>
+                <th className={tableTheme.th}>ยื่นเมื่อ</th>
+                <th className={tableTheme.th}>ไฟล์แนบ</th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+            <tbody className={tableTheme.tbody}>
               {filteredRows.length === 0 ? (
-                <tr>
-                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400" colSpan={6}>
-                    ไม่พบคำร้องตามตัวกรอง
+                <tr className={tableTheme.trHover}>
+                  <td className={tableTheme.td} colSpan={6}>
+                    <span className="text-gray-500">ไม่พบคำร้องตามตัวกรอง</span>
                   </td>
                 </tr>
               ) : (
@@ -428,37 +433,40 @@ export default function LeaveStatusPage() {
                   const stText = statusLabel(r.__status);
 
                   return (
-                    <tr key={`${r.__kind}-${(r as any).id}`} className="bg-white dark:bg-gray-900">
-                      <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">{(r as any).requestNo}</td>
+                    <tr key={`${r.__kind}-${(r as any).id}`} className={tableTheme.trHover}>
+                      <td className={tableTheme.td}>
+                        <span className="font-extrabold text-gray-900">{(r as any).requestNo}</span>
+                      </td>
 
-                      <td className="px-3 py-3 text-gray-800 dark:text-gray-200">{r.__typeLabel}</td>
+                      <td className={tableTheme.td}>{r.__typeLabel}</td>
 
-                      <td className="px-3 py-3 text-gray-700 dark:text-gray-200">
+                      <td className={tableTheme.td}>
                         {normTime((r as any).startAt)} → {normTime((r as any).endAt)}
                       </td>
 
-                      <td className="px-3 py-3">
+                      <td className={tableTheme.td}>
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badge}`}>{stText}</span>
                       </td>
 
-                      <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{fmtSubmitted(r.__submittedAt)}</td>
+                      <td className={tableTheme.td}>{fmtSubmitted(r.__submittedAt)}</td>
 
-                      <td className="px-3 py-3">
+                      <td className={tableTheme.td}>
                         {r.__atts.length === 0 ? (
-                          <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                          <span className="text-xs text-gray-400">-</span>
                         ) : (
                           <div className="flex flex-wrap gap-2">
                             {r.__atts.map((a, idx) => (
-                              <button
+                              <AppButton
                                 key={`${a.name}-${idx}`}
                                 type="button"
+                                variant="outline"
+                                size="sm"
                                 disabled={previewLoading}
                                 onClick={() => openPreview(a)}
-                                className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-800"
                                 title={a.url || a.storagePath ? "กดเพื่อดูไฟล์" : "ยังไม่มีลิงก์/พาธ"}
                               >
                                 📎 {a.name || `ไฟล์ ${idx + 1}`}
-                              </button>
+                              </AppButton>
                             ))}
                           </div>
                         )}
@@ -470,6 +478,7 @@ export default function LeaveStatusPage() {
             </tbody>
           </table>
         </div>
+      </div>
 
         {filteredRows.length > 0 && (
           <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">

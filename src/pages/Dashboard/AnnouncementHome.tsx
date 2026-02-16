@@ -38,37 +38,37 @@ export default function AnnouncementHome() {
       {/* Header + Breadcrumb */}
       <div className="mb-6 flex flex-col gap-1">
         <div className="flex items-end gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
+          <h1 className="text-3xl font-semibold tracking-tight text-gray-900">
             หน้าแรก
           </h1>
-          <div className="pb-1 text-sm text-gray-500 dark:text-gray-400">
+          <div className="pb-1 text-sm text-gray-500">
             <span className="opacity-60">|</span>{" "}
-            <span className="font-medium text-cyan-700 dark:text-cyan-300">
+            <span className="font-medium text-violet-700">
               ข่าวประกาศ
             </span>
           </div>
         </div>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <p className="text-sm text-gray-500">
           อัปเดตข้อมูลและประกาศสำคัญของระบบ
         </p>
       </div>
 
       {/* Wrapper กันโล่งเกิน + จัดสัดส่วนอ่านง่าย */}
       <div className="max-w-5xl">
-        <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800">
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-violet-400/80">
           {/* Card header */}
           <div className="mb-5 flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              <h2 className="text-lg font-semibold text-gray-900">
                 ข่าวประกาศล่าสุด
               </h2>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              <p className="mt-1 text-sm text-gray-500">
                 แสดงรายการประกาศเพื่อให้พนักงานรับทราบ
               </p>
             </div>
 
             {/* แสดงวันที่แบบชิค ๆ */}
-            <div className="hidden rounded-xl bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 ring-1 ring-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700 sm:block">
+            <div className="hidden rounded-full bg-violet-50/60 px-3 py-2 text-xs font-semibold text-gray-700 ring-1 ring-violet-200 sm:block">
               อัปเดต: {formatThaiDate(a.announcedAt)}
             </div>
           </div>
@@ -77,19 +77,19 @@ export default function AnnouncementHome() {
           <div className="relative grid gap-6 sm:grid-cols-[36px_1fr]">
             {/* Timeline */}
             <div className="relative hidden sm:block">
-              <div className="absolute left-1/2 top-1 h-full w-px -translate-x-1/2 bg-gray-200 dark:bg-gray-800" />
+              <div className="absolute left-1/2 top-1 h-full w-px -translate-x-1/2 bg-violet-200" />
               <div className="sticky top-28">
-                <div className="mx-auto mt-1 h-4 w-4 rounded-full bg-cyan-500 ring-4 ring-white shadow-sm dark:ring-gray-900" />
+                <div className="mx-auto mt-1 h-4 w-4 rounded-full bg-violet-600 ring-4 ring-white shadow-sm" />
               </div>
             </div>
 
             {/* Main body */}
-            <div className="rounded-xl bg-gray-50 p-5 ring-1 ring-gray-200 dark:bg-gray-800/40 dark:ring-gray-800">
+            <div className="rounded-2xl bg-violet-50/40 p-5 ring-1 ring-violet-200">
               {/* Title row */}
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                    <h3 className="text-base font-semibold text-gray-900">
                       {a.title}
                     </h3>
 
@@ -100,22 +100,22 @@ export default function AnnouncementHome() {
                     ) : null}
                   </div>
 
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                  <p className="mt-1 text-sm text-gray-600">
                     โปรดอ่านรายละเอียดและวางแผนการใช้งานระบบล่วงหน้า
                   </p>
                 </div>
 
                 {/* Meta */}
-                <div className="shrink-0 rounded-xl bg-white px-4 py-3 text-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-700">
-                  <div className="text-gray-600 dark:text-gray-300">
+                <div className="shrink-0 rounded-2xl bg-white px-4 py-3 text-sm ring-1 ring-violet-200">
+                  <div className="text-gray-600">
                     <span className="font-semibold">ประกาศโดย:</span>{" "}
-                    <span className="font-medium text-gray-800 dark:text-gray-100">
+                    <span className="font-medium text-gray-800">
                       {a.author}
                     </span>
                   </div>
-                  <div className="mt-1 text-gray-600 dark:text-gray-300">
+                  <div className="mt-1 text-gray-600">
                     <span className="font-semibold">วันที่ประกาศ:</span>{" "}
-                    <span className="font-medium text-gray-800 dark:text-gray-100">
+                    <span className="font-medium text-gray-800">
                       {formatThaiDate(a.announcedAt)}
                     </span>
                   </div>
@@ -123,12 +123,12 @@ export default function AnnouncementHome() {
               </div>
 
               {/* Body */}
-              <div className="mt-4 text-[15px] leading-7 text-gray-700 dark:text-gray-200">
+              <div className="mt-4 text-[15px] leading-7 text-gray-700">
                 {a.body}
               </div>
 
               {/* Footer line */}
-              <div className="mt-5 flex items-center justify-between border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              <div className="mt-5 flex items-center justify-between border-t border-violet-200 pt-4 text-xs text-gray-500">
                 <span>หมายเหตุ: เวลาอาจมีการเปลี่ยนแปลงตามสถานการณ์</span>
                 <span className="hidden sm:block">Ref: ANN-{a.id.padStart(4, "0")}</span>
               </div>

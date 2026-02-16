@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import { useAuth } from "../context/AuthContext";
-import { useToastCenter } from "../components/common/ToastCenter";
+import { useDialogCenter } from "../components/common/DialogCenter";
+import AppButton from "../components/common/AppButton";
+import { inputTheme } from "../components/ui/theme/inputTheme";
 import {
   LeaveRequestDoc,
   listenMyLeaveRequests,
@@ -11,11 +13,6 @@ import {
   getSignedUrlForKey,
   addLeaveAttachments,
 } from "../services/leaveRequests";
-import { FieldWorkRequestDoc, listenMyFieldWorkRequests } from "../services/fieldWorkRequests";
-
-type Row =
-  | ({ kind: "LEAVE" } & LeaveRequestDoc)
-  | ({ kind: "FIELD" } & FieldWorkRequestDoc);
 
 function badgeClass(status: string) {
   const s = String(status || "").toUpperCase();
@@ -42,8 +39,7 @@ function fmtDateTime(ts: any) {
       if (!isNaN(d.getTime())) return d.toLocaleString("th-TH");
     }
     if (ts?.toDate) return ts.toDate().toLocaleString("th-TH");
-    if (typeof ts?.seconds === "number")
-      return new Date(ts.seconds * 1000).toLocaleString("th-TH");
+    if (typeof ts?.seconds === "number") return new Date(ts.seconds * 1000).toLocaleString("th-TH");
     const d = ts instanceof Date ? ts : new Date(ts);
     return isNaN(d.getTime()) ? "-" : d.toLocaleString("th-TH");
   } catch {
@@ -85,17 +81,157 @@ function fmtDateOnly(iso: string | null | undefined) {
   return d.toLocaleDateString("th-TH");
 }
 
+// parse date safely (string / Date / firebase timestamp / seconds obj)
+function toMillis(x: any): number | null {
+  try {
+    if (!x) return null;
+
+    if (typeof x === "string") {
+      const d = new Date(x);
+      return isNaN(d.getTime()) ? null : d.getTime();
+    }
+    if (x?.toDate) {
+      const d = x.toDate();
+      return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : null;
+    }
+    if (typeof x?.seconds === "number") {
+      const d = new Date(x.seconds * 1000);
+      return isNaN(d.getTime()) ? null : d.getTime();
+    }
+    if (x instanceof Date) return isNaN(x.getTime()) ? null : x.getTime();
+
+    const d = new Date(x);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  } catch {
+    return null;
+  }
+}
+
+// ✅ inputTheme fallback + บังคับธีมม่วงให้เหมือนหน้าอื่น
+function clsInput(extra?: string) {
+  const base =
+    (inputTheme as any)?.input ||
+    (inputTheme as any)?.base ||
+    "h-10 w-full rounded-xl border bg-white px-3 text-sm outline-none dark:bg-gray-900";
+
+  const purple =
+    "border-violet-300 focus:border-violet-500 focus:ring-4 focus:ring-violet-200/60 " +
+    "dark:border-violet-500/40 dark:focus:border-violet-400 dark:focus:ring-violet-500/20";
+
+  return [base, purple, extra].filter(Boolean).join(" ");
+}
+function clsSelect(extra?: string) {
+  const base =
+    (inputTheme as any)?.select ||
+    (inputTheme as any)?.input ||
+    (inputTheme as any)?.base ||
+    "h-10 w-full rounded-xl border bg-white px-3 text-sm outline-none dark:bg-gray-900";
+
+  const purple =
+    "border-violet-300 focus:border-violet-500 focus:ring-4 focus:ring-violet-200/60 " +
+    "dark:border-violet-500/40 dark:focus:border-violet-400 dark:focus:ring-violet-500/20";
+
+  return [base, purple, extra].filter(Boolean).join(" ");
+}
+
+// ✅ fixed categories/subtypes (ตาม LeaveSubmitPage)
+const LEAVE_CATEGORIES = ["ลากิจ", "ลาป่วย", "ลาพักร้อน", "ลากรณีพิเศษ"] as const;
+
+const SUBTYPE_MAP: Record<(typeof LEAVE_CATEGORIES)[number], string[]> = {
+  ลากิจ: ["ลากิจปกติ", "ลากิจฉุกเฉิน"],
+  ลาป่วย: ["ป่วยระหว่างวัน", "ลาป่วยทั่วไป", "ลาหมอนัด", "ลาแบบมีใบรับรองแพทย์"],
+  ลาพักร้อน: ["ลาพักร้อน"],
+  ลากรณีพิเศษ: ["ลาคลอด", "ลารับราชการทหาร", "ลาเพื่อทำหมัน", "อื่นๆ"],
+};
+
 export default function MyLeaveRequestsPage() {
   const { user } = useAuth();
-  const { showToast } = useToastCenter();
+  const dialog = useDialogCenter();
 
-  const [leaveRows, setLeaveRows] = useState<LeaveRequestDoc[]>([]);
-  const [fieldRows, setFieldRows] = useState<FieldWorkRequestDoc[]>([]);
-  const [loadingLeave, setLoadingLeave] = useState(true);
-  const [loadingField, setLoadingField] = useState(true);
+  /**
+   * ✅ สำคัญมาก: ห้ามส่ง object เข้า DialogCenter เด็ดขาด
+   * เพราะของเธอมีเคสเอา object ไป render แล้วจอดขาว
+   * => เราจะส่ง “string ล้วน” เท่านั้น และถ้าเรียกไม่ผ่านให้ fallback window.*
+   */
+  const dlgAlert = (title: string, message: string) => {
+    const d: any = dialog as any;
+    const t = String(title ?? "");
+    const m = String(message ?? "");
+    try {
+      if (typeof d?.alert === "function") {
+        // พยายามแบบ 2 args ก่อน
+        try {
+          d.alert(t, m);
+          return;
+        } catch {
+          // แล้วค่อย 1 arg
+          d.alert(`${t}\n${m}`);
+          return;
+        }
+      }
+    } catch {}
+    window.alert(`${t}\n${m}`);
+  };
+
+  const dlgSuccess = (title: string, message: string) => {
+    const d: any = dialog as any;
+    const t = String(title ?? "");
+    const m = String(message ?? "");
+    try {
+      if (typeof d?.success === "function") {
+        try {
+          d.success(t, m);
+          return;
+        } catch {
+          d.success(`${t}\n${m}`);
+          return;
+        }
+      }
+    } catch {}
+    window.alert(`✅ ${t}\n${m}`);
+  };
+
+  const dlgConfirm = async (title: string, message: string) => {
+    const d: any = dialog as any;
+    const t = String(title ?? "");
+    const m = String(message ?? "");
+
+    // ถ้า DialogCenter confirm ใช้ได้ -> รับ string อย่างเดียว
+    try {
+      if (typeof d?.confirm === "function") {
+        // try 2 args
+        try {
+          const r = await d.confirm(t, m);
+          if (typeof r === "boolean") return r;
+          // รองรับบาง implementation ที่คืนค่าเป็น object
+          if (r && typeof r === "object") return !!(r.ok ?? r.confirmed ?? r.value ?? r.result);
+          return !!r;
+        } catch {}
+
+        // try 1 arg
+        try {
+          const r = await d.confirm(`${t}\n${m}`);
+          if (typeof r === "boolean") return r;
+          if (r && typeof r === "object") return !!(r.ok ?? r.confirmed ?? r.value ?? r.result);
+          return !!r;
+        } catch {}
+      }
+    } catch {}
+
+    return window.confirm(`${t}\n${m}`);
+  };
+
+  const [rows, setRows] = useState<LeaveRequestDoc[]>([]);
+  const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
 
-  // modal แนบใบรับรอง (เฉพาะ LEAVE)
+  // ✅ Filters: datetime-local (เลือกได้ถึงชั่วโมง/นาที)
+  const [fromDT, setFromDT] = useState<string>(""); // yyyy-MM-ddTHH:mm
+  const [toDT, setToDT] = useState<string>(""); // yyyy-MM-ddTHH:mm
+  const [category, setCategory] = useState<string>("ALL");
+  const [subType, setSubType] = useState<string>("ALL");
+
+  // modal แนบใบรับรอง
   const [openAttachId, setOpenAttachId] = useState<string | null>(null);
   const [attachFiles, setAttachFiles] = useState<File[]>([]);
   const [attachError, setAttachError] = useState<string>("");
@@ -106,68 +242,49 @@ export default function MyLeaveRequestsPage() {
   useEffect(() => {
     const uid = user?.uid || "";
     setErrorMsg("");
+    setLoading(true);
 
-    setLoadingLeave(true);
-    const unsubLeave = listenMyLeaveRequests(
+    const unsub = listenMyLeaveRequests(
       uid,
       (r) => {
-        setLeaveRows(r);
-        setLoadingLeave(false);
+        setRows(r || []);
+        setLoading(false);
       },
       (msg) => {
-        setErrorMsg(msg || "โหลดใบลาของฉันไม่สำเร็จ");
-        setLeaveRows([]);
-        setLoadingLeave(false);
-        showToast(msg || "โหลดใบลาของฉันไม่สำเร็จ", { title: "เกิดข้อผิดพลาด", variant: "danger" });
+        const m = msg || "โหลดใบลาของฉันไม่สำเร็จ";
+        setErrorMsg(m);
+        setRows([]);
+        setLoading(false);
+        dlgAlert("เกิดข้อผิดพลาด", m);
       }
     );
 
-    setLoadingField(true);
-    const unsubField = listenMyFieldWorkRequests(
-      uid,
-      (r) => {
-        setFieldRows(r);
-        setLoadingField(false);
-      },
-      (msg) => {
-        if (!errorMsg) setErrorMsg(msg || "โหลดงานนอกสถานที่ไม่สำเร็จ");
-        setFieldRows([]);
-        setLoadingField(false);
-        showToast(msg || "โหลดงานนอกสถานที่ไม่สำเร็จ", { title: "เกิดข้อผิดพลาด", variant: "danger" });
-      }
-    );
-
-    return () => {
-      unsubLeave?.();
-      unsubField?.();
-    };
+    return () => unsub?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  const loading = loadingLeave || loadingField;
-
-  // ✅ helper: เฉพาะใบลา
+  // helper: ใบลา
   const isProvided = (r: LeaveRequestDoc) => {
-    const atts = Array.isArray(r.attachments) ? r.attachments : [];
-    return !!r.medicalCertProvided || atts.length > 0;
+    const atts = Array.isArray((r as any).attachments) ? (r as any).attachments : [];
+    return !!(r as any).medicalCertProvided || atts.length > 0;
   };
 
   const canAttachLater = (r: LeaveRequestDoc) => {
-    const status = String(r.status || "").toUpperCase();
+    const status = String((r as any).status || "").toUpperCase();
     const isPending = status === "PENDING";
-    const require = !!r.requireMedicalCert;
-    const hasDue = !!r.medicalCertDueAt;
+    const require = !!(r as any).requireMedicalCert;
+    const hasDue = !!(r as any).medicalCertDueAt;
     const provided = isProvided(r);
-    const duePassed = isDuePassed(r.medicalCertDueAt);
+    const duePassed = isDuePassed((r as any).medicalCertDueAt);
     return require && hasDue && isPending && !provided && !duePassed;
   };
 
   const needWarnDue = (r: LeaveRequestDoc) => {
-    const require = !!r.requireMedicalCert;
-    const hasDue = !!r.medicalCertDueAt;
+    const require = !!(r as any).requireMedicalCert;
+    const hasDue = !!(r as any).medicalCertDueAt;
     const provided = isProvided(r);
     if (!require || !hasDue || provided) return false;
-    return isDuePassed(r.medicalCertDueAt);
+    return isDuePassed((r as any).medicalCertDueAt);
   };
 
   async function openAttachment(att: any) {
@@ -180,13 +297,13 @@ export default function MyLeaveRequestsPage() {
   async function handleAttachSubmit(targetRow: LeaveRequestDoc) {
     const fail = (msg: string) => {
       setAttachError(msg);
-      showToast(msg, { title: "แนบไฟล์ไม่สำเร็จ", variant: "danger" });
+      dlgAlert("แนบไฟล์ไม่สำเร็จ", msg);
     };
 
     setAttachError("");
 
     if (!user?.uid) return fail("ยังไม่เข้าสู่ระบบ");
-    if (!targetRow?.id) return fail("ไม่พบ id ของคำร้อง");
+    if (!(targetRow as any)?.id) return fail("ไม่พบ id ของคำร้อง");
 
     const MAX_FILES = 5;
     const MAX_MB = 15;
@@ -201,36 +318,104 @@ export default function MyLeaveRequestsPage() {
 
     setAttaching(true);
     setAttachPct(0);
+
     try {
-      await addLeaveAttachments(targetRow.id, user.uid, attachFiles, (p) => setAttachPct(p));
+      await addLeaveAttachments((targetRow as any).id, user.uid, attachFiles, (p) => setAttachPct(p));
       setOpenAttachId(null);
       setAttachFiles([]);
       setAttachPct(0);
       setAttachError("");
-
-      showToast("อัปโหลดไฟล์เรียบร้อย", { title: "แนบใบรับรองสำเร็จ", variant: "success" });
+      dlgSuccess("สำเร็จ", "อัปโหลดไฟล์เรียบร้อย");
     } catch (e: any) {
       const m = e?.message || String(e);
       setAttachError(m);
-      showToast(m, { title: "แนบไฟล์ไม่สำเร็จ", variant: "danger" });
+      dlgAlert("แนบไฟล์ไม่สำเร็จ", m);
     } finally {
       setAttaching(false);
     }
   }
 
-  const mergedRows: Row[] = useMemo(() => {
-    const a = leaveRows.map((x) => ({ kind: "LEAVE" as const, ...x }));
-    const b = fieldRows.map((x) => ({ kind: "FIELD" as const, ...x }));
-    const all = [...a, ...b];
-
-    all.sort((r1, r2) => {
-      const t1 = (r1 as any).submittedAt?.toDate?.()?.getTime?.() ?? 0;
-      const t2 = (r2 as any).submittedAt?.toDate?.()?.getTime?.() ?? 0;
+  // sort by submittedAt desc
+  const sortedRows = useMemo(() => {
+    const all = [...rows];
+    all.sort((a, b) => {
+      const t1 = toMillis((a as any).submittedAt) ?? 0;
+      const t2 = toMillis((b as any).submittedAt) ?? 0;
       return t2 - t1;
     });
-
     return all;
-  }, [leaveRows, fieldRows]);
+  }, [rows]);
+
+  // category options fixed 4 types
+  const categoryOptions = useMemo(() => [...LEAVE_CATEGORIES], []);
+  const subTypeOptions = useMemo(() => {
+    if (category === "ALL") return [];
+    if (!LEAVE_CATEGORIES.includes(category as any)) return [];
+    return SUBTYPE_MAP[category as (typeof LEAVE_CATEGORIES)[number]] || [];
+  }, [category]);
+
+  // filtered using datetime bounds
+  const filteredRows = useMemo(() => {
+    const fromMs = fromDT ? new Date(fromDT).getTime() : null;
+    const toMs = toDT ? new Date(toDT).getTime() : null;
+
+    const safeFrom = fromMs != null && !isNaN(fromMs) ? fromMs : null;
+    const safeTo = toMs != null && !isNaN(toMs) ? toMs : null;
+
+    return sortedRows.filter((r) => {
+      const c = String((r as any).category || "").trim();
+      const st = String((r as any).subType || "").trim();
+
+      if (category !== "ALL" && c !== category) return false;
+      if (subType !== "ALL" && st !== subType) return false;
+
+      if (safeFrom == null && safeTo == null) return true;
+
+      const sMs = toMillis((r as any).startAt);
+      const eMs = toMillis((r as any).endAt);
+      const subMs = toMillis((r as any).submittedAt);
+
+      const rangeStart = sMs ?? subMs ?? null;
+      const rangeEnd = eMs ?? rangeStart;
+
+      if (rangeStart == null) return false;
+
+      const aStart = rangeStart;
+      const aEnd = rangeEnd ?? rangeStart;
+
+      const bStart = safeFrom ?? Number.NEGATIVE_INFINITY;
+      const bEnd = safeTo ?? Number.POSITIVE_INFINITY;
+
+      return aStart <= bEnd && aEnd >= bStart;
+    });
+  }, [sortedRows, fromDT, toDT, category, subType]);
+
+  const totalCount = sortedRows.length;
+  const shownCount = filteredRows.length;
+
+  // keep subType valid when category changed
+  useEffect(() => {
+    if (subType === "ALL") return;
+    if (category === "ALL") {
+      setSubType("ALL");
+      return;
+    }
+    if (!subTypeOptions.includes(subType)) setSubType("ALL");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, subTypeOptions.join("|")]);
+
+  const clearFilters = async () => {
+    const ok = await dlgConfirm("ล้างตัวกรอง", "ต้องการล้างค่าตัวกรองทั้งหมดใช่ไหม?");
+    if (!ok) return;
+
+    setFromDT("");
+    setToDT("");
+    setCategory("ALL");
+    setSubType("ALL");
+
+    // ✅ popup หลังล้าง
+    dlgSuccess("ล้างตัวกรองแล้ว", "รีเซ็ตค่าตัวกรองเรียบร้อย");
+  };
 
   return (
     <>
@@ -238,57 +423,138 @@ export default function MyLeaveRequestsPage() {
       <PageBreadcrumb pageTitle="ใบลาของฉัน" />
 
       <div className="space-y-4">
+        {/* ✅ Container เดียว (กันกรอบซ้อน) */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">ใบลาของฉัน</h3>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                รวม “ใบลา” + “ปฏิบัติงานนอกสถานที่” (งานนอกสถานที่อนุมัติอัตโนมัติ)
-              </p>
-            </div>
-          </div>
-
-          {loading && <div className="mt-4 text-sm text-gray-600 dark:text-white/70">กำลังโหลด...</div>}
+          {loading && <div className="text-sm text-gray-600 dark:text-white/70">กำลังโหลด...</div>}
 
           {!loading && errorMsg && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
               {errorMsg}
             </div>
           )}
 
-          {!loading && !errorMsg && mergedRows.length === 0 && (
-            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-white/[0.02] dark:text-white/70">
+          {!loading && !errorMsg && totalCount === 0 && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-white/[0.02] dark:text-white/70">
               ยังไม่มีรายการ
+            </div>
+          )}
+
+          {/* ✅ Filter bar */}
+          {!loading && !errorMsg && totalCount > 0 && (
+            <div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+                {/* จากวันที่ */}
+                <div className="xl:col-span-3">
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
+                    จากวันที่
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={fromDT}
+                    onChange={(e) => setFromDT(e.target.value)}
+                    className={clsInput()}
+                  />
+                </div>
+
+                {/* ถึงวันที่ */}
+                <div className="xl:col-span-3">
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
+                    ถึงวันที่
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={toDT}
+                    onChange={(e) => setToDT(e.target.value)}
+                    className={clsInput()}
+                  />
+                </div>
+
+                {/* ประเภทการลา */}
+                <div className="xl:col-span-3">
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
+                    ประเภทการลา
+                  </label>
+                  <select
+                    value={category}
+                    onChange={(e) => {
+                      setCategory(e.target.value);
+                      setSubType("ALL");
+                    }}
+                    className={clsSelect()}
+                  >
+                    <option value="ALL">ทั้งหมด</option>
+                    {categoryOptions.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* ประเภทย่อย */}
+                <div className="xl:col-span-3">
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
+                    ประเภทย่อย
+                  </label>
+                  <select
+                    value={subType}
+                    onChange={(e) => setSubType(e.target.value)}
+                    className={clsSelect()}
+                    disabled={category === "ALL" || subTypeOptions.length === 0}
+                  >
+                    <option value="ALL">ทั้งหมด</option>
+                    {subTypeOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* footer row */}
+                <div className="xl:col-span-12 mt-1 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm text-gray-600 dark:text-gray-300">
+                    กำลังแสดง{" "}
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">{shownCount}</span> รายการ
+                    จากทั้งหมด{" "}
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">{totalCount}</span> รายการ
+                  </div>
+
+                  <AppButton variant="outline" onClick={clearFilters}>
+                    ล้างตัวกรอง
+                  </AppButton>
+                </div>
+
+                {shownCount === 0 && (
+                  <div className="xl:col-span-12">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-white/[0.02] dark:text-white/70">
+                      ไม่พบรายการที่ตรงกับตัวกรอง
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
 
-        {!loading && !errorMsg && mergedRows.length > 0 && (
+        {/* ✅ Cards */}
+        {!loading && !errorMsg && shownCount > 0 && (
           <div className="space-y-3">
-            {mergedRows.map((r) => {
-              const isLeave = r.kind === "LEAVE";
+            {filteredRows.map((r: any) => {
+              const titleLeft = `${r.category || "-"} • ${r.subType || "-"}`;
+              const reqNo = r.requestNo || r.id;
+              const startAt = r.startAt;
+              const endAt = r.endAt;
+              const status = r.status;
 
-              const titleLeft = isLeave
-                ? `${(r as LeaveRequestDoc).category || "-"} • ${(r as LeaveRequestDoc).subType || "-"}`
-                : `ปฏิบัติงานนอกสถานที่ • ${(r as FieldWorkRequestDoc).place || "-"}`;
-
-              const reqNo = (r as any).requestNo || r.id;
-              const startAt = (r as any).startAt;
-              const endAt = (r as any).endAt;
-              const status = (r as any).status;
-
-              const attachments = isLeave
-                ? Array.isArray((r as any).attachments)
-                  ? (r as any).attachments
-                  : []
-                : [];
-              const legacyFiles = isLeave ? (Array.isArray((r as any).files) ? (r as any).files : []) : [];
-              const showDueWarn = isLeave ? needWarnDue(r as LeaveRequestDoc) : false;
-              const provided = isLeave ? isProvided(r as LeaveRequestDoc) : true;
+              const attachments = Array.isArray(r.attachments) ? r.attachments : [];
+              const legacyFiles = Array.isArray(r.files) ? r.files : [];
+              const showDueWarn = needWarnDue(r);
+              const provided = isProvided(r);
 
               return (
                 <div
-                  key={`${r.kind}-${r.id}`}
+                  key={r.id}
                   className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -307,78 +573,59 @@ export default function MyLeaveRequestsPage() {
 
                         <div className="mt-1">
                           <span className="font-semibold">ช่วงเวลา:</span>{" "}
-                          <span className="font-semibold text-gray-900 dark:text-gray-100">{fmtRange(startAt, endAt)}</span>
+                          <span className="font-semibold text-gray-900 dark:text-gray-100">
+                            {fmtRange(startAt, endAt)}
+                          </span>
                         </div>
 
                         <div className="mt-1">
-                          <span className="font-semibold">ส่งเมื่อ:</span> {fmtDateTime((r as any).submittedAt)}
+                          <span className="font-semibold">ส่งเมื่อ:</span> {fmtDateTime(r.submittedAt)}
                         </div>
-
-                        {!isLeave && (
-                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                            ผู้อนุมัติ: <span className="font-semibold">SYSTEM</span> • อนุมัติอัตโนมัติ
-                          </div>
-                        )}
                       </div>
                     </div>
 
-                    {/* Right actions: เฉพาะ LEAVE */}
-                    {isLeave && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {attachments.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                await openAttachment(attachments[0]);
-                              } catch (e: any) {
-                                showToast(e?.message || String(e), {
-                                  title: "เปิดไฟล์ไม่สำเร็จ",
-                                  variant: "danger",
-                                });
-                              }
-                            }}
-                            className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                          >
-                            เปิดไฟล์แนบ
-                          </button>
-                        )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {attachments.length > 0 && (
+                        <AppButton
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              await openAttachment(attachments[0]);
+                            } catch (e: any) {
+                              dlgAlert("เปิดไฟล์ไม่สำเร็จ", e?.message || String(e));
+                            }
+                          }}
+                        >
+                          เปิดไฟล์แนบ
+                        </AppButton>
+                      )}
 
-                        {canAttachLater(r as LeaveRequestDoc) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOpenAttachId(r.id);
-                              setAttachFiles([]);
-                              setAttachError("");
-                              setAttachPct(0);
-                              setTimeout(() => fileInputRef.current?.click(), 50);
-
-                              showToast("เลือกไฟล์แล้วกด “ยืนยันแนบใบรับรอง”", {
-                                title: "แนบใบรับรองแพทย์",
-                                variant: "info",
-                                durationMs: 1600,
-                              });
-                            }}
-                            className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
-                          >
-                            แนบใบรับรองแพทย์
-                          </button>
-                        )}
-                      </div>
-                    )}
+                      {canAttachLater(r) && (
+                        <AppButton
+                          variant="primary"
+                          onClick={() => {
+                            setOpenAttachId(r.id);
+                            setAttachFiles([]);
+                            setAttachError("");
+                            setAttachPct(0);
+                            setTimeout(() => fileInputRef.current?.click(), 50);
+                            dlgAlert("แนบใบรับรองแพทย์", "เลือกไฟล์แล้วกด “ยืนยันแนบใบรับรอง”");
+                          }}
+                        >
+                          แนบใบรับรองแพทย์
+                        </AppButton>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Notes */}
-                  {(isLeave ? (r as LeaveRequestDoc).reason : (r as FieldWorkRequestDoc).note) && (
+                  {r.reason && (
                     <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
-                      <div className="font-semibold">{isLeave ? "เหตุผล/รายละเอียด" : "รายละเอียดงาน"}</div>
-                      <div className="mt-1 whitespace-pre-wrap">{isLeave ? (r as any).reason : (r as any).note}</div>
+                      <div className="font-semibold">เหตุผล/รายละเอียด</div>
+                      <div className="mt-1 whitespace-pre-wrap">{r.reason}</div>
                     </div>
                   )}
 
-                  {/* Medical cert box only for leave */}
-                  {isLeave && (((r as any).requireMedicalCert || (r as any).medicalCertDueAt)) && (
+                  {(r.requireMedicalCert || r.medicalCertDueAt) && (
                     <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
@@ -391,10 +638,9 @@ export default function MyLeaveRequestsPage() {
                             )}
                           </div>
 
-                          {(r as any).medicalCertDueAt && (
+                          {r.medicalCertDueAt && (
                             <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                              เดดไลน์แนบ:{" "}
-                              <span className="font-semibold">{fmtDateOnly((r as any).medicalCertDueAt)}</span>
+                              เดดไลน์แนบ: <span className="font-semibold">{fmtDateOnly(r.medicalCertDueAt)}</span>
                             </div>
                           )}
                         </div>
@@ -408,32 +654,27 @@ export default function MyLeaveRequestsPage() {
                     </div>
                   )}
 
-                  {/* Attachments list */}
-                  {isLeave && (attachments.length > 0 || legacyFiles.length > 0) && (
+                  {(attachments.length > 0 || legacyFiles.length > 0) && (
                     <div className="mt-3">
                       <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">ไฟล์แนบ</div>
 
                       {attachments.length > 0 ? (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {attachments.map((a: any, idx: number) => (
-                            <button
+                            <AppButton
                               key={(getAttachmentKey(a) || "") + idx}
-                              type="button"
+                              variant="outlinePill"
                               onClick={async () => {
                                 try {
                                   await openAttachment(a);
                                 } catch (e: any) {
-                                  showToast(e?.message || String(e), {
-                                    title: "เปิดไฟล์ไม่สำเร็จ",
-                                    variant: "danger",
-                                  });
+                                  dlgAlert("เปิดไฟล์ไม่สำเร็จ", e?.message || String(e));
                                 }
                               }}
-                              className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
                               title="เปิดไฟล์"
                             >
                               {String(a?.name || "ไฟล์")} <span className="text-gray-400">#{idx + 1}</span>
-                            </button>
+                            </AppButton>
                           ))}
                         </div>
                       ) : (
@@ -444,8 +685,7 @@ export default function MyLeaveRequestsPage() {
                     </div>
                   )}
 
-                  {/* Attach modal */}
-                  {isLeave && openAttachId === r.id && (
+                  {openAttachId === r.id && (
                     <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-4 dark:border-teal-900/40 dark:bg-teal-900/20">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
@@ -457,18 +697,17 @@ export default function MyLeaveRequestsPage() {
                           </div>
                         </div>
 
-                        <button
-                          type="button"
+                        <AppButton
+                          variant="outline"
                           onClick={() => {
                             setOpenAttachId(null);
                             setAttachFiles([]);
                             setAttachError("");
                             setAttachPct(0);
                           }}
-                          className="rounded-xl border border-teal-200 bg-white px-3 py-1 text-xs font-semibold text-teal-800 hover:bg-teal-50 dark:border-teal-900/40 dark:bg-gray-900 dark:text-teal-100 dark:hover:bg-gray-800"
                         >
                           ปิด
-                        </button>
+                        </AppButton>
                       </div>
 
                       <input
@@ -496,8 +735,8 @@ export default function MyLeaveRequestsPage() {
                       )}
 
                       <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                        <button
-                          type="button"
+                        <AppButton
+                          variant="outline"
                           disabled={attaching}
                           onClick={() => {
                             setOpenAttachId(null);
@@ -505,19 +744,13 @@ export default function MyLeaveRequestsPage() {
                             setAttachError("");
                             setAttachPct(0);
                           }}
-                          className="rounded-xl border border-teal-200 bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50 disabled:opacity-60 dark:border-teal-900/40 dark:bg-gray-900 dark:text-teal-100 dark:hover:bg-gray-800"
                         >
                           ยกเลิก
-                        </button>
+                        </AppButton>
 
-                        <button
-                          type="button"
-                          disabled={attaching}
-                          onClick={() => handleAttachSubmit(r as any)}
-                          className="rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
-                        >
+                        <AppButton variant="primary" disabled={attaching} onClick={() => handleAttachSubmit(r)}>
                           {attaching ? "กำลังแนบ..." : "ยืนยันแนบใบรับรอง"}
-                        </button>
+                        </AppButton>
                       </div>
                     </div>
                   )}

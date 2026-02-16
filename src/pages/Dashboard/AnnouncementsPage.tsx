@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import PageMeta from "../../components/common/PageMeta";
+import AppButton from "../../components/common/AppButton";
+import { inputTheme } from "../../components/ui/theme/inputTheme";
 import { useAuth } from "../../context/AuthContext";
 import {
   createAnnouncement,
@@ -500,46 +502,45 @@ export default function AnnouncementsPage() {
         </p>
       </div>
 
-      {/* ✅ Search/Filter bar */}
-      <div className="mb-6 max-w-5xl">
-        <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex-1">
-            <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-              ค้นหาประกาศ
-            </div>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="พิมพ์คำค้น เช่น ระบบ / ปิดปรับปรุง / link / email"
-              className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
-            />
-          </div>
+      
+{/* ✅ Search/Filter bar */}
+<div className="mb-6 max-w-5xl">
+  <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200 sm:flex-row sm:items-end sm:justify-between">
+    {/* ซ้าย: label + input (ลดความยาวลง) */}
+    <div className="w-full sm:w-[62%]">
+      <div className="text-xs font-semibold text-gray-600">ค้นหาประกาศ</div>
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="พิมพ์คำค้น เช่น ระบบ / ปิดปรับปรุง / link / email"
+        className={["mt-1", inputTheme.purple].join(" ")}
+      />
+    </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setOnlyPinned((v) => !v)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold ring-1 ${
-                onlyPinned
-                  ? "bg-cyan-600 text-white ring-cyan-600"
-                  : "bg-gray-50 text-gray-700 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-              }`}
-            >
-              {onlyPinned ? "กำลังดู: ปักหมุด" : "ดูเฉพาะปักหมุด"}
-            </button>
+    {/* ขวา: ปุ่ม 2 อัน (ให้ม่วง + อยู่ระดับเดียวกับช่องค้นหา) */}
+    <div className="flex items-center justify-end gap-2 sm:self-end">
+      <AppButton
+        variant={onlyPinned ? "primary" : "outlinePill"}
+        size="md"
+        onClick={() => setOnlyPinned((v) => !v)}
+      >
+        {onlyPinned ? "กำลังดู: ปักหมุด" : "ดูเฉพาะปักหมุด"}
+      </AppButton>
 
-            <button
-              onClick={() => {
-                setQ("");
-                setOnlyPinned(false);
-                showNotice({ type: "info", title: "ล้างตัวกรองแล้ว" });
-              }}
-              className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-            >
-              ล้าง
-            </button>
-          </div>
-        </div>
-      </div>
+      <AppButton
+        variant="outlinePill"
+        size="md"
+        onClick={() => {
+          setQ("");
+          setOnlyPinned(false);
+          showNotice({ type: "info", title: "ล้างตัวกรองแล้ว" });
+        }}
+      >
+        ล้าง
+      </AppButton>
+    </div>
+  </div>
+</div>
 
       <div className="max-w-5xl space-y-6">
         {/* Create */}
@@ -551,14 +552,14 @@ export default function AnnouncementsPage() {
 
             <div className="space-y-3">
               <input
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+                className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                 placeholder="หัวเรื่องประกาศ"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
               />
 
               <textarea
-                className="min-h-[140px] w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+                className="min-h-[140px] w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                 placeholder="เนื้อหาประกาศ"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
@@ -587,7 +588,7 @@ export default function AnnouncementsPage() {
                   </div>
 
                   {file ? (
-                    <span className="inline-flex items-center rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-200 dark:bg-cyan-900/20 dark:text-cyan-200 dark:ring-cyan-900/40">
+                    <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 ring-1 ring-violet-200 dark:bg-violet-900/20 dark:text-violet-200 dark:ring-violet-900/40">
                       เลือกไฟล์แล้ว
                     </span>
                   ) : (
@@ -597,26 +598,49 @@ export default function AnnouncementsPage() {
                   )}
                 </div>
 
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <input
+                    id="ann-file"
                     type="file"
                     onChange={(e) => setFile(e.target.files?.[0] || null)}
-                    className="block w-full text-sm"
+                    className="hidden"
                   />
 
-                  {file ? (
-                    <button
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-gray-900">
+                      {file ? `ไฟล์ที่เลือก: ${file.name}` : "ยังไม่เลือกไฟล์"}
+                    </div>
+                    {file ? (
+                      <div className="text-xs text-gray-500">ขนาดไฟล์: {(file.size / 1024 / 1024).toFixed(2)} MB</div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <AppButton
                       type="button"
+                      variant="outlinePill"
+                      size="md"
                       onClick={() => {
-                        setFile(null);
-                        setUploadPct(0);
-                        showNotice({ type: "info", title: "ล้างไฟล์แนบแล้ว" });
+                        (document.getElementById("ann-file") as HTMLInputElement | null)?.click();
                       }}
-                      className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
                     >
-                      ล้างไฟล์
-                    </button>
-                  ) : null}
+                      แนบไฟล์
+                    </AppButton>
+
+                    {file ? (
+                      <AppButton
+                        type="button"
+                        variant="outlinePill"
+                        size="md"
+                        onClick={() => {
+                          setFile(null);
+                          setUploadPct(0);
+                        }}
+                      >
+                        ล้างไฟล์
+                      </AppButton>
+                    ) : null}
+                  </div>
                 </div>
 
                 {posting && file ? (
@@ -637,13 +661,13 @@ export default function AnnouncementsPage() {
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <input
-                    className="sm:col-span-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+                    className="sm:col-span-2 w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                     placeholder="https://..."
                     value={fileUrl}
                     onChange={(e) => setFileUrl(e.target.value)}
                   />
                   <input
-                    className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+                    className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                     placeholder="ชื่อเอกสาร (ถ้ามี)"
                     value={fileName}
                     onChange={(e) => setFileName(e.target.value)}
@@ -656,7 +680,7 @@ export default function AnnouncementsPage() {
                       href={fileUrl.trim()}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-800"
+                      className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-800"
                     >
                       ทดลองเปิดลิงก์
                     </a>
@@ -682,7 +706,7 @@ export default function AnnouncementsPage() {
                 <button
                   onClick={onPost}
                   disabled={posting || !canPost}
-                  className="rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                  className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {posting ? "กำลังโพส..." : "โพสประกาศ"}
                 </button>
@@ -727,7 +751,7 @@ export default function AnnouncementsPage() {
                         <button
                           type="button"
                           onClick={() => openAttachment(a)}
-                          className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-700"
+                          className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-700"
                           title="คลิกเพื่อเปิดไฟล์แนบ"
                         >
                           📎 ไฟล์แนบ: {a.fileName || "เปิดไฟล์"}
@@ -738,7 +762,7 @@ export default function AnnouncementsPage() {
                     <button
                       type="button"
                       onClick={() => openView(a)}
-                      className="mt-3 inline-flex items-center text-xs font-semibold text-cyan-700 hover:underline dark:text-cyan-200"
+                      className="mt-3 inline-flex items-center text-xs font-semibold text-violet-700 hover:underline dark:text-violet-200"
                       title="คลิกเพื่อดูรายละเอียด"
                     >
                       คลิกเพื่ออ่านรายละเอียด →
@@ -815,7 +839,7 @@ export default function AnnouncementsPage() {
                 <button
                   type="button"
                   onClick={() => openAttachment(viewItem)}
-                  className="mt-2 inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-800"
+                  className="mt-2 inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-800"
                 >
                   เปิดไฟล์: {viewItem.fileName || "ไฟล์แนบ"}
                 </button>
@@ -845,7 +869,7 @@ export default function AnnouncementsPage() {
             <button
               onClick={onSaveEdit}
               disabled={savingEdit || !editTitle.trim() || !editBody.trim()}
-              className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
               {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
             </button>
@@ -854,14 +878,14 @@ export default function AnnouncementsPage() {
       >
         <div className="space-y-3">
           <input
-            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+            className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
             placeholder="หัวเรื่องประกาศ"
             value={editTitle}
             onChange={(e) => setEditTitle(e.target.value)}
           />
 
           <textarea
-            className="min-h-[160px] w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+            className="min-h-[160px] w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
             placeholder="เนื้อหาประกาศ"
             value={editBody}
             onChange={(e) => setEditBody(e.target.value)}
@@ -920,13 +944,13 @@ export default function AnnouncementsPage() {
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <input
-                className="sm:col-span-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+                className="sm:col-span-2 w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                 placeholder="https://..."
                 value={editFileUrl}
                 onChange={(e) => setEditFileUrl(e.target.value)}
               />
               <input
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-cyan-500 dark:border-gray-700 dark:bg-gray-950"
+                className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                 placeholder="ชื่อเอกสาร (ถ้ามี)"
                 value={editFileName}
                 onChange={(e) => setEditFileName(e.target.value)}
@@ -939,7 +963,7 @@ export default function AnnouncementsPage() {
                   href={editFileUrl.trim()}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-cyan-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-cyan-200 dark:ring-gray-700 dark:hover:bg-gray-800"
+                  className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-800"
                 >
                   ทดลองเปิดลิงก์
                 </a>

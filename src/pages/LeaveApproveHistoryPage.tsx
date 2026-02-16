@@ -1,12 +1,28 @@
 // src/pages/LeaveApproveHistoryPage.tsx
 import { useEffect, useMemo, useState } from "react";
-import { collection, deleteDoc, doc, getDocs, onSnapshot, query, where, writeBatch } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  where,
+  writeBatch,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { useToastCenter } from "../components/common/ToastCenter";
+import { useDialogCenter } from "../components/common/DialogCenter";
 import { exportApprovalHistoryPdf } from "../utils/pdf/exportApprovalHistoryPdf";
 import ModalShell from "../components/common/ModalShell";
-import { useDialogCenter } from "../components/common/DialogCenter";
+import AppButton from "../components/common/AppButton";
+
+// ✅ Theme กลาง
+import { inputTheme } from "../components/ui/theme/inputTheme";
+
+// ✅ เปิดไฟล์แนบ (signed url)
+import { getSignedUrl } from "../services/files";
 
 type LeaveRow = any;
 
@@ -26,7 +42,8 @@ function tsToMs(ts: any): number {
 }
 
 function fmtDate(ts: any) {
-  const d = ts?.toDate?.() ? ts.toDate() : ts instanceof Date ? ts : ts ? new Date(ts) : null;
+  const d =
+    ts?.toDate?.() ? ts.toDate() : ts instanceof Date ? ts : ts ? new Date(ts) : null;
   if (!d || isNaN(d.getTime())) return "-";
   return d.toLocaleString("th-TH", {
     year: "numeric",
@@ -37,38 +54,8 @@ function fmtDate(ts: any) {
   });
 }
 
-function showStatus(raw: any) {
-  const s = String(raw || "").trim().toUpperCase();
-  if (s === "APPROVED" || s === "อนุมัติ".toUpperCase()) return "อนุมัติ";
-  if (s === "REJECTED" || s === "ไม่อนุมัติ".toUpperCase()) return "ไม่อนุมัติ";
-  if (s === "PENDING" || s === "รอดำเนินการ".toUpperCase()) return "รอดำเนินการ";
-  return String(raw || "").trim() || "-";
-}
-
-function statusTH(status: any) {
-  const s = String(status ?? "").trim().toUpperCase();
-  if (s.includes("APPROV") || s.includes("อนุมัติ".toUpperCase())) return "อนุมัติ";
-  if (s.includes("REJECT") || s.includes("DENY") || s.includes("ไม่อนุมัติ".toUpperCase())) return "ไม่อนุมัติ";
-  if (s.includes("PEND") || s.includes("WAIT") || s.includes("รอดำเนินการ".toUpperCase())) return "รอดำเนินการ";
-  return String(status ?? "").trim() || "-";
-}
-
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
-}
-
-function startOfDayMs(yyyyMmDd: string) {
-  if (!yyyyMmDd) return null;
-  const [y, m, d] = yyyyMmDd.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-}
-
-function endOfDayMs(yyyyMmDd: string) {
-  if (!yyyyMmDd) return null;
-  const [y, m, d] = yyyyMmDd.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
 }
 
 function decidedAtMs(r: any) {
@@ -76,6 +63,8 @@ function decidedAtMs(r: any) {
     tsToMs(r?.decidedAt) ||
     tsToMs(r?.approvedAt) ||
     tsToMs(r?.rejectedAt) ||
+    tsToMs(r?.canceledAt) ||
+    tsToMs(r?.cancelledAt) ||
     tsToMs(r?.updatedAt) ||
     tsToMs(r?.submittedAt) ||
     tsToMs(r?.createdAt) ||
@@ -90,20 +79,66 @@ function pickStr(...vals: any[]) {
   }
   return "";
 }
+
 function getRowUid(r: any) {
   return pickStr(r?.uid, r?.createdByUid, r?.userUid, r?.userId);
 }
 function getRowEmail(r: any) {
   return pickStr(r?.createdByEmail, r?.email, r?.userEmail).toLowerCase();
 }
-function getRowEmployeeNo(r: any) {
-  return pickStr(r?.employeeNo, r?.empNo, r?.employee_id, r?.employeeId, r?.createdByEmployeeNo, r?.userEmployeeNo);
-}
 function getRowEmployeeNameSnapshot(r: any) {
   return pickStr(r?.employeeName, r?.createdByName, r?.fullName, r?.requesterName);
 }
 function getRowPhoneSnapshot(r: any) {
   return pickStr(r?.phone, r?.createdByPhone, r?.tel, r?.mobile);
+}
+
+function normalizeStatus(raw: any) {
+  const s = String(raw || "").trim().toUpperCase();
+
+  if (s === "APPROVED" || s === "อนุมัติ".toUpperCase()) return "APPROVED";
+  if (s === "REJECTED" || s === "ไม่อนุมัติ".toUpperCase()) return "REJECTED";
+  if (s === "PENDING" || s === "รอดำเนินการ".toUpperCase()) return "PENDING";
+  if (s === "CANCELED" || s === "CANCELLED" || s.includes("ยกเลิก".toUpperCase()))
+    return "CANCELED";
+
+  return s || "UNKNOWN";
+}
+
+function statusLabelTH(raw: any) {
+  const s = normalizeStatus(raw);
+  if (s === "APPROVED") return "อนุมัติ";
+  if (s === "REJECTED") return "ไม่อนุมัติ";
+  if (s === "PENDING") return "รอดำเนินการ";
+  if (s === "CANCELED") return "ยกเลิก";
+  return String(raw || "").trim() || "-";
+}
+
+function statusBadge(stTH: string) {
+  const cls =
+    stTH === "อนุมัติ"
+      ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-900/40"
+      : stTH === "ไม่อนุมัติ"
+      ? "text-red-700 bg-red-50 border-red-200 dark:text-red-200 dark:bg-red-500/10 dark:border-red-900/40"
+      : stTH === "ยกเลิก"
+      ? "text-amber-800 bg-amber-50 border-amber-200 dark:text-amber-200 dark:bg-amber-500/10 dark:border-amber-900/40"
+      : "text-gray-700 bg-gray-50 border-gray-200 dark:text-gray-200 dark:bg-gray-800/40 dark:border-gray-700";
+
+  return (
+    <span
+      className={cn("inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold", cls)}
+    >
+      {stTH}
+    </span>
+  );
+}
+
+// datetime-local -> ms (local)
+function dtToMs(dtLocal: string) {
+  const s = String(dtLocal || "").trim();
+  if (!s) return null;
+  const t = new Date(s).getTime();
+  return isNaN(t) ? null : t;
 }
 
 async function batchDeleteByRefs(refs: Array<{ ref: any }>) {
@@ -135,16 +170,14 @@ export default function LeaveApproveHistoryPage() {
   const { user } = useAuth();
   const { showToast } = useToastCenter();
 
-  // ✅ ใช้ DialogCenter เป็นหลัก แต่กันพังด้วย fallback
   const dialog: any = useDialogCenter();
-  const confirm: any = dialog?.confirm ?? dialog?.dialog?.confirm; // เผื่อ shape ต่างกัน
+  const confirm: any = dialog?.confirm ?? dialog?.dialog?.confirm;
   const alert: any = dialog?.alert ?? dialog?.dialog?.alert;
 
   const notify = (msg: string, opts?: { title?: string; variant?: any; durationMs?: number }) => {
     if (typeof alert === "function") {
       return alert(msg, { title: opts?.title, variant: opts?.variant });
     }
-    // fallback (กันหน้าหาย/กันโปรเจกต์ยังไม่รองรับ alert)
     return showToast(msg, { title: opts?.title, variant: opts?.variant, durationMs: opts?.durationMs });
   };
 
@@ -156,12 +189,15 @@ export default function LeaveApproveHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<LeaveRow[]>([]);
 
+  // Filters
   const [qText, setQText] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "APPROVED" | "REJECTED">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "APPROVED" | "REJECTED" | "CANCELED">("ALL");
 
-  const [dateFrom, setDateFrom] = useState<string>("");
-  const [dateTo, setDateTo] = useState<string>("");
+  // ✅ datetime-local
+  const [dtFrom, setDtFrom] = useState<string>("");
+  const [dtTo, setDtTo] = useState<string>("");
 
+  // Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => {
@@ -174,7 +210,7 @@ export default function LeaveApproveHistoryPage() {
   const [accountUid, setAccountUid] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
-  // ----- Modal states (ใช้ของกลาง) -----
+  // ----- Modal states -----
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const [deleteMode, setDeleteMode] = useState<DeleteMode>(null);
@@ -190,54 +226,7 @@ export default function LeaveApproveHistoryPage() {
     setDeletePhrase("");
   };
 
-  const [empMap, setEmpMap] = useState<Record<string, { name: string; phone: string }>>({});
-  const [empLoading, setEmpLoading] = useState(false);
-
-  // ✅ โหลด employees ทั้งหมดครั้งเดียว
-  useEffect(() => {
-    let alive = true;
-
-    const run = async () => {
-      if (!canView) {
-        setEmpMap({});
-        return;
-      }
-
-      setEmpLoading(true);
-      try {
-        const empSnap = await getDocs(collection(db, "employees"));
-        const out: Record<string, { name: string; phone: string }> = {};
-
-        empSnap.docs.forEach((d) => {
-          const e: any = d.data();
-          const no = pickStr(d.id, e?.employeeNo, e?.empNo, e?.employee_id, e?.employeeId);
-          if (!no) return;
-
-          const fname = pickStr(e?.fname, e?.firstName, e?.first_name);
-          const lname = pickStr(e?.lname, e?.lastName, e?.last_name);
-          const name = `${fname} ${lname}`.trim();
-
-          const phone = pickStr(e?.phone, e?.tel, e?.mobile, e?.phones?.[0]);
-          out[no] = { name: name || "-", phone: phone || "-" };
-        });
-
-        if (!alive) return;
-        setEmpMap(out);
-      } catch (e) {
-        console.error("LeaveApproveHistoryPage load employees error:", e);
-        if (alive) setEmpMap({});
-      } finally {
-        if (alive) setEmpLoading(false);
-      }
-    };
-
-    run();
-    return () => {
-      alive = false;
-    };
-  }, [canView]);
-
-  // ✅ โหลด history
+  // ✅ โหลด history (รวม ยกเลิก)
   useEffect(() => {
     if (!user?.uid || !canView) {
       setRows([]);
@@ -248,7 +237,18 @@ export default function LeaveApproveHistoryPage() {
     setLoading(true);
 
     const colRef = collection(db, "leave_requests");
-    const qy = query(colRef, where("status", "in", ["อนุมัติ", "ไม่อนุมัติ", "APPROVED", "REJECTED"]));
+    const qy = query(
+      colRef,
+      where("status", "in", [
+        "อนุมัติ",
+        "ไม่อนุมัติ",
+        "ยกเลิก",
+        "APPROVED",
+        "REJECTED",
+        "CANCELED",
+        "CANCELLED",
+      ])
+    );
 
     const unsub = onSnapshot(
       qy,
@@ -287,64 +287,97 @@ export default function LeaveApproveHistoryPage() {
   const fullNameOf = (r: any) => {
     const snapName = getRowEmployeeNameSnapshot(r);
     if (snapName) return snapName;
-
-    const empNo = getRowEmployeeNo(r);
-    const byEmp = empNo ? pickStr(empMap?.[empNo]?.name) : "";
-    if (byEmp) return byEmp;
-
     const email = getRowEmail(r);
     const uid = getRowUid(r);
-    return pickStr(empNo, email, uid, "-");
+    return pickStr(email, uid, "-");
   };
 
   const phoneOf = (r: any) => {
     const snapPhone = getRowPhoneSnapshot(r);
-    if (snapPhone) return snapPhone;
-
-    const empNo = getRowEmployeeNo(r);
-    const byEmp = empNo ? pickStr(empMap?.[empNo]?.phone) : "";
-    return byEmp || "-";
+    return snapPhone || "-";
   };
+
+  // attachments (รองรับทั้ง url และ storagePath)
+  const attachmentsOf = (r: any) => {
+    const atts = Array.isArray(r?.attachments) ? r.attachments : Array.isArray(r?.files) ? r.files : [];
+    return (atts || [])
+      .map((a: any) => ({
+        name: pickStr(a?.name, a?.filename, a?.originalName, "ไฟล์แนบ"),
+        storagePath: pickStr(a?.storagePath, a?.path),
+        url: pickStr(a?.url, a?.downloadUrl),
+      }))
+      .filter((x: any) => x.storagePath || x.url);
+  };
+
+  async function openAttachment(att: { storagePath?: string; url?: string }) {
+    try {
+      if (att?.url) {
+        window.open(att.url, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const p = String(att?.storagePath || "").trim();
+      if (!p) throw new Error("ไม่พบ path ของไฟล์แนบ");
+      const signed = await getSignedUrl(p);
+      window.open(signed, "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      await notify(e?.message || String(e), { title: "เปิดไฟล์ไม่สำเร็จ", variant: "danger" });
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = qText.trim().toLowerCase();
+    const fromMs = dtToMs(dtFrom);
+    const toMs = dtToMs(dtTo);
 
-    return (Array.isArray(rows) ? rows : []).filter((r: any) => {
-      const st = showStatus(r?.status);
-      const okStatus =
-        statusFilter === "ALL" ? true : statusFilter === "APPROVED" ? st === "อนุมัติ" : st === "ไม่อนุมัติ";
-      if (!okStatus) return false;
+    return (Array.isArray(rows) ? rows : [])
+      .filter((r: any) => {
+        // status
+        const st = normalizeStatus(r?.status);
+        const okStatus = statusFilter === "ALL" ? true : st === statusFilter;
+        if (!okStatus) return false;
 
-      if (!q) return true;
+        // datetime range (ตัดสินใจ/อัปเดต)
+        const t = decidedAtMs(r);
+        if (fromMs !== null && t < fromMs) return false;
+        if (toMs !== null && t > toMs) return false;
 
-      const uid = getRowUid(r);
-      const email = getRowEmail(r);
-      const empNo = getRowEmployeeNo(r);
+        // search
+        if (!q) return true;
 
-      const fullName = fullNameOf(r);
-      const phone = phoneOf(r);
+        const fullName = fullNameOf(r);
+        const phone = phoneOf(r);
+        const email = getRowEmail(r);
+        const uid = getRowUid(r);
 
-      const hay = [fullName, phone, empNo, email, r?.requestNo, uid, r?.category, r?.subType, r?.reason]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+        const cat = pickStr(r?.category, r?.leaveType, r?.type);
+        const sub = pickStr(r?.subType, r?.subtype);
+        const reason = pickStr(r?.reason, r?.note, r?.detail);
 
-      return hay.includes(q);
-    });
-  }, [rows, qText, statusFilter, empMap]);
+        const atts = attachmentsOf(r);
+        const attNames = atts.map((a: any) => a.name).join(" ");
 
-  const exportRows = useMemo(() => {
-    const fromMs = startOfDayMs(dateFrom);
-    const toMs = endOfDayMs(dateTo);
+        const hay = [
+          fullName,
+          phone,
+          email,
+          uid,
+          r?.requestNo,
+          cat,
+          sub,
+          reason,
+          attNames,
+          statusLabelTH(r?.status),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
 
-    return (filtered ?? []).filter((r: any) => {
-      const t = decidedAtMs(r);
-      if (fromMs !== null && t < fromMs) return false;
-      if (toMs !== null && t > toMs) return false;
-      return true;
-    });
-  }, [filtered, dateFrom, dateTo]);
+        return hay.includes(q);
+      })
+      .sort((a: any, b: any) => decidedAtMs(b) - decidedAtMs(a));
+  }, [rows, qText, statusFilter, dtFrom, dtTo]);
 
+  // selection sync when filter changed
   useEffect(() => {
     setSelectedIds((prev) => {
       if (prev.size === 0) return prev;
@@ -363,7 +396,7 @@ export default function LeaveApproveHistoryPage() {
   if (!canView) {
     return (
       <div className="p-6">
-        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]">
           <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ไม่มีสิทธิ์เข้าหน้านี้</div>
           <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             เฉพาะ HR / MANAGER / EXECUTIVE_MANAGER / ADMIN
@@ -379,7 +412,7 @@ export default function LeaveApproveHistoryPage() {
     setBusy(true);
     try {
       const colRef = collection(db, "leave_requests");
-      const statusQ = ["อนุมัติ", "ไม่อนุมัติ", "APPROVED", "REJECTED"];
+      const statusQ = ["อนุมัติ", "ไม่อนุมัติ", "ยกเลิก", "APPROVED", "REJECTED", "CANCELED", "CANCELLED"];
 
       const tryFields = ["uid", "createdByUid", "userUid", "userId"];
       const refsMap = new Map<string, any>();
@@ -461,21 +494,32 @@ export default function LeaveApproveHistoryPage() {
   };
 
   const handleExportPDF = async () => {
-    const statusLabel = statusFilter === "ALL" ? "ทั้งหมด" : statusFilter === "APPROVED" ? "อนุมัติ" : "ไม่อนุมัติ";
-    const fromLabel = dateFrom ? dateFrom : "-";
-    const toLabel = dateTo ? dateTo : "-";
+    const statusLabel =
+      statusFilter === "ALL" ? "ทั้งหมด" : statusFilter === "APPROVED" ? "อนุมัติ" : statusFilter === "REJECTED" ? "ไม่อนุมัติ" : "ยกเลิก";
 
-    const exportRowsWithSnapshot = exportRows.map((r: any) => ({
+    const fromLabel = dtFrom ? dtFrom.replace("T", " ") : "-";
+    const toLabel = dtTo ? dtTo.replace("T", " ") : "-";
+
+    const exportRowsWithSnapshot = filtered.map((r: any) => ({
       ...r,
       employeeName: fullNameOf(r),
       phone: getRowPhoneSnapshot(r) || phoneOf(r),
     }));
 
-    const approvedCount = exportRowsWithSnapshot.filter((r: any) => statusTH(r.status) === "อนุมัติ").length;
-    const rejectedCount = exportRowsWithSnapshot.filter((r: any) => statusTH(r.status) === "ไม่อนุมัติ").length;
+    const approvedCount = exportRowsWithSnapshot.filter((r: any) => normalizeStatus(r.status) === "APPROVED").length;
+    const rejectedCount = exportRowsWithSnapshot.filter((r: any) => normalizeStatus(r.status) === "REJECTED").length;
+    const canceledCount = exportRowsWithSnapshot.filter((r: any) => normalizeStatus(r.status) === "CANCELED").length;
 
     try {
       const exporter = getExporterProfile(user);
+
+      // ✅ ทำ summary เป็น any ตัวเดียว (กัน TS แดงจุกจิก)
+      const summary: any = {
+        total: exportRowsWithSnapshot.length,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        canceled: canceledCount,
+      };
 
       await exportApprovalHistoryPdf(exportRowsWithSnapshot, {
         title: "รายงานประวัติการอนุมัติใบลา",
@@ -484,22 +528,20 @@ export default function LeaveApproveHistoryPage() {
 
         exportedByProfile: exporter,
         exportedBy:
-          `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() || (user as any)?.email || (user as any)?.uid || "-",
+          `${pickStr(exporter.fname)} ${pickStr(exporter.lname)}`.trim() ||
+          (user as any)?.email ||
+          (user as any)?.uid ||
+          "-",
         exportedAt: new Date(),
 
         filtersText: `ค้นหา: ${qText?.trim() || "-"} | สถานะ: ${statusLabel}`,
-        dateRangeText: `อ้างอิงวันอนุมัติ/อัปเดต: ${fromLabel} ถึง ${toLabel}`,
-        summary: {
-          total: exportRowsWithSnapshot.length,
-          approved: approvedCount,
-          rejected: rejectedCount,
-        },
+        dateRangeText: `อ้างอิงวันอนุมัติ/ยกเลิก/อัปเดต: ${fromLabel} ถึง ${toLabel}`,
+        summary,
 
         logoUrl: "/company-logo2.png",
         signatureTitle: "รักษาการกรรมการผู้จัดการใหญ่",
         signatureName: "นายจิรศักดิ์ บุญนาค",
 
-        // ✅ ให้ popup เหมือนโค้ดกลาง
         notify: (msg: string, opts?: any) => notify(msg, { title: opts?.title, variant: opts?.variant }),
       });
 
@@ -508,17 +550,6 @@ export default function LeaveApproveHistoryPage() {
       console.error(e);
       notify(e?.message || String(e), { title: "Export ไม่สำเร็จ", variant: "danger" });
     }
-  };
-
-  const statusBadge = (st: string) => {
-    const cls =
-      st === "อนุมัติ"
-        ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-900/40"
-        : st === "ไม่อนุมัติ"
-        ? "text-red-700 bg-red-50 border-red-200 dark:text-red-200 dark:bg-red-500/10 dark:border-red-900/40"
-        : "text-gray-700 bg-gray-50 border-gray-200 dark:text-gray-200 dark:bg-gray-800/40 dark:border-gray-700";
-
-    return <span className={cn("inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold", cls)}>{st}</span>;
   };
 
   const deleteTitle2 =
@@ -530,248 +561,336 @@ export default function LeaveApproveHistoryPage() {
       ? "ยืนยันครั้งที่ 2: ลบรายการนี้จริง"
       : "ยืนยันครั้งที่ 2";
 
+  // ✅ style กัน input datetime-local แสดง icon
+  const dateInputStyle: any = { appearance: "auto", WebkitAppearance: "auto" };
+
   return (
     <div className="p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">ประวัติการอนุมัติใบลา</h1>
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            แสดงเฉพาะรายการ “อนุมัติ/ไม่อนุมัติ”{empLoading ? " • กำลังโหลดรายชื่อพนักงาน..." : ""}
+      {/* ===== Header Card ===== */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">ประวัติการอนุมัติใบลา</h1>
+            <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              แสดงรายการ “อนุมัติ / ไม่อนุมัติ / ยกเลิก”
+            </div>
           </div>
+
+          {canExport && (
+            <AppButton
+              type="button"
+              disabled={busy || loading || filtered.length === 0}
+              onClick={handleExportPDF}
+              variant="outlinePill"
+              className="h-11 px-6 whitespace-nowrap"
+            >
+              Export PDF
+            </AppButton>
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={qText}
-            onChange={(e) => setQText(e.target.value)}
-            placeholder="ค้นหา: ชื่อ/เบอร์/อีเมล/เลขคำร้อง/รหัสพนักงาน"
-            className="h-10 w-[360px] rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
-          />
+        {/* ===== Filters ===== */}
+        <style>{`
+          input[type="datetime-local"]::-webkit-calendar-picker-indicator { opacity: 1; display: block; cursor: pointer; }
+          input[type="datetime-local"]::-webkit-inner-spin-button, input[type="datetime-local"]::-webkit-clear-button { display: none; }
+          .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        `}</style>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
-          >
-            <option value="ALL">ทั้งหมด</option>
-            <option value="APPROVED">อนุมัติ</option>
-            <option value="REJECTED">ไม่อนุมัติ</option>
-          </select>
-
-          <div className="flex items-center gap-2">
-            <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">ช่วงวันที่:</div>
-
+        <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-5">
+            <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ค้นหา</label>
             <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+              value={qText}
+              onChange={(e) => setQText(e.target.value)}
+              placeholder="ค้นหา: ชื่อ/เบอร์/อีเมล/เลขคำร้อง/ประเภท/ไฟล์แนบ/สถานะ(ยกเลิก)"
+              className={cn("mt-2", inputTheme.purple)}
             />
-            <span className="text-sm text-gray-500">ถึง</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
-            />
+          </div>
 
-            <button
+          <div className="lg:col-span-2">
+            <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">สถานะ</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className={cn("mt-2", inputTheme.purple, "font-semibold")}
+            >
+              <option value="ALL">ทั้งหมด</option>
+              <option value="APPROVED">อนุมัติ</option>
+              <option value="REJECTED">ไม่อนุมัติ</option>
+              <option value="CANCELED">ยกเลิก</option>
+            </select>
+          </div>
+
+          <div className="lg:col-span-2">
+            <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">จากวันที่</label>
+            <input
+              type="datetime-local"
+              value={dtFrom}
+              onChange={(e) => setDtFrom(e.target.value)}
+              className={cn("mt-2", inputTheme.purple)}
+              style={dateInputStyle}
+            />
+          </div>
+
+          <div className="lg:col-span-2">
+            <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ถึงวันที่</label>
+            <input
+              type="datetime-local"
+              value={dtTo}
+              onChange={(e) => setDtTo(e.target.value)}
+              className={cn("mt-2", inputTheme.purple)}
+              style={dateInputStyle}
+            />
+          </div>
+
+          <div className="lg:col-span-1 flex items-end justify-end">
+            <AppButton
               type="button"
               onClick={() => {
-                setDateFrom("");
-                setDateTo("");
-                notify("ล้างช่วงวันที่เรียบร้อย", { title: "สำเร็จ", variant: "success" });
+                setDtFrom("");
+                setDtTo("");
+                notify("ล้างช่วงวัน-เวลาเรียบร้อย", { title: "สำเร็จ", variant: "success" });
               }}
-              className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+              variant="outlinePill"
+              className="h-11 px-5 whitespace-nowrap"
             >
-              ล้างช่วงวันที่
-            </button>
-
-            {canExport && (
-              <button
-                type="button"
-                disabled={busy || loading || exportRows.length === 0}
-                onClick={handleExportPDF}
-                className="h-10 rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-              >
-                Export PDF
-              </button>
-            )}
+              ล้าง
+            </AppButton>
           </div>
         </div>
       </div>
 
+      {/* ===== Delete Panel (ADMIN/EXECUTIVE_MANAGER) ===== */}
       {canDelete && (
         <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-900/10">
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={accountUid}
-              onChange={(e) => setAccountUid(e.target.value)}
-              className="h-10 min-w-[360px] rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold outline-none dark:border-amber-900/40 dark:bg-gray-900 dark:text-gray-100"
-            >
-              <option value="">เลือกบัญชีเพื่อ “ลบประวัติ”</option>
-              {accountOptionsFallback.map((o) => (
-                <option key={o.uid} value={o.uid}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-center">
+            {/* ✅ ไม่ให้ select ยืดเต็ม: จำกัดความกว้าง */}
+            <div className="lg:col-span-6">
+              <div className="w-full max-w-[420px]">
+                <select
+                  value={accountUid}
+                  onChange={(e) => setAccountUid(e.target.value)}
+                  className={cn(inputTheme.purple, "h-11 w-full")}
+                >
+                  <option value="">เลือกบัญชีเพื่อ “ลบประวัติ”</option>
+                  {accountOptionsFallback.map((o) => (
+                    <option key={o.uid} value={o.uid}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
-            <button
-              type="button"
-              disabled={!accountUid || busy}
-              onClick={async () => {
-                const ok =
-                  typeof confirm === "function"
-                    ? await confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)", {
-                        title: "ยืนยันการลบ",
-                        confirmText: "ไปขั้นยืนยันครั้งที่ 2",
-                        cancelText: "ยกเลิก",
-                        variant: "danger",
-                      })
-                    : window.confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)");
-                if (!ok) return;
+            {/* ✅ ปุ่มไม่ให้ยืด: w-auto + whitespace-nowrap */}
+            <div className="lg:col-span-6 flex flex-wrap justify-end gap-2">
+              <AppButton
+                type="button"
+                variant="danger"
+                size="md"
+                disabled={!accountUid || busy}
+                className="w-auto whitespace-nowrap"
+                onClick={async () => {
+                  const ok =
+                    typeof confirm === "function"
+                      ? await confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)", {
+                          title: "ยืนยันการลบ",
+                          confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                          cancelText: "ยกเลิก",
+                          variant: "danger",
+                        })
+                      : window.confirm("คุณต้องการลบประวัติของบัญชีนี้ใช่ไหม? (ขั้นที่ 1)");
+                  if (!ok) return;
 
-                setDeleteMode("DEL_UID");
-                setDeletePhrase("");
-                setConfirm2Open(true);
-              }}
-              className="h-10 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              ลบประวัติคนนี้
-            </button>
-
-            <button
-              type="button"
-              disabled={selectedIds.size === 0 || busy}
-              onClick={() => setPreviewOpen(true)}
-              className="h-10 rounded-xl border border-red-200 bg-white px-4 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-900/40 dark:bg-gray-900 dark:text-red-200 dark:hover:bg-red-500/10"
-            >
-              ลบรายการที่เลือก ({selectedIds.size})
-            </button>
-          </div>
-
-          <div className="mt-3 flex items-center gap-2 text-xs text-amber-900 dark:text-amber-200">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={filtered.length > 0 && selectedIds.size === filtered.length}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  if (!checked) return setSelectedIds(new Set());
-                  setSelectedIds(new Set(filtered.map((r: any) => r.id)));
+                  setDeleteMode("DEL_UID");
+                  setDeletePhrase("");
+                  setConfirm2Open(true);
                 }}
-              />
-              เลือกทั้งหมดในหน้าที่แสดง
-            </label>
+              >
+                ลบประวัติคนนี้
+              </AppButton>
 
-            <button
-              type="button"
-              disabled={selectedIds.size === 0 || busy}
-              onClick={() => setSelectedIds(new Set())}
-              className="rounded-lg px-2 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60 dark:text-amber-200 dark:hover:bg-amber-500/10"
-            >
-              ล้างที่เลือก
-            </button>
+              <AppButton
+                type="button"
+                variant="danger"
+                size="md"
+                disabled={selectedIds.size === 0 || busy}
+                className="w-auto whitespace-nowrap"
+                onClick={() => setPreviewOpen(true)}
+              >
+                ลบรายการที่เลือก ({selectedIds.size})
+              </AppButton>
+            </div>
+
+            <div className="lg:col-span-12 mt-1 flex items-center gap-4 text-sm text-amber-900 dark:text-amber-200">
+              <label className="flex items-center gap-2 font-semibold">
+                <input
+                  type="checkbox"
+                  checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (!checked) return setSelectedIds(new Set());
+                    setSelectedIds(new Set(filtered.map((r: any) => r.id)));
+                  }}
+                />
+                เลือกทั้งหมดในหน้าที่แสดง
+              </label>
+
+              <button
+                type="button"
+                disabled={selectedIds.size === 0 || busy}
+                onClick={() => setSelectedIds(new Set())}
+                className="font-extrabold text-violet-700 hover:text-violet-800 disabled:opacity-60"
+              >
+                ล้างที่เลือก
+              </button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* ===== List ===== */}
       {loading ? (
-        <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]">
           <div className="text-sm text-gray-500 dark:text-gray-400">กำลังโหลด...</div>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]">
           <div className="text-sm text-gray-500 dark:text-gray-400">ไม่พบรายการ</div>
         </div>
       ) : (
         <div className="mt-6 space-y-3">
           {filtered.map((r: any) => {
             const submittedAt = fmtDate(r.submittedAt || r.createdAt);
-            const decidedAt = fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt);
-            const st = showStatus(r.status);
+            const decidedAt = fmtDate(
+              r.decidedAt || r.approvedAt || r.rejectedAt || r.canceledAt || r.cancelledAt || r.updatedAt
+            );
+            const stTH = statusLabelTH(r.status);
             const checked = selectedIds.has(r.id);
 
             const email = pickStr(r?.createdByEmail, r?.email);
-            const empNo = getRowEmployeeNo(r);
             const phone = phoneOf(r);
 
+            const category = pickStr(r?.category, r?.leaveType, r?.type, "-");
+            const subType = pickStr(r?.subType, r?.subtype);
+            const leaveTypeText = subType ? `${category} • ${subType}` : category;
+
+            const atts = attachmentsOf(r);
+
             return (
-              <div key={r.id} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-                <div className="flex items-start justify-between gap-3">
+              <div
+                key={r.id}
+                className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]"
+              >
+                <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{fullNameOf(r)}</div>
-
                     <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       อีเมล: {email || "-"} <span className="ml-2">• เบอร์: {phone}</span>
-                      {empNo ? <span className="ml-2">• รหัสพนักงาน: {empNo}</span> : null}
                     </div>
 
-                    <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
-                      เลขคำร้อง: <span className="font-semibold">{r.requestNo || "-"}</span>
-                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-gray-700 dark:text-gray-200">
+                      <div>
+                        เลขคำร้อง: <span className="font-semibold">{r.requestNo || "-"}</span>
+                      </div>
 
-                    <div className="mt-1 text-xs text-gray-700 dark:text-gray-200">
-                      วันที่ยื่นคำร้อง: <span className="font-semibold">{submittedAt}</span>
-                    </div>
+                      <div>
+                        ประเภท: <span className="font-semibold">{leaveTypeText}</span>
+                      </div>
 
-                    <div className="mt-1 text-xs text-gray-700 dark:text-gray-200">
-                      วันที่อนุมัติ/ไม่อนุมัติ: <span className="font-semibold">{decidedAt}</span>
-                    </div>
+                      <div>
+                        วันที่ยื่นคำร้อง: <span className="font-semibold">{submittedAt}</span>
+                      </div>
 
-                    <div className="mt-2 text-xs text-gray-700 dark:text-gray-200">
-                      หมายเหตุ:{" "}
-                      {r.reason ? (
-                        <span className="font-semibold">{r.reason}</span>
-                      ) : (
-                        <span className="text-gray-400 dark:text-gray-500">-</span>
-                      )}
-                    </div>
+                      <div>
+                        วันที่อนุมัติ/ไม่อนุมัติ/ยกเลิก/อัปเดต: <span className="font-semibold">{decidedAt}</span>
+                      </div>
 
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      {statusBadge(st)}
+                      <div className="mt-1">
+                        หมายเหตุ:{" "}
+                        {pickStr(r?.reason, r?.note, r?.detail) ? (
+                          <span className="font-semibold">{pickStr(r?.reason, r?.note, r?.detail)}</span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500">-</span>
+                        )}
+                      </div>
 
-                      {canDelete && (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={async () => {
-                            setDeleteOneTarget(r);
+                      {/* ✅ ไฟล์แนบ */}
+                      <div className="mt-2">
+                        <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ไฟล์แนบ</div>
+                        {atts.length === 0 ? (
+                          <div className="mt-1 text-sm text-gray-400">-</div>
+                        ) : (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {atts.slice(0, 3).map((a: any, idx: number) => (
+                              <AppButton
+                                key={`${r.id}-att-${idx}`}
+                                type="button"
+                                onClick={() => openAttachment(a)}
+                                variant="outline"
+                                size="sm"
+                                className="max-w-[260px] truncate rounded-full"
+                                title={a.name}
+                              >
+                                {a.name}
+                              </AppButton>
+                            ))}
+                            {atts.length > 3 && (
+                              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 self-center">
+                                +{atts.length - 3} ไฟล์
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
-                            const ok =
-                              typeof confirm === "function"
-                                ? await confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)", {
-                                    title: "ยืนยันการลบรายการ",
-                                    confirmText: "ไปขั้นยืนยันครั้งที่ 2",
-                                    cancelText: "ยกเลิก",
-                                    variant: "danger",
-                                  })
-                                : window.confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)");
-
-                            if (!ok) {
-                              setDeleteOneTarget(null);
-                              return;
-                            }
-
-                            setDeleteMode("DEL_ONE");
-                            setDeletePhrase("");
-                            setConfirm2Open(true);
-                          }}
-                          className="rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
-                        >
-                          ลบรายการนี้
-                        </button>
-                      )}
+                      <div className="mt-3">{statusBadge(stTH)}</div>
                     </div>
                   </div>
 
-                  {canDelete && (
-                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      <input type="checkbox" checked={checked} onChange={() => toggleSelect(r.id)} />
-                      เลือก
-                    </label>
-                  )}
+                  {/* ✅ คอลัมน์ขวา: checkbox + ปุ่มลบ */}
+                  <div className="flex flex-col items-end gap-2">
+                    {canDelete && (
+                      <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
+                        <input type="checkbox" checked={checked} onChange={() => toggleSelect(r.id)} />
+                        เลือก
+                      </label>
+                    )}
+
+                    {canDelete && (
+                      <AppButton
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        className="w-auto whitespace-nowrap"
+                        disabled={busy}
+                        onClick={async () => {
+                          setDeleteOneTarget(r);
+
+                          const ok =
+                            typeof confirm === "function"
+                              ? await confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)", {
+                                  title: "ยืนยันการลบรายการ",
+                                  confirmText: "ไปขั้นยืนยันครั้งที่ 2",
+                                  cancelText: "ยกเลิก",
+                                  variant: "danger",
+                                })
+                              : window.confirm("คุณต้องการลบรายการนี้ใช่ไหม? (ขั้นที่ 1)");
+
+                          if (!ok) {
+                            setDeleteOneTarget(null);
+                            return;
+                          }
+
+                          setDeleteMode("DEL_ONE");
+                          setDeletePhrase("");
+                          setConfirm2Open(true);
+                        }}
+                      >
+                        ลบรายการนี้
+                      </AppButton>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -779,7 +898,7 @@ export default function LeaveApproveHistoryPage() {
         </div>
       )}
 
-      {/* ---------- Preview selected (ModalShell ของกลาง) ---------- */}
+      {/* ---------- Preview selected ---------- */}
       <ModalShell
         open={previewOpen}
         title={`ลบรายการที่เลือก (${selectedRows.length})`}
@@ -788,17 +907,15 @@ export default function LeaveApproveHistoryPage() {
         onClose={() => setPreviewOpen(false)}
         footer={
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setPreviewOpen(false)}
-              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-900 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-            >
+            <AppButton type="button" onClick={() => setPreviewOpen(false)} variant="outlinePill" className="h-10 px-5">
               ปิด
-            </button>
+            </AppButton>
 
-            <button
+            <AppButton
               type="button"
+              variant="danger"
               disabled={selectedRows.length === 0 || busy}
+              className="h-10 px-5 whitespace-nowrap"
               onClick={async () => {
                 setPreviewOpen(false);
 
@@ -817,10 +934,9 @@ export default function LeaveApproveHistoryPage() {
                 setDeletePhrase("");
                 setConfirm2Open(true);
               }}
-              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60 hover:bg-red-700"
             >
               ไปขั้นยืนยัน
-            </button>
+            </AppButton>
           </div>
         }
       >
@@ -832,11 +948,12 @@ export default function LeaveApproveHistoryPage() {
               {selectedRows.map((r: any) => (
                 <li key={r.id} className="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
                   <div className="text-xs font-semibold text-gray-900 dark:text-gray-100">
-                    {r.requestNo || "-"} • {showStatus(r.status)}
+                    {r.requestNo || "-"} • {statusLabelTH(r.status)}
                   </div>
                   <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">{fullNameOf(r)}</div>
                   <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                    ตัดสินใจ: {fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt)}
+                    ตัดสินใจ/อัปเดต:{" "}
+                    {fmtDate(r.decidedAt || r.approvedAt || r.rejectedAt || r.canceledAt || r.cancelledAt || r.updatedAt)}
                   </div>
                 </li>
               ))}
@@ -845,7 +962,7 @@ export default function LeaveApproveHistoryPage() {
         </div>
       </ModalShell>
 
-      {/* ---------- Confirm step2 (ModalShell ของกลาง + พิมพ์ DELETE) ---------- */}
+      {/* ---------- Confirm step2 (พิมพ์ DELETE) ---------- */}
       <ModalShell
         open={confirm2Open}
         title={deleteTitle2}
@@ -858,26 +975,19 @@ export default function LeaveApproveHistoryPage() {
         }}
         footer={
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => resetDeleteFlow()}
-              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-900 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-            >
+            <AppButton type="button" disabled={busy} onClick={() => resetDeleteFlow()} variant="outlinePill" className="h-10 px-5">
               ยกเลิก
-            </button>
+            </AppButton>
 
-            <button
+            <AppButton
               type="button"
+              variant="danger"
               disabled={busy || !deletePhraseOk}
               onClick={runDeleteAction}
-              className={cn(
-                "rounded-xl px-4 py-2 text-sm font-bold text-white",
-                busy || !deletePhraseOk ? "bg-red-400 opacity-60" : "bg-red-600 hover:bg-red-700"
-              )}
+              className="h-10 px-5 whitespace-nowrap"
             >
               {busy ? "กำลังลบ..." : "ลบเลย"}
-            </button>
+            </AppButton>
           </div>
         }
       >
@@ -890,9 +1000,11 @@ export default function LeaveApproveHistoryPage() {
               value={deletePhrase}
               onChange={(e) => setDeletePhrase(e.target.value)}
               placeholder="DELETE"
-              className="mt-3 h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/20 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+              className={cn("mt-3", inputTheme.purple)}
             />
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">ปุ่ม “ลบเลย” จะกดได้เมื่อพิมพ์ DELETE ถูกต้อง</div>
+            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              ปุ่ม “ลบเลย” จะกดได้เมื่อพิมพ์ DELETE ถูกต้อง
+            </div>
           </div>
         </div>
       </ModalShell>
