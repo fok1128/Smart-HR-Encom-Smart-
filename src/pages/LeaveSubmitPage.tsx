@@ -1,5 +1,5 @@
 // LeaveSubmitPage.tsx
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../context/AuthContext";
 import { createLeaveRequestWithFiles } from "../services/leaveRequests";
 import { useNavigate } from "react-router-dom";
@@ -24,7 +24,7 @@ type LeaveSubType =
   | "ลาราชการทหาร"
   | "ลาเพื่อทำหมัน"
   | "อื่นๆ";
-type LeaveMode = "allDay" | "time";
+type LeaveMode = "time";
 
 type Option<T extends string> = { value: T; label: string };
 
@@ -60,7 +60,7 @@ function SelectBox<T extends string>({
   disabled,
   clearable = true,
 }: {
-  label: string;
+  label: ReactNode;
   placeholder: string;
   value: T | "";
   options: Option<T>[];
@@ -104,7 +104,7 @@ function SelectBox<T extends string>({
             disabled
               ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-500"
               : "border-gray-300 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-700 cursor-pointer",
-            open && !disabled ? "border-teal-500 ring-2 ring-teal-500/20" : "",
+            open && !disabled ? "border-purple-600 ring-2 ring-purple-600/20" : "",
           ].join(" ")}
           role="button"
           tabIndex={0}
@@ -432,10 +432,8 @@ export default function LeaveSubmitPage() {
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
 
-  const [mode, setMode] = useState<LeaveMode>("allDay");
-
-  const [startDate, setStartDate] = useState<string>(todayISODate());
-  const [endDate, setEndDate] = useState<string>(todayISODate());
+  // ✅ ตัดโหมด "ลาทั้งวัน" ออก เหลือเฉพาะแบบระบุเวลา (time) เท่านั้น
+  const mode: LeaveMode = "time";
 
   const [startDT, setStartDT] = useState<string>(() => toISODateTimeLocal(new Date()));
   const [endDT, setEndDT] = useState<string>(() => toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
@@ -449,7 +447,10 @@ export default function LeaveSubmitPage() {
   const [uploadPct, setUploadPct] = useState<number>(0);
   
   useEffect(() => {
-    setSubType("");
+    // ✅ ลาพักร้อน: ตั้งประเภทย่อยอัตโนมัติ
+    if (category === "ลาพักร้อน") setSubType("ลาพักร้อน");
+    else setSubType("");
+
     setErrors((prev) => {
       const next = { ...prev };
       delete next.subType;
@@ -458,13 +459,7 @@ export default function LeaveSubmitPage() {
     });
   }, [category]);
 
-  useEffect(() => {
-    if (mode !== "allDay") return;
-    if (!startDate || !endDate) return;
-    if (new Date(endDate).getTime() < new Date(startDate).getTime()) setEndDate(startDate);
-  }, [mode, startDate, endDate]);
-
-  const timedInvalid = mode === "time" && isEndBeforeStart(startDT, endDT);
+  const timedInvalid = isEndBeforeStart(startDT, endDT);
 
   const categoryOptions: Option<LeaveCategory>[] = useMemo(
     () => [
@@ -482,15 +477,9 @@ export default function LeaveSubmitPage() {
   }, [category]);
 
   // ====== ✅ derive start/end date-only for workdays + retro ======
-  const startYMD = useMemo(() => {
-    if (mode === "allDay") return startDate || "";
-    return datePartFromDateTimeLocal(startDT);
-  }, [mode, startDate, startDT]);
+  const startYMD = useMemo(() => datePartFromDateTimeLocal(startDT), [startDT]);
 
-  const endYMD = useMemo(() => {
-    if (mode === "allDay") return endDate || "";
-    return datePartFromDateTimeLocal(endDT);
-  }, [mode, endDate, endDT]);
+  const endYMD = useMemo(() => datePartFromDateTimeLocal(endDT), [endDT]);
 
   const todayYMD = useMemo(() => todayISODate(), []);
 
@@ -520,11 +509,6 @@ export default function LeaveSubmitPage() {
   const isMaternity = isSpecial && subType === "ลาคลอด";
   const isMilitary = isSpecial && subType === "ลาราชการทหาร";
   const isSterilization = isSpecial && subType === "ลาเพื่อทำหมัน";
-
-  // ✅ ป่วยระหว่างวัน = บังคับ "ระบุเวลา"
-  useEffect(() => {
-    if (isSickInDay && mode !== "time") setMode("time");
-  }, [isSickInDay, mode]);
 
   const sickNeedMedicalCertRule = useMemo(() => {
     if (!isSick || !subType) return { need: false, mode: "NONE" as const };
@@ -769,9 +753,6 @@ export default function LeaveSubmitPage() {
   const resetAll = () => {
       setCategory("");
       setSubType("");
-      setMode("allDay");
-      setStartDate(todayISODate());
-      setEndDate(todayISODate());
       setStartDT(toISODateTimeLocal(new Date()));
       setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
       setReason("");
@@ -798,23 +779,19 @@ export default function LeaveSubmitPage() {
     if (!category) e.category = "กรุณาเลือกประเภทการลา";
     if (!subType) e.subType = "กรุณาเลือกประเภทย่อย";
 
-    if (mode === "allDay") {
-      if (!startDate) e.startDate = "กรุณาเลือกวันเริ่ม";
-      if (!endDate) e.endDate = "กรุณาเลือกวันสิ้นสุด";
-    } else {
-      if (!startDT) e.startDT = "กรุณาเลือกวัน-เวลาเริ่ม";
-      if (!endDT) e.endDT = "กรุณาเลือกวัน-เวลาสิ้นสุด";
+    if (!startDT) e.startDT = "กรุณาเลือกวัน-เวลาเริ่ม";
+    if (!endDT) e.endDT = "กรุณาเลือกวัน-เวลาสิ้นสุด";
 
-      if (startDT && endDT && isEndBeforeStart(startDT, endDT)) {
-        e.endDT = "วัน-เวลาสิ้นสุดต้องไม่น้อยกว่าวัน-เวลาเริ่ม";
-      }
-
-      if (violateBusinessHours) {
-        e.endDT = "ป่วยระหว่างวันต้องอยู่ในวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00";
-      }
+    if (startDT && endDT && isEndBeforeStart(startDT, endDT)) {
+      e.endDT = "วัน-เวลาสิ้นสุดต้องไม่น้อยกว่าวัน-เวลาเริ่ม";
     }
 
-    if (!reason.trim()) e.reason = "กรุณากรอกเหตุผล/รายละเอียด";
+    if (violateBusinessHours) {
+      e.endDT = "ป่วยระหว่างวันต้องอยู่ในวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00";
+    }
+
+    // ✅ เหตุผล: ลาพักร้อน "ไม่บังคับ"
+    if (!reason.trim() && !isVacation) e.reason = "กรุณากรอกเหตุผล/รายละเอียด";
 
     // ✅ ย้อนหลัง:
     // - ลาป่วยย้อนหลัง: ต้องมี retroReason
@@ -833,7 +810,7 @@ export default function LeaveSubmitPage() {
     // ✅ ลากิจปกติ ต้องยื่นล่วงหน้า >= 3 วันทำการ (ยกเว้นฉุกเฉิน / ยกเว้นย้อนหลัง)
     if (isBusinessNormal && !isRetroactive && startYMD) {
       if (!isBusinessEmergency && compareYMD(startYMD, minStartForBusinessNormal) < 0) {
-        e.startDate = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
+        e.startDT = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
       }
     }
 
@@ -849,7 +826,7 @@ export default function LeaveSubmitPage() {
           return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
         })();
         if (compareYMD(startYMD, min) < 0) {
-          e.startDate = `ลาเพื่อทำหมัน: ต้องยื่นล่วงหน้าอย่างน้อย 1 วัน (เริ่มลาได้ตั้งแต่ ${min})`;
+          e.startDT = `ลาเพื่อทำหมัน: ต้องยื่นล่วงหน้าอย่างน้อย 1 วัน (เริ่มลาได้ตั้งแต่ ${min})`;
         }
       }
     }
@@ -884,6 +861,21 @@ export default function LeaveSubmitPage() {
     }
     if (isMilitary && workdaysCount > 0) {
       if (workdaysCount > militaryRemain) e.militaryLimit = `ลาเพื่อรับราชการทหารปีนี้เหลือ ${militaryRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    }
+
+    // ✅ ลาคลอด: ต้องยื่นล่วงหน้าอย่างน้อย 30 วัน (ไม่นับกรณียื่นย้อนหลัง)
+    if (isMaternity && !isRetroactive && startYMD) {
+      const start = toDateOnlyLocal(startYMD);
+      const today = toDateOnlyLocal(todayISODate());
+      const diffDays = Math.floor((start.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+      if (diffDays < 30) {
+        e.startDT = "ลาคลอดต้องยื่นล่วงหน้าอย่างน้อย 30 วัน";
+      }
+    }
+
+    // ✅ ลาคลอด: บังคับแนบเอกสารประกอบ
+    if (isMaternity && (files || []).length === 0) {
+      e.files = "ลาคลอด: กรุณาแนบเอกสารประกอบ (เช่น สมุดฝากครรภ์/ใบรับรองแพทย์)";
     }
 
     setErrors(e);
@@ -928,9 +920,9 @@ export default function LeaveSubmitPage() {
 
       category: category as any,
       subType: subType as any,
-      mode,
-      startAt: mode === "allDay" ? startDate : startDT,
-      endAt: mode === "allDay" ? endDate : endDT,
+      mode: "time",
+      startAt: startDT,
+      endAt: endDT,
       reason,
 
       workdaysCount: workdaysCount || 0,
@@ -1222,7 +1214,7 @@ export default function LeaveSubmitPage() {
         type="button"
         onClick={handleResetClick}
         disabled={submitting}
-        className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+        className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-60"
       >
         ล้างฟอร์ม
       </button>
@@ -1235,144 +1227,104 @@ export default function LeaveSubmitPage() {
         <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
           <div className="font-semibold">กำลังอัปโหลดไฟล์… {uploadPct}%</div>
           <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-            <div className="h-full bg-teal-600 transition-all" style={{ width: `${uploadPct}%` }} />
+            <div className="h-full bg-purple-600 transition-all" style={{ width: `${uploadPct}%` }} />
           </div>
         </div>
       )}
+{/* ====== เลือกประเภทการลา ====== */}
+<div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
+        เลือกประเภทการลา <span className="text-red-500">*</span>
+      </label>
+      <SelectBox<LeaveCategory>
+        label=""
+        placeholder="ประเภทการลา"
+        value={category}
+        options={categoryOptions}
+        onChange={(v) => setCategory((v as LeaveCategory) || "")}
+        disabled={submitting}
+      />
+      {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
+    </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
+          เลือกประเภทย่อย <span className="text-red-500">*</span>
+        </label>
+        <SelectBox<LeaveSubType>
+          label=""
+          placeholder="ประเภทย่อย"
+          value={subType}
+          options={subTypeOptions}
+          onChange={(v) => setSubType((v as LeaveSubType) || "")}
+          disabled={!category || submitting}
+        />
+        {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
+      </div>
+    </div>
+  </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-            <div>
-              <SelectBox<LeaveCategory>
-                label="เลือกประเภทการลา"
-                placeholder="ประเภทการลา"
-                value={category}
-                options={categoryOptions}
-                onChange={(v) => setCategory(v as LeaveCategory | "")}
-                disabled={submitting}
-              />
-              {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
-            </div>
-
-            <div>
-              <SelectBox<LeaveSubType>
-                label="เลือกประเภทย่อย"
-                placeholder="ประเภทย่อย"
-                value={subType}
-                options={subTypeOptions}
-                onChange={(v) => setSubType(v as LeaveSubType | "")}
-                disabled={!category || submitting}
-              />
-              {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
-            </div>
-          </div>
-        </div>
-
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ช่วงเวลาการลา</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">เลือก “ทั้งวัน” หรือ “ระบุเวลา”</div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input
-                  type="radio"
-                  name="leaveMode"
-                  checked={mode === "allDay"}
-                  onChange={() => setMode("allDay")}
-                  disabled={submitting || isSickInDay}
-                />
-                ทั้งวัน
-              </label>
-
-              <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
-                <input type="radio" name="leaveMode" checked={mode === "time"} onChange={() => setMode("time")} disabled={submitting} />
-                ระบุเวลา
-              </label>
+              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ระบุวัน-เวลาเริ่ม และวัน-เวลาสิ้นสุด</div>
             </div>
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {mode === "allDay" ? (
-              <>
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วันเริ่มลา</div>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-                  />
-                  {(errors.startDate ||
-                    errors.businessLimit ||
+            <div>
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                วัน-เวลาเริ่มลา<span className="ml-1 text-red-500">*</span>
+              </div>
+              <input
+                type="datetime-local"
+                value={startDT}
+                onChange={(e) => setStartDT(e.target.value)}
+                disabled={submitting}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20 dark:border-gray-800 dark:bg-gray-900"
+              />
+              {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
+              {(errors.businessLimit ||
+                errors.sickLimit ||
+                errors.vacationLimit ||
+                errors.maternityLimit ||
+                errors.militaryLimit) && (
+                <p className="mt-2 text-xs font-semibold text-red-600">
+                  {errors.businessLimit ||
                     errors.sickLimit ||
                     errors.vacationLimit ||
                     errors.maternityLimit ||
-                    errors.militaryLimit) && (
-                    <p className="mt-2 text-xs font-semibold text-red-600">
-                      {errors.startDate ||
-                        errors.businessLimit ||
-                        errors.sickLimit ||
-                        errors.vacationLimit ||
-                        errors.maternityLimit ||
-                        errors.militaryLimit}
-                    </p>
-                  )}
-                </div>
+                    errors.militaryLimit}
+                </p>
+              )}
+            </div>
 
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วันสิ้นสุดลา</div>
-                  <input
-                    type="date"
-                    value={endDate}
-                    min={startDate || undefined}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-                  />
-                  {errors.endDate && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDate}</p>}
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วัน-เวลาเริ่มลา</div>
-                  <input
-                    type="datetime-local"
-                    value={startDT}
-                    onChange={(e) => setStartDT(e.target.value)}
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
-                  />
-                  {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
-                </div>
-
-                <div>
-                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">วัน-เวลาสิ้นสุดลา</div>
-                  <input
-                    type="datetime-local"
-                    value={endDT}
-                    onChange={(e) => setEndDT(e.target.value)}
-                    disabled={submitting}
-                    className={[
-                      "mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none dark:bg-gray-900 dark:border-gray-800",
-                      "focus:ring-2",
-                      timedInvalid || violateBusinessHours
-                        ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
-                        : "border-gray-300 focus:border-teal-500 focus:ring-teal-500/20",
-                    ].join(" ")}
-                  />
-                  {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
-                </div>
-              </>
-            )}
+            <div>
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                วัน-เวลาสิ้นสุดลา<span className="ml-1 text-red-500">*</span>
+              </div>
+              <input
+                type="datetime-local"
+                value={endDT}
+                onChange={(e) => setEndDT(e.target.value)}
+                disabled={submitting}
+                className={[
+                  "mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none dark:bg-gray-900 dark:border-gray-800",
+                  "focus:ring-2",
+                  timedInvalid || violateBusinessHours
+                    ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
+                    : "border-gray-300 focus:border-purple-600 focus:ring-purple-600/20",
+                ].join(" ")}
+              />
+              {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
+            </div>
           </div>
 
-          {isSickInDay && mode === "time" && (
+          {isSickInDay && (
             <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">* ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
           )}
         </div>
@@ -1386,7 +1338,7 @@ export default function LeaveSubmitPage() {
               rows={4}
               placeholder="อธิบายเหตุผลที่ยื่นย้อนหลัง (เช่น เข้ารพ./ไม่มีสัญญาณ/อยู่ระหว่างการรักษา ฯลฯ)"
               disabled={submitting}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20 dark:border-gray-800 dark:bg-gray-900"
             />
             {errors.retroReason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.retroReason}</p>}
           </div>
@@ -1395,30 +1347,34 @@ export default function LeaveSubmitPage() {
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เหตุผล / รายละเอียด</div>
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เหตุผล / รายละเอียด{!isVacation && <span className="ml-1 text-red-500">*</span>}</div>
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 rows={6}
                 placeholder="พิมพ์เหตุผลการลา…"
                 disabled={submitting}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-gray-800 dark:bg-gray-900"
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20 dark:border-gray-800 dark:bg-gray-900"
               />
               {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
             </div>
 
             <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">แนบไฟล์ (PDF/รูป)</div>
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">แนบไฟล์ (PDF/รูป){isMaternity && <span className="ml-1 text-red-500">*</span>}</div>
               <input
                 type="file"
                 multiple
                 disabled={submitting}
                 accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
                 onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-                className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-gray-700 hover:file:bg-gray-200 dark:text-gray-200 dark:file:bg-gray-800 dark:file:text-gray-200 dark:hover:file:bg-gray-700"
+                className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-purple-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-purple-700 dark:text-gray-200 dark:file:bg-purple-700 dark:file:text-gray-200 dark:hover:file:bg-purple-800"
               />
 
               {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
+
+              {isMaternity && (
+                <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">* ลาคลอด: ต้องแนบเอกสารประกอบก่อนส่งคำร้อง</p>
+              )}
 
               <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
                 <div className="font-semibold">ไฟล์ที่เลือก</div>
@@ -1444,7 +1400,7 @@ export default function LeaveSubmitPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-lg bg-teal-600 px-6 py-3 text-sm font-semibold text-white hover:bg-teal-700 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-60"
+            className="rounded-lg bg-purple-600 px-6 py-3 text-sm font-semibold text-white hover:bg-purple-700 focus:ring-2 focus:ring-purple-500/30 disabled:opacity-60"
           >
             {submitting ? "กำลังส่ง..." : "ส่งคำร้อง"}
           </button>
