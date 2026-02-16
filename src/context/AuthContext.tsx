@@ -139,6 +139,24 @@ async function fetchMeWithClaimsRefresh(fbUser: FirebaseUser): Promise<MeRespons
   return me1;
 }
 
+/**
+ * ✅ Warm up backend เพื่อลด cold start (Render)
+ * - เรียก /health แบบ GET ไม่มี headers => โดยมาก "ไม่ preflight"
+ * - เงียบไว้ถ้าล้มเหลว (ไม่ให้รบกวน UX)
+ */
+async function warmUpBackend() {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+
+    await fetch(`${API_BASE}/health`, { signal: ctl.signal });
+
+    clearTimeout(t);
+  } catch {
+    // no-op
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,6 +183,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     pendingLoginRef.current = null;
     p.reject(e);
   };
+
+  // ✅ ปลุก backend ทันทีเมื่อเปิดเว็บ (ลดครั้งแรกช้า)
+  useEffect(() => {
+    warmUpBackend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
@@ -228,10 +252,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         auth,
         remember ? browserLocalPersistence : browserSessionPersistence
       );
-
-      // ❗️ไม่จำเป็นต้อง signOut ก่อน signIn (มันทำให้ state กระตุก/ยิง event เพิ่ม)
-      // ถ้าอยากคงไว้จริง ๆ ก็ทำได้ แต่จะเสี่ยงเกิด state change เพิ่ม
-      // try { await signOut(auth); } catch {}
 
       // ✅ สร้าง promise รอ onAuthStateChanged() fetch /me แล้วค่อย resolve
       const waitMe = new Promise<MeResponse>((resolve, reject) => {

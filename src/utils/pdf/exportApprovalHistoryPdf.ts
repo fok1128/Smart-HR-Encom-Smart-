@@ -11,10 +11,8 @@ type ExportMeta = {
 
   exportedAt?: Date;
 
-  // เดิม: บางทีถูกส่งมาเป็น email
   exportedBy?: string;
 
-  // ✅ ใหม่: ส่งโปรไฟล์มาเหมือนชื่อพนักงาน
   exportedByProfile?: {
     fname?: string;
     lname?: string;
@@ -37,13 +35,11 @@ type ExportMeta = {
   signatureTitle?: string;
   signatureName?: string;
 
-  // ✅ เพิ่ม: ให้หน้าเว็บส่ง toast มา (แทน alert)
   notify?: (message: string, opts?: { title?: string; variant?: NotifyVariant }) => void;
 };
 
 export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {}) {
   if (!rows || rows.length === 0) {
-    // ❌ ไม่ใช้ alert แล้ว
     meta.notify?.("ไม่มีข้อมูลให้ Export", { title: "Export PDF", variant: "warning" });
     return false;
   }
@@ -67,7 +63,6 @@ export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {
   const title = meta.title ?? "รายงานประวัติการอนุมัติใบลา";
   const exportedAt = meta.exportedAt ?? new Date();
 
-  // ✅ ผู้ออกรายงาน: ชื่อจริง+ตำแหน่ง (เหมือนชื่อพนักงาน)
   const exportedBy = buildExportedBy(meta);
 
   const filtersText = meta.filtersText ?? "-";
@@ -172,24 +167,23 @@ export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {
   // Table
   // =========================
   const head = [
-    [
-      "ชื่อพนักงาน",
-      "เลขคำร้อง",
-      "ยื่นคำร้อง",
-      "วันอนุมัติ/อัปเดต",
-      "สถานะ",
-      "เหตุผล/หมายเหตุ",
-    ],
+    ["ชื่อพนักงาน", "เลขคำร้อง", "ยื่นคำร้อง", "วันอนุมัติ/อัปเดต", "สถานะ", "เหตุผล/หมายเหตุ"],
   ];
 
-  const body = rows.map((r) => [
-    safe(r.employeeName),
-    safe(r.requestNo ?? r.requestId ?? r.leaveNo ?? r.id),
-    safe(formatTHDateTime(anyToDate(r.submittedAt ?? r.createdAt))),
-    safe(formatTHDateTime(anyToDate(r.decidedAt ?? r.approvedAt ?? r.rejectedAt ?? r.updatedAt))),
-    safe(statusTH(r.status)),
-    safe(r.reason ?? r.note ?? "-"),
-  ]);
+  // ✅ B) ทำ 2 บรรทัดใน "เลขคำร้อง" โดยใส่ช่วงลาใต้เลขคำร้อง
+  const body = rows.map((r) => {
+    const requestNo = safe(r.requestNo ?? r.requestId ?? r.leaveNo ?? r.id);
+    const leaveRange = leaveStartEndText(r); // "ช่วงลา: ... – ..."
+
+    return [
+      safe(r.employeeName),
+      `${requestNo}\n${leaveRange}`, // ✅ 2 บรรทัด
+      safe(formatTHDateTime(anyToDate(r.submittedAt ?? r.createdAt))),
+      safe(formatTHDateTime(anyToDate(r.decidedAt ?? r.approvedAt ?? r.rejectedAt ?? r.updatedAt))),
+      safe(statusTH(r.status)),
+      safe(r.reason ?? r.note ?? "-"),
+    ];
+  });
 
   autoTable(doc, {
     head,
@@ -207,13 +201,16 @@ export async function exportApprovalHistoryPdf(rows: any[], meta: ExportMeta = {
     },
     headStyles: { font: THAI_FONT_NAME, fontStyle: "normal", fontSize: 14 },
 
+    // ✅ ปรับความกว้างเพื่อรองรับ 2 บรรทัดในเลขคำร้อง
+    // (รวมแล้วต้องไม่เกิน tableWidth ~ 511)
     columnStyles: {
-      0: { cellWidth: 100, overflow: "linebreak" },
-      1: { cellWidth: 90, overflow: "linebreak" },
-      2: { cellWidth: 80, overflow: "linebreak" },
-      3: { cellWidth: 95, overflow: "linebreak" },
-      4: { cellWidth: 60, overflow: "linebreak" },
-      5: { cellWidth: 90, overflow: "linebreak" },
+      // ✅ รวมกัน = 511 (พอดีกับ tableWidth: pageWidth - 84)
+      0: { cellWidth: 95, overflow: "linebreak" },  // ชื่อพนักงาน
+      1: { cellWidth: 100, overflow: "linebreak" }, // เลขคำร้อง + ช่วงลา (2 บรรทัด)
+      2: { cellWidth: 78, overflow: "linebreak" },  // ยื่นคำร้อง
+      3: { cellWidth: 88, overflow: "linebreak" },  // วันอนุมัติ/อัปเดต
+      4: { cellWidth: 55, overflow: "linebreak" },  // สถานะ
+      5: { cellWidth: 95, overflow: "linebreak" },  // ✅ เหตุผล/หมายเหตุ (กลับมาแน่นอน)
     },
 
     horizontalPageBreak: true,
@@ -285,6 +282,7 @@ function statusTH(status: string) {
   if (s.includes("APPROV") || s.includes("อนุมัติ")) return "อนุมัติ";
   if (s.includes("REJECT") || s.includes("DENY") || s.includes("ไม่อนุมัติ")) return "ไม่อนุมัติ";
   if (s.includes("PEND") || s.includes("WAIT")) return "รออนุมัติ";
+  if (s.includes("CANCEL") || s.includes("ยกเลิก")) return "ยกเลิก";
   return status || "-";
 }
 
@@ -411,4 +409,32 @@ function parseFirstDateFromDateRangeText(text: string): Date | null {
 
   const d = new Date(yy, mm - 1, dd);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// ✅ NEW: ดึง "ช่วงลา" จาก startAt/endAt (รองรับชื่อฟิลด์หลายแบบ)
+function leaveStartEndText(r: any) {
+  const start =
+    anyToDate(r?.startAt) ??
+    anyToDate(r?.startDate) ??
+    anyToDate(r?.from) ??
+    anyToDate(r?.leaveStart) ??
+    anyToDate(r?.dateFrom) ??
+    null;
+
+  const end =
+    anyToDate(r?.endAt) ??
+    anyToDate(r?.endDate) ??
+    anyToDate(r?.to) ??
+    anyToDate(r?.leaveEnd) ??
+    anyToDate(r?.dateTo) ??
+    null;
+
+  const startText = formatTHDateTime(start);
+  const endText = formatTHDateTime(end);
+
+  // ถ้าไม่มีทั้งคู่ ให้แสดง "-"
+  if (startText === "-" && endText === "-") return "ช่วงลา: -";
+
+  // ถ้ามีอย่างใดอย่างหนึ่ง
+  return `ช่วงลา: ${startText} – ${endText}`;
 }
