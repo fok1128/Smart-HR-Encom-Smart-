@@ -1,7 +1,8 @@
+// src/pages/LeaveStatusPage.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useToastCenter } from "../components/common/ToastCenter";
 import ModalShell from "../components/common/ModalShell";
+import { useDialogCenter } from "../components/common/DialogCenter";
 import { listenMyLeaveRequests, type LeaveRequestDoc } from "../services/leaveRequests";
 import { listenMyFieldWorkRequests } from "../services/fieldWorkRequests";
 import { getSignedUrl } from "../services/files";
@@ -89,7 +90,7 @@ function normTime(s: any) {
 
 export default function LeaveStatusPage() {
   const { user } = useAuth();
-  const { showToast } = useToastCenter();
+  const { alert } = useDialogCenter();
 
   // raw data
   const [leaveItems, setLeaveItems] = useState<LeaveRequestDoc[]>([]);
@@ -244,16 +245,15 @@ export default function LeaveStatusPage() {
       }
 
       if (!url && att?.path) {
-        showToast("ไฟล์นี้เป็นข้อมูลเก่าที่เก็บแบบ Firebase path — ตอนนี้ระบบเปลี่ยนเป็น Supabase แล้ว", {
+        alert("ไฟล์นี้เป็นข้อมูลเก่าที่เก็บแบบ Firebase path — ตอนนี้ระบบเปลี่ยนเป็น Supabase แล้ว", {
           title: "เปิดไฟล์ไม่ได้",
           variant: "warning",
-          durationMs: 2600,
         });
         return;
       }
 
       if (!url) {
-        showToast("ไฟล์แนบรายการนี้ยังไม่มีลิงก์/พาธสำหรับดู", { title: "เปิดไฟล์ไม่ได้", variant: "warning" });
+        alert("ไฟล์แนบรายการนี้ยังไม่มีลิงก์/พาธสำหรับดู", { title: "เปิดไฟล์ไม่ได้", variant: "warning" });
         return;
       }
 
@@ -262,7 +262,7 @@ export default function LeaveStatusPage() {
       setPreviewOpen(true);
     } catch (e: any) {
       console.error(e);
-      showToast(e?.message || String(e), { title: "เปิดไฟล์ไม่ได้", variant: "danger" });
+      alert(e?.message || String(e), { title: "เปิดไฟล์ไม่ได้", variant: "danger" });
     } finally {
       setPreviewLoading(false);
     }
@@ -385,7 +385,7 @@ export default function LeaveStatusPage() {
               onClick={() => {
                 setTypeFilter("ALL");
                 setStatusFilter("ALL");
-                showToast("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ", variant: "success", durationMs: 1400 });
+                alert("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ", variant: "success" });
               }}
               className="h-11 rounded-xl border border-gray-200 bg-white px-5 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-gray-800"
             >
