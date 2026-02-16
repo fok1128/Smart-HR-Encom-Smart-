@@ -1,9 +1,9 @@
-// src/pages/FieldWorkHistoryPage.tsx
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import { useAuth } from "../context/AuthContext";
 import { useDialogCenter } from "../components/common/DialogCenter";
+import AppButton from "../components/common/AppButton";
 import {
   deleteFieldWorkRequest,
   listenAllFieldWorkRequests,
@@ -20,10 +20,19 @@ import { db } from "../firebase";
 // ✅ Modal กลาง (ไฟล์แนบทั้งหมด)
 import { Modal } from "../components/ui/modal";
 
+// ✅ Theme กลาง
+import { inputTheme } from "../components/ui/theme/inputTheme";
+import { tableTheme } from "../components/ui/theme/tableTheme";
+
+function cn(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
 function dateTimeText(dtLocal?: string) {
   if (!dtLocal) return "-";
   return dtLocal.replace("T", " ");
 }
+
 function tsToMs(ts: any): number {
   try {
     if (ts?.toDate) return ts.toDate().getTime();
@@ -84,11 +93,105 @@ function pickNamePhoneFromUserDoc(d: any): UserMini {
   return { fullName, phone };
 }
 
-// ✅ กัน TS ขีดแดง WebkitAppearance
 const dateInputStyle: any = {
   appearance: "auto",
   WebkitAppearance: "auto",
 };
+
+// ✅ select ธีมกลาง + ลูกศรสวย/คุมได้
+function ThemedSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  const { className = "", children, ...rest } = props;
+  return (
+    <div className="relative">
+      <select
+        {...rest}
+        className={cn(
+          inputTheme.control,
+          "h-11 py-0 text-base font-semibold appearance-none pr-11",
+          className
+        )}
+      >
+        {children}
+      </select>
+
+      <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-gray-500 dark:text-gray-300">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+// ✅ date input ธีมกลาง + ปุ่มเปิด date picker
+function ThemedDateInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  const openPicker = () => {
+    const el: any = ref.current;
+    // Chromium: showPicker()
+    if (el?.showPicker) {
+      el.showPicker();
+      return;
+    }
+    // fallback
+    ref.current?.focus();
+  };
+
+  return (
+    <div className={cn("relative", className)}>
+      <input
+        ref={ref}
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(inputTheme.purple, "pr-12")}
+        style={dateInputStyle}
+        placeholder={placeholder}
+      />
+
+      {/* ปุ่มเปิด date picker */}
+      <button
+        type="button"
+        onClick={openPicker}
+        className={cn(
+          "absolute inset-y-0 right-3 my-2 inline-flex items-center justify-center rounded-xl",
+          "px-2 text-gray-600 hover:text-violet-700 dark:text-gray-300 dark:hover:text-violet-300",
+          "focus:outline-none focus:ring-2 focus:ring-violet-400/25"
+        )}
+        aria-label="เลือกวันที่"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M8 3v2M16 3v2M4 7h16M6 11h4M6 15h4M14 11h4M14 15h4M6 19h12"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M6 5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity="0.35"
+          />
+        </svg>
+      </button>
+    </div>
+  );
+}
 
 export default function FieldWorkHistoryPage() {
   const { user } = useAuth() as any;
@@ -104,10 +207,15 @@ export default function FieldWorkHistoryPage() {
   const [rows, setRows] = useState<FieldWorkRequestDoc[]>([]);
   const [err, setErr] = useState<string>("");
 
-  // ✅ เปลี่ยน: เริ่มต้น "ไม่กรองวัน" ให้เป็นค่าว่าง
+  // ✅ Filters
   const [fromISO, setFromISO] = useState<string>("");
   const [toISO, setToISO] = useState<string>("");
   const [q, setQ] = useState<string>("");
+
+  // ✅ เพิ่ม dropdown แบบรูป (เลือกดู "ทั้งหมด/มีไฟล์แนบ/ไม่มีไฟล์แนบ")
+  // ถ้าคุณมี dropdown อย่างอื่นอยู่แล้ว เปลี่ยน options ตามใจได้เลย
+  type AttachFilter = "ทั้งหมด" | "มีไฟล์แนบ" | "ไม่มีไฟล์แนบ";
+  const [attachFilter, setAttachFilter] = useState<AttachFilter>("ทั้งหมด");
 
   const [userMap, setUserMap] = useState<Record<string, UserMini>>({});
   const [emailMap, setEmailMap] = useState<Record<string, UserMini>>({});
@@ -117,9 +225,14 @@ export default function FieldWorkHistoryPage() {
     requestNo: "",
     attachments: [],
   });
- useEffect(() => {
+
+  const isDateDefault = !fromISO && !toISO;
+  const isAllDefault = isDateDefault && !q.trim() && attachFilter === "ทั้งหมด";
+
+  useEffect(() => {
     if (canSeeAll) setScope("all");
   }, [canSeeAll]);
+
   useEffect(() => {
     if (!myUid) {
       setRows([]);
@@ -218,33 +331,6 @@ export default function FieldWorkHistoryPage() {
     };
   }, [rows, emailMap]);
 
-  const filtered = useMemo(() => {
-    const qq = q.trim().toLowerCase();
-
-    return (rows || [])
-      .filter((r) => withinRange(r, fromISO, toISO))
-      .filter((r) => {
-        if (!qq) return true;
-
-        const p = userMap[r.uid] || { fullName: "", phone: "" };
-        const em = String((r as any)?.email || "").trim().toLowerCase();
-        const pe = emailMap[em] || { fullName: "", phone: "" };
-
-        const s = (r as any)?.submitter || null;
-        const snapName =
-          String(s?.fullName || "").trim() ||
-          [String(s?.fname || "").trim(), String(s?.lname || "").trim()].filter(Boolean).join(" ").trim();
-        const snapPhone =
-          String(s?.phone || "").trim() ||
-          String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
-
-        const hay = `${r.requestNo} ${r.place} ${r.note || ""} ${(r as any)?.email || ""} ${p.fullName} ${p.phone} ${pe.fullName} ${pe.phone} ${snapName} ${snapPhone}`.toLowerCase();
-
-        return hay.includes(qq);
-      })
-      .sort((a, b) => tsToMs(b.submittedAt) - tsToMs(a.submittedAt));
-  }, [rows, fromISO, toISO, q, userMap, emailMap]);
-
   async function openAttachment(storagePath: string) {
     try {
       const url = await getSignedUrl(storagePath);
@@ -295,12 +381,93 @@ export default function FieldWorkHistoryPage() {
     setAttModal({ open: false, requestNo: "", attachments: [] });
   }
 
-  // ✅ เปลี่ยน: “ล้างวันที่” = กลับไปไม่กรองวัน
-  function resetDates() {
+  // ✅ ล้างช่วงวันที่ + Confirm
+  async function resetDates() {
+    if (isDateDefault) {
+      await dialog.alert("ยังไม่ได้เลือกช่วงวันที่ จึงไม่มีอะไรให้ล้าง", {
+        title: "ไม่มีช่วงวันที่",
+        variant: "info",
+        size: "md",
+      });
+      return;
+    }
+
+    const ok = await dialog.confirm("ต้องการล้างช่วงวันที่ใช่ไหม? (กลับเป็นไม่กรองวัน)", {
+      title: "ยืนยันการล้างช่วงวันที่",
+      confirmText: "ล้างช่วงวันที่",
+      cancelText: "ยกเลิก",
+      variant: "warning",
+      size: "md",
+    });
+    if (!ok) return;
+
     setFromISO("");
     setToISO("");
+    await dialog.success("ล้างช่วงวันที่เรียบร้อย (กลับเป็นไม่กรองวัน)", {
+      title: "ล้างวันที่สำเร็จ",
+      size: "md",
+    });
   }
-  const isDateDefault = !fromISO && !toISO;
+
+  // ✅ ล้างทั้งหมด (วันที่ + ค้นหา + dropdown) + Confirm
+  async function resetAllFilters() {
+    if (isAllDefault) {
+      await dialog.alert("ตอนนี้ไม่มีตัวกรองให้ล้าง", { title: "แจ้งเตือน", variant: "info", size: "md" });
+      return;
+    }
+
+    const ok = await dialog.confirm("ต้องการล้างตัวกรองทั้งหมดใช่ไหม?", {
+      title: "ยืนยันการล้างตัวกรอง",
+      confirmText: "ล้างทั้งหมด",
+      cancelText: "ยกเลิก",
+      variant: "warning",
+      size: "md",
+    });
+    if (!ok) return;
+
+    setFromISO("");
+    setToISO("");
+    setQ("");
+    setAttachFilter("ทั้งหมด");
+
+    await dialog.success("ล้างตัวกรองทั้งหมดเรียบร้อย", { title: "สำเร็จ", size: "md" });
+  }
+
+  const filtered = useMemo(() => {
+    const qq = q.trim().toLowerCase();
+
+    return (rows || [])
+      .filter((r) => withinRange(r, fromISO, toISO))
+      .filter((r) => {
+        // dropdown: มี/ไม่มีไฟล์แนบ
+        const atts = Array.isArray((r as any).attachments) ? (r as any).attachments : [];
+        if (attachFilter === "มีไฟล์แนบ" && atts.length === 0) return false;
+        if (attachFilter === "ไม่มีไฟล์แนบ" && atts.length > 0) return false;
+        return true;
+      })
+      .filter((r) => {
+        if (!qq) return true;
+
+        const p = userMap[r.uid] || { fullName: "", phone: "" };
+        const em = String((r as any)?.email || "").trim().toLowerCase();
+        const pe = emailMap[em] || { fullName: "", phone: "" };
+
+        const s = (r as any)?.submitter || null;
+        const snapName =
+          String(s?.fullName || "").trim() ||
+          [String(s?.fname || "").trim(), String(s?.lname || "").trim()].filter(Boolean).join(" ").trim();
+        const snapPhone =
+          String(s?.phone || "").trim() ||
+          String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
+
+        const hay = `${r.requestNo} ${r.place} ${r.note || ""} ${(r as any)?.email || ""} ${p.fullName} ${
+          p.phone
+        } ${pe.fullName} ${pe.phone} ${snapName} ${snapPhone}`.toLowerCase();
+
+        return hay.includes(qq);
+      })
+      .sort((a, b) => tsToMs(b.submittedAt) - tsToMs(a.submittedAt));
+  }, [rows, fromISO, toISO, q, userMap, emailMap, attachFilter]);
 
   const colCount = canDelete ? 8 : 7;
 
@@ -310,9 +477,8 @@ export default function FieldWorkHistoryPage() {
       <PageBreadcrumb pageTitle="ประวัติแจ้งปฏิบัติงานนอกสถานที่" />
 
       <style>{`
-        input[type="date"]::-webkit-calendar-picker-indicator { opacity: 1; display: block; cursor: pointer; }
+        input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0; display: none; }
         input[type="date"]::-webkit-inner-spin-button, input[type="date"]::-webkit-clear-button { display: none; }
-        .dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
       `}</style>
 
       {/* ✅ Modal กลาง: ไฟล์แนบทั้งหมด */}
@@ -323,12 +489,14 @@ export default function FieldWorkHistoryPage() {
         closeOnBackdrop
         zIndexClassName="z-[2147483646]"
       >
-        <div className="text-sm font-semibold text-gray-500 dark:text-gray-400">{attModal.requestNo}</div>
+        <div className="text-sm font-semibold text-violet-700/80 dark:text-violet-200/80">{attModal.requestNo}</div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
-          <div className="divide-y divide-gray-200 dark:divide-gray-800">
+        <div className="mt-5 overflow-hidden rounded-2xl border border-violet-200/80 dark:border-violet-500/20">
+          <div className="divide-y divide-violet-100 dark:divide-violet-500/15">
             {attModal.attachments.length === 0 ? (
-              <div className="px-4 py-4 text-sm font-semibold text-gray-500 dark:text-gray-400">ไม่มีไฟล์แนบ</div>
+              <div className="px-4 py-4 text-sm font-semibold text-violet-700/70 dark:text-violet-200/70">
+                ไม่มีไฟล์แนบ
+              </div>
             ) : (
               attModal.attachments.map((a, idx) => (
                 <div key={`${a.storagePath}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
@@ -338,13 +506,14 @@ export default function FieldWorkHistoryPage() {
                     </div>
                   </div>
 
-                  <button
+                  <AppButton
                     type="button"
                     onClick={() => openAttachment(a.storagePath || "")}
-                    className="h-10 shrink-0 rounded-2xl bg-gradient-to-r from-fuchsia-600 to-purple-600 px-6 text-sm font-extrabold text-white hover:from-fuchsia-700 hover:to-purple-700"
+                    variant="outlinePill"
+                    className="h-10 px-6"
                   >
                     เปิด
-                  </button>
+                  </AppButton>
                 </div>
               ))
             )}
@@ -352,20 +521,18 @@ export default function FieldWorkHistoryPage() {
         </div>
 
         <div className="mt-6 flex justify-end">
-          <button
-            type="button"
-            onClick={closeAllFiles}
-            className="h-10 rounded-2xl border border-white/50 bg-white/70 px-5 text-sm font-extrabold text-gray-800 transition hover:bg-white dark:border-white/10 dark:bg-gray-950/40 dark:text-gray-100 dark:hover:bg-gray-900/60"
-          >
+          <AppButton type="button" onClick={closeAllFiles} variant="outlinePill" className="h-10 px-5">
             ปิดหน้าต่าง
-          </button>
+          </AppButton>
         </div>
       </Modal>
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6 transition">
+      {/* ✅ Shell/Card: คุมธีมให้เหมือนหน้าอื่น */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 lg:p-6 transition">
+        {/* HEADER */}
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
               ประวัติแจ้งปฏิบัติงานนอกสถานที่
             </h3>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -374,84 +541,92 @@ export default function FieldWorkHistoryPage() {
           </div>
 
           {canSeeAll && (
-            <div className="flex items-center gap-2">
-              <button
+            <div className="flex items-center gap-3">
+              <AppButton
                 type="button"
                 onClick={() => setScope("mine")}
-                className={[
-                  "h-10 rounded-xl px-4 text-sm font-semibold border",
-                  scope === "mine"
-                    ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-900/60 dark:bg-brand-900/20 dark:text-brand-200"
-                    : "border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800",
-                ].join(" ")}
+                variant="outlinePill"
+                size="md"
+                className={cn("px-5", scope === "mine" ? "bg-violet-50/70 dark:bg-violet-500/15" : "")}
               >
                 ดูของตัวเอง
-              </button>
-              <button
+              </AppButton>
+
+              <AppButton
                 type="button"
                 onClick={() => setScope("all")}
-                className={[
-                  "h-10 rounded-xl px-4 text-sm font-semibold border",
-                  scope === "all"
-                    ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-900/60 dark:bg-brand-900/20 dark:text-brand-200"
-                    : "border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800",
-                ].join(" ")}
+                variant="outlinePill"
+                size="md"
+                className={cn("px-5", scope === "all" ? "bg-violet-50/70 dark:bg-violet-500/15" : "")}
               >
                 ดูของทุกคน
-              </button>
+              </AppButton>
             </div>
           )}
         </div>
 
-        {/* Filters */}
-        <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-4">
-          <div>
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">จากวันที่</label>
-            <input
-              type="date"
-              value={fromISO}
-              onChange={(e) => setFromISO(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
-              style={dateInputStyle}
-            />
-          </div>
-
-          <div>
-            <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">ถึงวันที่</label>
-            <input
-              type="date"
-              value={toISO}
-              onChange={(e) => setToISO(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
-              style={dateInputStyle}
-            />
-          </div>
-
-          <div className="lg:col-span-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-semibold text-gray-700 dark:text-gray-200">ค้นหา</label>
-              <button
-                type="button"
-                onClick={resetDates}
-                disabled={isDateDefault}
-                className={[
-                  "h-8 rounded-lg px-3 text-xs font-extrabold border transition",
-                  isDateDefault
-                    ? "cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-500"
-                    : "border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800",
-                ].join(" ")}
-                title="ล้างวันที่ (กลับเป็นไม่กรองวัน)"
-              >
-                ล้างวันที่
-              </button>
+        {/* ✅ FILTER BAR (แนวเดียวกับรูป): แถวบน = ค้นหา + dropdown, แถวล่าง = date range + ปุ่ม */}
+        <div className="mt-6 space-y-4">
+          {/* Row 1 */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+            <div className="lg:col-span-8">
+              <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ค้นหา</label>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                className={cn("mt-2", inputTheme.purple, "h-11 text-base")}
+                placeholder="ค้นหา: ชื่อ/เบอร์/อีเมล/เลขคำร้อง/สถานที่/หมายเหตุ"
+              />
             </div>
 
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm font-semibold text-gray-900 outline-none focus:border-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
-              placeholder="ค้นหาเลขคำร้อง / สถานที่ / หมายเหตุ / ชื่อ / เบอร์"
-            />
+            <div className="lg:col-span-4">
+              <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ตัวกรอง</label>
+              <div className="mt-2">
+                <ThemedSelect value={attachFilter} onChange={(e) => setAttachFilter(e.target.value as any)}>
+                  <option value="ทั้งหมด">ทั้งหมด</option>
+                  <option value="มีไฟล์แนบ">มีไฟล์แนบ</option>
+                  <option value="ไม่มีไฟล์แนบ">ไม่มีไฟล์แนบ</option>
+                </ThemedSelect>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2 */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+            <div className="lg:col-span-3">
+              <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ช่วงวันที่: จาก</label>
+              <div className="mt-2">
+                <ThemedDateInput value={fromISO} onChange={setFromISO} />
+              </div>
+            </div>
+
+            <div className="lg:col-span-3">
+              <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ถึง</label>
+              <div className="mt-2">
+                <ThemedDateInput value={toISO} onChange={setToISO} />
+              </div>
+            </div>
+
+            <div className="lg:col-span-6 flex flex-wrap items-end justify-end gap-3">
+              <AppButton type="button" onClick={resetDates} variant="outlinePill" size="md" className="h-11 px-6">
+                ล้างช่วงวันที่
+              </AppButton>
+
+              <AppButton type="button" onClick={resetAllFilters} variant="outline" size="md" className="h-11 px-6">
+                ล้างทั้งหมด
+              </AppButton>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+              แสดง {filtered.length} รายการ
+            </div>
+            {!myUid && (
+              <div className="text-xs font-semibold text-red-600 dark:text-red-300">
+                ไม่พบ uid — จะไม่แสดงข้อมูลเพื่อความปลอดภัย
+              </div>
+            )}
           </div>
         </div>
 
@@ -461,22 +636,23 @@ export default function FieldWorkHistoryPage() {
           </div>
         )}
 
-        <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800">
+        {/* ✅ Table theme กลาง */}
+        <div className={cn("mt-5", tableTheme.shell)}>
           <table className="w-full table-fixed text-left text-sm">
-            <thead className="bg-gray-50 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+            <thead className={tableTheme.thead}>
               <tr>
-                <th className="px-4 py-3 font-semibold text-left w-[12%]">วันที่ยื่น</th>
-                <th className="px-4 py-3 font-semibold text-left w-[14%]">เลขคำร้อง</th>
-                <th className="px-4 py-3 font-semibold text-left w-[14%]">ผู้ยื่น</th>
-                <th className="px-4 py-3 font-semibold text-left w-[18%]">ช่วงเวลา</th>
-                <th className="px-4 py-3 font-semibold text-left w-[10%]">สถานที่</th>
-                <th className="px-4 py-3 font-semibold text-left w-[14%]">หมายเหตุ</th>
-                <th className="px-4 py-3 font-semibold text-left w-[12%]">ไฟล์แนบ</th>
-                {canDelete && <th className="px-4 py-3 font-semibold text-left w-[6%]">จัดการ</th>}
+                <th className="px-4 py-3 font-extrabold text-left w-[12%]">วันที่ยื่น</th>
+                <th className="px-4 py-3 font-extrabold text-left w-[14%]">เลขคำร้อง</th>
+                <th className="px-4 py-3 font-extrabold text-left w-[14%]">ผู้ยื่น</th>
+                <th className="px-4 py-3 font-extrabold text-left w-[18%]">ช่วงเวลา</th>
+                <th className="px-4 py-3 font-extrabold text-left w-[10%]">สถานที่</th>
+                <th className="px-4 py-3 font-extrabold text-left w-[14%]">หมายเหตุ</th>
+                <th className="px-4 py-3 font-extrabold text-left w-[12%]">ไฟล์แนบ</th>
+                {canDelete && <th className="px-4 py-3 font-extrabold text-left w-[6%]">จัดการ</th>}
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-800 dark:bg-gray-900">
+            <tbody className={tableTheme.tbody}>
               {filtered.length === 0 ? (
                 <tr>
                   <td className="px-4 py-5 text-gray-500 dark:text-gray-400" colSpan={colCount}>
@@ -508,14 +684,19 @@ export default function FieldWorkHistoryPage() {
                     String(s?.phone || "").trim() ||
                     String((Array.isArray(s?.phones) && s.phones[0]) || "").trim();
 
-                  const fullName = snapName || pByUid.fullName || pByEmail.fullName || (r as any)?.email || r.uid || "-";
+                  const fullName =
+                    snapName || pByUid.fullName || pByEmail.fullName || (r as any)?.email || r.uid || "-";
                   const phone = snapPhone || pByUid.phone || pByEmail.phone || "";
                   const atts = Array.isArray((r as any).attachments) ? (r as any).attachments : [];
 
                   return (
                     <tr key={r.id}>
-                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">{submittedText}</td>
-                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">{r.requestNo}</td>
+                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">
+                        {submittedText}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100 align-top">
+                        {r.requestNo}
+                      </td>
 
                       <td className="px-4 py-3 text-gray-700 dark:text-gray-200 align-top">
                         <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">{fullName}</div>
@@ -554,25 +735,29 @@ export default function FieldWorkHistoryPage() {
                         ) : (
                           <div className="flex flex-col gap-2">
                             {atts.slice(0, 2).map((a: any, idx: number) => (
-                              <button
+                              <AppButton
                                 key={`${r.id}-att-${idx}`}
                                 type="button"
                                 onClick={() => openAttachment(String(a.storagePath || ""))}
                                 title={normalizeAttName(a.name) || `ไฟล์ ${idx + 1}`}
-                                className="max-w-[190px] truncate rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-800 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+                                variant="outline"
+                                size="sm"
+                                className="max-w-[190px] truncate rounded-full"
                               >
                                 {normalizeAttName(a.name) || `ไฟล์ ${idx + 1}`}
-                              </button>
+                              </AppButton>
                             ))}
 
                             {atts.length > 2 && (
-                              <button
+                              <AppButton
                                 type="button"
                                 onClick={() => openAllFiles(r.requestNo, atts)}
-                                className="text-left text-[11px] font-extrabold text-brand-600 hover:text-brand-700"
+                                variant="ghost"
+                                size="sm"
+                                className="justify-start p-0 text-left text-[11px] font-extrabold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
                               >
                                 ดูทั้งหมด ({atts.length} ไฟล์)
-                              </button>
+                              </AppButton>
                             )}
                           </div>
                         )}
@@ -580,13 +765,15 @@ export default function FieldWorkHistoryPage() {
 
                       {canDelete && (
                         <td className="px-4 py-3 text-left align-top">
-                          <button
+                          <AppButton
                             type="button"
                             onClick={() => handleDelete(r.id, r.requestNo, fullName)}
-                            className="text-sm font-extrabold text-red-600 hover:text-red-700"
+                            variant="ghost"
+                            size="sm"
+                            className="p-0 text-sm font-extrabold text-red-600 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
                           >
                             ลบ
-                          </button>
+                          </AppButton>
                         </td>
                       )}
                     </tr>

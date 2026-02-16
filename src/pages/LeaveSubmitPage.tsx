@@ -6,6 +6,10 @@ import { useNavigate } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import { useDialogCenter } from "../components/common/DialogCenter";
+import AppButton from "../components/common/AppButton";
+import PageMeta from "../components/common/PageMeta";
+import PageBreadcrumb from "../components/common/PageBreadCrumb";
+import { inputTheme } from "../components/ui/theme/inputTheme";
 
 // ✅ เปลี่ยน path ให้ตรงกับ Router ของคุณ
 const MY_LEAVES_PATH = "/my-leaves";
@@ -50,7 +54,7 @@ function pickStr(...vals: any[]) {
   return "";
 }
 
-/** ✅ Dropdown custom */
+/** ✅ Dropdown custom (ปรับให้เข้าธีม inputTheme) */
 function SelectBox<T extends string>({
   label,
   placeholder,
@@ -92,19 +96,14 @@ function SelectBox<T extends string>({
 
   return (
     <div>
-      <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">{label}</div>
+      {!!label && <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">{label}</div>}
 
       <div ref={wrapRef} className="relative mt-2">
         <div
           className={[
-            "w-full rounded-md border bg-white px-3 py-2 text-left",
+            inputTheme.control,
             "flex items-center justify-between gap-3",
-            "transition",
-            "dark:bg-gray-900",
-            disabled
-              ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-500"
-              : "border-gray-300 hover:border-gray-400 dark:border-gray-800 dark:hover:border-gray-700 cursor-pointer",
-            open && !disabled ? "border-purple-600 ring-2 ring-purple-600/20" : "",
+            disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
           ].join(" ")}
           role="button"
           tabIndex={0}
@@ -133,7 +132,7 @@ function SelectBox<T extends string>({
                     setOpen(false);
                   }
                 }}
-                className="grid h-6 w-6 place-items-center rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                className="grid h-7 w-7 place-items-center rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800"
                 aria-label="Clear"
                 title="ล้าง"
               >
@@ -145,7 +144,7 @@ function SelectBox<T extends string>({
         </div>
 
         {open && !disabled && (
-          <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-gray-300 bg-white shadow-lg dark:border-gray-800 dark:bg-gray-900">
+          <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-lg dark:border-gray-800 dark:bg-gray-900">
             <div className="max-h-64 overflow-auto">
               {options.map((opt) => {
                 const isSelected = opt.value === value;
@@ -165,10 +164,10 @@ function SelectBox<T extends string>({
                       }
                     }}
                     className={[
-                      "w-full px-3 py-2 text-left text-sm",
+                      "w-full px-4 py-2.5 text-left text-sm",
                       "transition cursor-pointer",
                       isSelected
-                        ? "bg-teal-50 text-teal-700 font-semibold dark:bg-teal-500/10 dark:text-teal-200"
+                        ? "bg-violet-50 text-violet-700 font-semibold dark:bg-violet-500/10 dark:text-violet-200"
                         : "text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-gray-800/60",
                     ].join(" ")}
                   >
@@ -278,6 +277,7 @@ function minutesOfDayFromDateTimeLocal(s: string): number | null {
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
   return hh * 60 + mm;
 }
+
 /** ✅ การ์ดสรุปสิทธิ (ใช้ร่วมกันทุกประเภท) + progress bar แบบเดียวกัน */
 function YearEntitlementCard({
   title,
@@ -314,9 +314,7 @@ function YearEntitlementCard({
           <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">{title}</div>
 
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-600 dark:text-gray-300">
-            <span className="rounded-full border border-gray-200 bg-white px-3 py-1 dark:border-gray-800 dark:bg-gray-900">
-              ปี {year}
-            </span>
+            <span className="rounded-full border border-gray-200 bg-white px-3 py-1 dark:border-gray-800 dark:bg-gray-900">ปี {year}</span>
 
             {isUnlimited ? (
               <>
@@ -327,15 +325,12 @@ function YearEntitlementCard({
               <>
                 <span className="text-gray-500 dark:text-gray-400">•</span>
                 <span>
-                  ใช้ไป{" "}
-                  <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span>{" "}
-                  วันทำการ
+                  ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span> วันทำการ
                 </span>
                 <span className="text-gray-500 dark:text-gray-400">•</span>
                 <span>
                   คงเหลือ{" "}
-                  <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : remain}</span>{" "}
-                  วันทำการ
+                  <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : remain}</span> วันทำการ
                 </span>
               </>
             ) : (
@@ -352,13 +347,11 @@ function YearEntitlementCard({
         </div>
       </div>
 
-      {/* ✅ progress bar */}
       {hasTotal && (
         <div className="mt-4">
           <div className="flex items-center justify-between text-xs font-semibold text-gray-600 dark:text-gray-300">
             <div>
-              ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span>{" "}
-              วันทำการ
+              ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span> วันทำการ
             </div>
             <div className="text-gray-900 dark:text-gray-100">{loading ? "…" : remain} วันทำการ</div>
           </div>
@@ -378,7 +371,7 @@ function YearEntitlementCard({
   );
 }
 
-/** ✅ แถวสรุปแบบรูปตัวอย่าง (หัวข้อ + ใช้ไป/คงเหลือ + แถบ) */
+/** ✅ แถวสรุปแบบรูปตัวอย่าง */
 function EntitlementRow({
   title,
   total,
@@ -398,7 +391,7 @@ function EntitlementRow({
   const pct = typeof total === "number" && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-gray-900">
+    <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-gray-900">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-base font-extrabold text-gray-900 dark:text-gray-100">{title}</div>
@@ -425,14 +418,16 @@ function EntitlementRow({
     </div>
   );
 }
+
 export default function LeaveSubmitPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const dialog = useDialogCenter();
+
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
 
-  // ✅ ตัดโหมด "ลาทั้งวัน" ออก เหลือเฉพาะแบบระบุเวลา (time) เท่านั้น
+  // ✅ เหลือเฉพาะแบบระบุเวลา
   const mode: LeaveMode = "time";
 
   const [startDT, setStartDT] = useState<string>(() => toISODateTimeLocal(new Date()));
@@ -440,14 +435,15 @@ export default function LeaveSubmitPage() {
 
   const [reason, setReason] = useState<string>("");
   const [retroReason, setRetroReason] = useState<string>("");
+
   const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [uploadPct, setUploadPct] = useState<number>(0);
-  
+
   useEffect(() => {
-    // ✅ ลาพักร้อน: ตั้งประเภทย่อยอัตโนมัติ
     if (category === "ลาพักร้อน") setSubType("ลาพักร้อน");
     else setSubType("");
 
@@ -476,11 +472,8 @@ export default function LeaveSubmitPage() {
     return subTypeByCategory[category].map((s) => ({ value: s, label: s }));
   }, [category]);
 
-  // ====== ✅ derive start/end date-only for workdays + retro ======
   const startYMD = useMemo(() => datePartFromDateTimeLocal(startDT), [startDT]);
-
   const endYMD = useMemo(() => datePartFromDateTimeLocal(endDT), [endDT]);
-
   const todayYMD = useMemo(() => todayISODate(), []);
 
   const isRetroactive = useMemo(() => {
@@ -530,14 +523,12 @@ export default function LeaveSubmitPage() {
     return dueAtByNthWorkdayFrom(leaveStartDateOnly, 3);
   }, [needMedicalCert, medicalCertMode, leaveStartDateOnly]);
 
-  // ✅ เวลาทำการ 09:00–18:00 ใช้เฉพาะ "ป่วยระหว่างวัน" และต้องอยู่วันเดียวกัน
   const violateBusinessHours = useMemo(() => {
     if (!(isSickInDay && mode === "time")) return false;
 
     const sDate = datePartFromDateTimeLocal(startDT);
     const eDate = datePartFromDateTimeLocal(endDT);
     if (!sDate || !eDate) return false;
-
     if (sDate !== eDate) return true;
 
     const sMin = minutesOfDayFromDateTimeLocal(startDT);
@@ -560,7 +551,6 @@ export default function LeaveSubmitPage() {
   const LIMIT_MATERNITY = 120;
   const LIMIT_MILITARY = 60;
 
-  // ลาเพื่อทำหมัน = ไม่จำกัด
   const LIMIT_STERILIZATION: "UNLIMITED" = "UNLIMITED";
 
   // =======================
@@ -673,10 +663,9 @@ export default function LeaveSubmitPage() {
   const militaryRemain = Math.max(0, LIMIT_MILITARY - militaryUsed);
 
   // =======================
-  // ✅ NEW: Summary block (ดูย้อนหลังรายปี) สำหรับ “รวมสิทธิการลาทั้งหมด”
+  // ✅ Summary by year (ย้อนหลัง)
   // =======================
   function toAdYear(thYear: number) {
-    // thYear = พ.ศ. -> ค.ศ.
     return thYear - 543;
   }
   function toThYear(adYear: number) {
@@ -751,28 +740,30 @@ export default function LeaveSubmitPage() {
   const summaryVacationUsed = summaryUsedMap[usedKey("ลาพักร้อน")] || 0;
 
   const resetAll = () => {
-      setCategory("");
-      setSubType("");
-      setStartDT(toISODateTimeLocal(new Date()));
-      setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
-      setReason("");
-      setRetroReason("");
-      setFiles([]);
-      setErrors({});
-      setUploadPct(0);
-    };
+    setCategory("");
+    setSubType("");
+    setStartDT(toISODateTimeLocal(new Date()));
+    setEndDT(toISODateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+    setReason("");
+    setRetroReason("");
+    setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setErrors({});
+    setUploadPct(0);
+  };
 
-    const handleResetClick = async () => {
-      const ok = await dialog.confirm("ต้องการล้างฟอร์มนี้ใช่ไหม?", {
-        title: "ยืนยันการล้างฟอร์ม",
-        variant: "danger",
-        confirmText: "ล้างฟอร์ม",
-        cancelText: "ยกเลิก",
-        size: "md",
-      });
+  const handleResetClick = async () => {
+    const ok = await dialog.confirm("ต้องการล้างฟอร์มนี้ใช่ไหม?", {
+      title: "ยืนยันการล้างฟอร์ม",
+      variant: "danger",
+      confirmText: "ล้างฟอร์ม",
+      cancelText: "ยกเลิก",
+      size: "md",
+    });
 
-      if (ok) resetAll();
-    };
+    if (ok) resetAll();
+  };
+
   const validate = () => {
     const e: Record<string, string> = {};
 
@@ -790,12 +781,8 @@ export default function LeaveSubmitPage() {
       e.endDT = "ป่วยระหว่างวันต้องอยู่ในวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00";
     }
 
-    // ✅ เหตุผล: ลาพักร้อน "ไม่บังคับ"
     if (!reason.trim() && !isVacation) e.reason = "กรุณากรอกเหตุผล/รายละเอียด";
 
-    // ✅ ย้อนหลัง:
-    // - ลาป่วยย้อนหลัง: ต้องมี retroReason
-    // - ลากิจย้อนหลัง: ต้องมี retroReason หรือแนบไฟล์หลักฐาน
     if (isRetroactive) {
       if (isSick) {
         if (!retroReason.trim()) e.retroReason = "กรุณาชี้แจงเหตุผลการยื่นย้อนหลัง";
@@ -807,16 +794,13 @@ export default function LeaveSubmitPage() {
       }
     }
 
-    // ✅ ลากิจปกติ ต้องยื่นล่วงหน้า >= 3 วันทำการ (ยกเว้นฉุกเฉิน / ยกเว้นย้อนหลัง)
     if (isBusinessNormal && !isRetroactive && startYMD) {
       if (!isBusinessEmergency && compareYMD(startYMD, minStartForBusinessNormal) < 0) {
         e.startDT = `ลากิจปกติ: ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (เริ่มลาได้ตั้งแต่ ${minStartForBusinessNormal} เป็นต้นไป)`;
       }
     }
 
-    // ✅ เงื่อนไขเอกสาร “เฉพาะ” ลาคลอด/ทหาร/ทำหมัน (เขียนไว้เป็นเงื่อนไข)
     if (isSterilization) {
-      // ต้องยื่นล่วงหน้า 1 วัน (ตามเงื่อนไขที่ให้มา)
       if (!isRetroactive && startYMD) {
         const min = (() => {
           const d = new Date();
@@ -841,12 +825,10 @@ export default function LeaveSubmitPage() {
       e.files = "อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)";
     }
 
-    // ✅ ลาป่วยย้อนหลัง ≥3 ต้องแนบตอนยื่น
     if (isSick && !isSickInDay && workdaysCount >= 3 && isRetroactive) {
       if (files.length === 0) e.files = "ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองแพทย์จากโรงพยาบาลตอนยื่น";
     }
 
-    // ✅ ตรวจสิทธิ/เพดาน
     if (isBusinessLeave && workdaysCount > 0) {
       if (workdaysCount > bizRemain) e.businessLimit = `ลากิจปีนี้เหลือ ${bizRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
     }
@@ -863,17 +845,13 @@ export default function LeaveSubmitPage() {
       if (workdaysCount > militaryRemain) e.militaryLimit = `ลาเพื่อรับราชการทหารปีนี้เหลือ ${militaryRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
     }
 
-    // ✅ ลาคลอด: ต้องยื่นล่วงหน้าอย่างน้อย 30 วัน (ไม่นับกรณียื่นย้อนหลัง)
     if (isMaternity && !isRetroactive && startYMD) {
       const start = toDateOnlyLocal(startYMD);
       const today = toDateOnlyLocal(todayISODate());
       const diffDays = Math.floor((start.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
-      if (diffDays < 30) {
-        e.startDT = "ลาคลอดต้องยื่นล่วงหน้าอย่างน้อย 30 วัน";
-      }
+      if (diffDays < 30) e.startDT = "ลาคลอดต้องยื่นล่วงหน้าอย่างน้อย 30 วัน";
     }
 
-    // ✅ ลาคลอด: บังคับแนบเอกสารประกอบ
     if (isMaternity && (files || []).length === 0) {
       e.files = "ลาคลอด: กรุณาแนบเอกสารประกอบ (เช่น สมุดฝากครรภ์/ใบรับรองแพทย์)";
     }
@@ -883,89 +861,88 @@ export default function LeaveSubmitPage() {
   };
 
   const handleSubmit = async (ev: FormEvent<HTMLFormElement>) => {
-  ev.preventDefault();
+    ev.preventDefault();
 
-  if (!user?.uid) {
-    await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "sm" });
-    return;
-  }
+    if (!user?.uid) {
+      await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "sm" });
+      return;
+    }
 
-  const e = validate();
-  if (Object.keys(e).length > 0) {
-    const msg = Object.values(e).join(" • ");
-    await dialog.alert(msg, { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "md" });
-    console.log("VALIDATE_ERRORS:", e);
-    return;
-  }
+    const e = validate();
+    if (Object.keys(e).length > 0) {
+      const msg = Object.values(e).join(" • ");
+      await dialog.alert(msg, { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "md" });
+      console.log("VALIDATE_ERRORS:", e);
+      return;
+    }
 
-  setSubmitting(true);
-  setUploadPct(0);
-
-  try {
-    const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
-    const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
-      (user as any)?.lname,
-      (user as any)?.lastName
-    )}`.trim();
-    const phone = pickStr((user as any)?.phone, (user as any)?.tel, (user as any)?.mobile);
-
-    const payload: any = {
-      uid: user.uid,
-      email: user.email ?? null,
-
-      createdByEmail: user.email ?? null,
-      employeeNo: employeeNo || null,
-      employeeName: employeeName || null,
-      phone: phone || null,
-
-      category: category as any,
-      subType: subType as any,
-      mode: "time",
-      startAt: startDT,
-      endAt: endDT,
-      reason,
-
-      workdaysCount: workdaysCount || 0,
-
-      isRetroactive: !!isRetroactive,
-      retroReason: isRetroactive ? retroReason.trim() : null,
-
-      requireMedicalCert: !!needMedicalCert,
-      medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
-
-      medicalCertProvided: !!needMedicalCert ? files.length > 0 : false,
-      medicalCertSubmittedAt: !!needMedicalCert && files.length > 0 ? new Date().toISOString() : null,
-      medicalCertSource: !!needMedicalCert && files.length > 0 ? "UPLOADED_WITH_REQUEST" : null,
-    };
-
-    const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
-
-    await loadYearUsageAll();
-    await loadUsageAllByYear(toAdYear(summaryYearTH));
-
-    setErrors({});
-    setFiles([]);
+    setSubmitting(true);
     setUploadPct(0);
-    setRetroReason("");
 
-    const requestNo = created.requestNo ?? created.id ?? "-";
+    try {
+      const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
+      const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
+        (user as any)?.lname,
+        (user as any)?.lastName
+      )}`.trim();
+      const phone = pickStr((user as any)?.phone, (user as any)?.tel, (user as any)?.mobile);
 
-    // ✅ popup แบบเดียวทั้งเว็บ
-    await dialog.alert(`เลขคำร้อง: ${requestNo}`, { title: "ส่งคำร้องสำเร็จ", variant: "success", size: "md" });
+      const payload: any = {
+        uid: user.uid,
+        email: user.email ?? null,
 
-    // ✅ หลังปิด dialog ค่อยเด้งหน้า (เหมือน flow เดิม)
-    resetAll();
-    navigate(MY_LEAVES_PATH);
-  } catch (err: any) {
-    console.error(err);
-    await dialog.alert(err?.message || String(err), { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "lg" });
-  } finally {
-    setSubmitting(false);
-  }
-};
+        createdByEmail: user.email ?? null,
+        employeeNo: employeeNo || null,
+        employeeName: employeeName || null,
+        phone: phone || null,
+
+        category: category as any,
+        subType: subType as any,
+        mode: "time",
+        startAt: startDT,
+        endAt: endDT,
+        reason,
+
+        workdaysCount: workdaysCount || 0,
+
+        isRetroactive: !!isRetroactive,
+        retroReason: isRetroactive ? retroReason.trim() : null,
+
+        requireMedicalCert: !!needMedicalCert,
+        medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
+
+        medicalCertProvided: !!needMedicalCert ? files.length > 0 : false,
+        medicalCertSubmittedAt: !!needMedicalCert && files.length > 0 ? new Date().toISOString() : null,
+        medicalCertSource: !!needMedicalCert && files.length > 0 ? "UPLOADED_WITH_REQUEST" : null,
+      };
+
+      const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
+
+      await loadYearUsageAll();
+      await loadUsageAllByYear(toAdYear(summaryYearTH));
+
+      setErrors({});
+      setFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setUploadPct(0);
+      setRetroReason("");
+
+      const requestNo = created.requestNo ?? created.id ?? "-";
+
+      await dialog.alert(`เลขคำร้อง: ${requestNo}`, { title: "ส่งคำร้องสำเร็จ", variant: "success", size: "md" });
+
+      resetAll();
+      navigate(MY_LEAVES_PATH);
+    } catch (err: any) {
+      console.error(err);
+      await dialog.alert(err?.message || String(err), { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "lg" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   // =======================
-  // ✅ ConditionsBox: ทำรูปแบบเดียวกันทุกประเภท + เงื่อนไขอยู่ด้านบน
+  // ✅ ConditionsBox (คง logic เดิม แค่เปลี่ยน wrapper ให้เป็นการ์ดสไตล์เดียวกัน)
   // =======================
   const ConditionsBox = useMemo(() => {
     if (!category) return null;
@@ -973,12 +950,10 @@ export default function LeaveSubmitPage() {
     const year = new Date().getFullYear();
 
     const wrapCls =
-      "rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200";
-
+      "rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900";
     const headerCls = "font-extrabold text-gray-900 dark:text-gray-100";
     const listCls = "mt-2 grid gap-1 text-sm text-gray-700 dark:text-gray-200";
 
-    // 1) ลากิจ
     if (category === "ลากิจ") {
       return (
         <div className={wrapCls}>
@@ -1001,7 +976,7 @@ export default function LeaveSubmitPage() {
             note={
               <>
                 {isBusinessNormal && !isRetroactive && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
                     <div className="font-extrabold">ลากิจปกติ: วันที่เริ่มลาเร็วสุด</div>
                     <div className="mt-1 text-sm">
                       เริ่มลาได้ตั้งแต่ <span className="font-extrabold">{minStartForBusinessNormal}</span> เป็นต้นไป
@@ -1016,11 +991,11 @@ export default function LeaveSubmitPage() {
         </div>
       );
     }
-    // 2) ลาป่วย
+
     if (category === "ลาป่วย") {
       return (
         <div className={wrapCls}>
-          <div className={headerCls}>เงื่อนไขลาป่วย </div>
+          <div className={headerCls}>เงื่อนไขลาป่วย</div>
 
           <div className={listCls}>
             <div>• “ป่วยระหว่างวัน” ไม่ต้องแนบใบรับรองทุกกรณี</div>
@@ -1047,21 +1022,17 @@ export default function LeaveSubmitPage() {
                 </div>
 
                 {needMedicalCert && medicalCertMode === "DUE_BY_WORKDAY_3" && medicalCertDueAt && (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
                     <div className="font-extrabold">ต้องแนบใบรับรอง “ภายในวันทำการที่ 3”</div>
                     <div className="mt-1 text-sm">
                       เดดไลน์: <span className="font-extrabold">{formatThaiDate(medicalCertDueAt)}</span> (ภายใน 23:59)
-                    </div>
-                    <div className="mt-1 text-xs opacity-90">
-                      * วันนี้สามารถยื่นก่อน แล้วไปแนบเอกสารภายหลังในหน้า “ใบลาของฉัน” (ตอนสถานะยังรอดำเนินการ)
                     </div>
                   </div>
                 )}
 
                 {needMedicalCert && medicalCertMode === "MUST_AT_SUBMIT" && (
-                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100">
+                  <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100">
                     <div className="font-extrabold">ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองตอนยื่น</div>
-                    <div className="mt-1 text-xs opacity-90">* ไม่ควรแนบทีหลัง เพราะถือว่าเลยเดดไลน์แล้ว</div>
                   </div>
                 )}
 
@@ -1073,7 +1044,6 @@ export default function LeaveSubmitPage() {
       );
     }
 
-    // 3) ลาพักร้อน
     if (category === "ลาพักร้อน") {
       return (
         <div className={wrapCls}>
@@ -1102,7 +1072,6 @@ export default function LeaveSubmitPage() {
       );
     }
 
-    // 4) ลากรณีพิเศษ
     return (
       <div className={wrapCls}>
         <div className={headerCls}>เงื่อนไขลากรณีพิเศษ</div>
@@ -1113,7 +1082,7 @@ export default function LeaveSubmitPage() {
         </div>
 
         {isMaternity && (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
             <div className="font-extrabold">ลาคลอด (เงื่อนไขการยื่น)</div>
             <div className="mt-1 text-sm">
               • ต้องลาล่วงหน้าไม่น้อยกว่า 30 วัน และแนบหลักฐานสมุดฝากครรภ์
@@ -1123,7 +1092,7 @@ export default function LeaveSubmitPage() {
         )}
 
         {isMilitary && (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
             <div className="font-extrabold">ลาเพื่อรับราชการทหาร (เงื่อนไข)</div>
             <div className="mt-1 text-sm">
               • พร้อมแนบสำเนาหลักฐานหมายเรียกพลของราชการ
@@ -1133,7 +1102,7 @@ export default function LeaveSubmitPage() {
         )}
 
         {isSterilization && (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
             <div className="font-extrabold">ลาเพื่อทำหมัน และลาเนื่องจากการทำหมัน (เงื่อนไข)</div>
             <div className="mt-1 text-sm">
               • มีสิทธิ์ลาเพื่อทำหมัน และมีสิทธิ์ลาเนื่องจากการทำหมันตามระยะเวลาที่แพทย์กำหนดและออกใบรับรอง โดยลูกจ้างมีสิทธิ์ได้รับค่าจ้างในวันลานั้นด้วย
@@ -1194,291 +1163,309 @@ export default function LeaveSubmitPage() {
     isSterilization,
   ]);
 
-  // ✅ years for summary (พ.ศ.) — 7 ปีล่าสุด (ปรับได้)
   const summaryYearOptions = useMemo(() => {
     const nowTH = toThYear(new Date().getFullYear());
     const years = Array.from({ length: 7 }, (_, i) => nowTH - 6 + i);
     return years.map((y) => ({ value: String(y), label: String(y) }));
   }, []);
 
+  // ===== File UI helpers =====
+  function onPickFiles(list: FileList | null) {
+    if (!list) return;
+    setFiles(Array.from(list));
+  }
+  function clearFiles() {
+    setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ยื่นใบลา</h1>
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            <span className="text-teal-600">หน้าหลัก</span> <span className="mx-2">›</span> ยื่นใบลา
+    <>
+      <PageMeta title="Leave Submit | Smart HR" description="leave submit page" />
+      <PageBreadcrumb pageTitle="ยื่นใบลา" />
+
+      <div className="space-y-6">
+        {/* Header row */}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ยื่นใบลา</h1>
+            <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">กรอกข้อมูลให้ครบ แล้วกดส่งคำร้อง</div>
+          </div>
+
+          <AppButton variant="outline" disabled={submitting} onClick={handleResetClick}>
+            ล้างฟอร์ม
+          </AppButton>
+        </div>
+
+        {/* ✅ เงื่อนไขด้านบน */}
+        {ConditionsBox}
+
+        {/* Upload progress */}
+        {submitting && files.length > 0 && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
+            <div className="font-semibold">กำลังอัปโหลดไฟล์… {uploadPct}%</div>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+              <div className="h-full bg-violet-600 transition-all" style={{ width: `${uploadPct}%` }} />
+            </div>
+          </div>
+        )}
+
+        {/* ===== เลือกประเภทการลา ===== */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
+                เลือกประเภทการลา <span className="text-red-500">*</span>
+              </label>
+              <SelectBox<LeaveCategory>
+                label=""
+                placeholder="ประเภทการลา"
+                value={category}
+                options={categoryOptions}
+                onChange={(v) => setCategory((v as LeaveCategory) || "")}
+                disabled={submitting}
+              />
+              {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
+                เลือกประเภทย่อย <span className="text-red-500">*</span>
+              </label>
+              <SelectBox<LeaveSubType>
+                label=""
+                placeholder="ประเภทย่อย"
+                value={subType}
+                options={subTypeOptions}
+                onChange={(v) => setSubType((v as LeaveSubType) || "")}
+                disabled={!category || submitting}
+              />
+              {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
+            </div>
           </div>
         </div>
-        <button
-        type="button"
-        onClick={handleResetClick}
-        disabled={submitting}
-        className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-60"
-      >
-        ล้างฟอร์ม
-      </button>
-      </div>
 
-      {/* ✅ เงื่อนไข: แสดง “เฉพาะประเภทที่เลือก” */}
-      {ConditionsBox}
-
-      {submitting && files.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200">
-          <div className="font-semibold">กำลังอัปโหลดไฟล์… {uploadPct}%</div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-            <div className="h-full bg-purple-600 transition-all" style={{ width: `${uploadPct}%` }} />
-          </div>
-        </div>
-      )}
-{/* ====== เลือกประเภทการลา ====== */}
-<div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-    <div>
-      <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
-        เลือกประเภทการลา <span className="text-red-500">*</span>
-      </label>
-      <SelectBox<LeaveCategory>
-        label=""
-        placeholder="ประเภทการลา"
-        value={category}
-        options={categoryOptions}
-        onChange={(v) => setCategory((v as LeaveCategory) || "")}
-        disabled={submitting}
-      />
-      {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
-    </div>
-
-      <div>
-        <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
-          เลือกประเภทย่อย <span className="text-red-500">*</span>
-        </label>
-        <SelectBox<LeaveSubType>
-          label=""
-          placeholder="ประเภทย่อย"
-          value={subType}
-          options={subTypeOptions}
-          onChange={(v) => setSubType((v as LeaveSubType) || "")}
-          disabled={!category || submitting}
-        />
-        {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
-      </div>
-    </div>
-  </div>
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* ช่วงเวลา */}
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
             <div>
               <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ช่วงเวลาการลา</div>
               <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ระบุวัน-เวลาเริ่ม และวัน-เวลาสิ้นสุด</div>
             </div>
-          </div>
 
-          <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                วัน-เวลาเริ่มลา<span className="ml-1 text-red-500">*</span>
-              </div>
-              <input
-                type="datetime-local"
-                value={startDT}
-                onChange={(e) => setStartDT(e.target.value)}
-                disabled={submitting}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20 dark:border-gray-800 dark:bg-gray-900"
-              />
-              {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
-              {(errors.businessLimit ||
-                errors.sickLimit ||
-                errors.vacationLimit ||
-                errors.maternityLimit ||
-                errors.militaryLimit) && (
-                <p className="mt-2 text-xs font-semibold text-red-600">
-                  {errors.businessLimit ||
-                    errors.sickLimit ||
-                    errors.vacationLimit ||
-                    errors.maternityLimit ||
-                    errors.militaryLimit}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                วัน-เวลาสิ้นสุดลา<span className="ml-1 text-red-500">*</span>
-              </div>
-              <input
-                type="datetime-local"
-                value={endDT}
-                onChange={(e) => setEndDT(e.target.value)}
-                disabled={submitting}
-                className={[
-                  "mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none dark:bg-gray-900 dark:border-gray-800",
-                  "focus:ring-2",
-                  timedInvalid || violateBusinessHours
-                    ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
-                    : "border-gray-300 focus:border-purple-600 focus:ring-purple-600/20",
-                ].join(" ")}
-              />
-              {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
-            </div>
-          </div>
-
-          {isSickInDay && (
-            <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">* ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
-          )}
-        </div>
-
-        {isRetroactive && (
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">หมายเหตุ/ชี้แจงการยื่นย้อนหลัง</div>
-            <textarea
-              value={retroReason}
-              onChange={(e) => setRetroReason(e.target.value)}
-              rows={4}
-              placeholder="อธิบายเหตุผลที่ยื่นย้อนหลัง (เช่น เข้ารพ./ไม่มีสัญญาณ/อยู่ระหว่างการรักษา ฯลฯ)"
-              disabled={submitting}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20 dark:border-gray-800 dark:bg-gray-900"
-            />
-            {errors.retroReason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.retroReason}</p>}
-          </div>
-        )}
-
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เหตุผล / รายละเอียด{!isVacation && <span className="ml-1 text-red-500">*</span>}</div>
-              <textarea
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                rows={6}
-                placeholder="พิมพ์เหตุผลการลา…"
-                disabled={submitting}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-600/20 dark:border-gray-800 dark:bg-gray-900"
-              />
-              {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
-            </div>
-
-            <div>
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">แนบไฟล์ (PDF/รูป){isMaternity && <span className="ml-1 text-red-500">*</span>}</div>
-              <input
-                type="file"
-                multiple
-                disabled={submitting}
-                accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-                className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-purple-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-purple-700 dark:text-gray-200 dark:file:bg-purple-700 dark:file:text-gray-200 dark:hover:file:bg-purple-800"
-              />
-
-              {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
-
-              {isMaternity && (
-                <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">* ลาคลอด: ต้องแนบเอกสารประกอบก่อนส่งคำร้อง</p>
-              )}
-
-              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
-                <div className="font-semibold">ไฟล์ที่เลือก</div>
-                {files.length === 0 ? (
-                  <div className="mt-2 text-gray-500 dark:text-gray-400">ยังไม่ได้เลือกไฟล์</div>
-                ) : (
-                  <ul className="mt-2 list-disc space-y-1 pl-5">
-                    {files.map((f) => (
-                      <li key={`${f.name}-${f.size}`}>
-                        {f.name} <span className="text-gray-500">({Math.ceil(f.size / 1024)} KB)</span>
-                      </li>
-                    ))}
-                  </ul>
+            <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div>
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  วัน-เวลาเริ่มลา<span className="ml-1 text-red-500">*</span>
+                </div>
+                <input
+                  type="datetime-local"
+                  value={startDT}
+                  onChange={(e) => setStartDT(e.target.value)}
+                  disabled={submitting}
+                  className={`${inputTheme.control} mt-2`}
+                />
+                {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
+                {(errors.businessLimit ||
+                  errors.sickLimit ||
+                  errors.vacationLimit ||
+                  errors.maternityLimit ||
+                  errors.militaryLimit) && (
+                  <p className="mt-2 text-xs font-semibold text-red-600">
+                    {errors.businessLimit ||
+                      errors.sickLimit ||
+                      errors.vacationLimit ||
+                      errors.maternityLimit ||
+                      errors.militaryLimit}
+                  </p>
                 )}
               </div>
 
-              <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">* ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend</div>
+              <div>
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  วัน-เวลาสิ้นสุดลา<span className="ml-1 text-red-500">*</span>
+                </div>
+                <input
+                  type="datetime-local"
+                  value={endDT}
+                  onChange={(e) => setEndDT(e.target.value)}
+                  disabled={submitting}
+                  className={[
+                    inputTheme.control,
+                    "mt-2",
+                    timedInvalid || violateBusinessHours ? "border-red-400 focus:border-red-500 focus:ring-red-500/20" : "",
+                  ].join(" ")}
+                />
+                {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
+              </div>
+            </div>
+
+            {isSickInDay && (
+              <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">* ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
+            )}
+          </div>
+
+          {/* ย้อนหลัง */}
+          {isRetroactive && (
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">หมายเหตุ/ชี้แจงการยื่นย้อนหลัง</div>
+              <textarea
+                value={retroReason}
+                onChange={(e) => setRetroReason(e.target.value)}
+                rows={4}
+                placeholder="อธิบายเหตุผลที่ยื่นย้อนหลัง (เช่น เข้ารพ./ไม่มีสัญญาณ/อยู่ระหว่างการรักษา ฯลฯ)"
+                disabled={submitting}
+                className={`${inputTheme.textarea} mt-2`}
+              />
+              {errors.retroReason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.retroReason}</p>}
+            </div>
+          )}
+
+          {/* เหตุผล + ไฟล์ */}
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div>
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  เหตุผล / รายละเอียด{!isVacation && <span className="ml-1 text-red-500">*</span>}
+                </div>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={6}
+                  placeholder="พิมพ์เหตุผลการลา…"
+                  disabled={submitting}
+                  className={`${inputTheme.textarea} mt-2`}
+                />
+                {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  แนบไฟล์ (PDF/รูป){isMaternity && <span className="ml-1 text-red-500">*</span>}
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  disabled={submitting}
+                  accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                  onChange={(e) => onPickFiles(e.target.files)}
+                  className="hidden"
+                />
+
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <AppButton variant="outline" disabled={submitting} onClick={() => fileInputRef.current?.click()}>
+                    เลือกไฟล์
+                  </AppButton>
+
+                  <AppButton variant="danger" size="sm" disabled={submitting || files.length === 0} onClick={clearFiles}>
+                    ลบทั้งหมด
+                  </AppButton>
+
+                  <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    {files.length ? `เลือกแล้ว ${files.length} ไฟล์` : "ยังไม่ได้เลือกไฟล์"}
+                  </div>
+                </div>
+
+                {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
+
+                {isMaternity && (
+                  <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">* ลาคลอด: ต้องแนบเอกสารประกอบก่อนส่งคำร้อง</p>
+                )}
+
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
+                  <div className="font-semibold">ไฟล์ที่เลือก</div>
+                  {files.length === 0 ? (
+                    <div className="mt-2 text-gray-500 dark:text-gray-400">ยังไม่ได้เลือกไฟล์</div>
+                  ) : (
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {files.map((f) => (
+                        <li key={`${f.name}-${f.size}-${f.lastModified}`}>
+                          {f.name} <span className="text-gray-500">({Math.ceil(f.size / 1024)} KB)</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">* ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend</div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-purple-600 px-6 py-3 text-sm font-semibold text-white hover:bg-purple-700 focus:ring-2 focus:ring-purple-500/30 disabled:opacity-60"
-          >
-            {submitting ? "กำลังส่ง..." : "ส่งคำร้อง"}
-          </button>
-        </div>
-      </form>
-
-      {/* =======================
-          ✅ NEW BLOCK: รวมสิทธิการลาทั้งหมด (ดูย้อนหลังรายปี)
-          ✅ วางต่อจากปุ่มล้างฟอร์ม/ส่งคำร้อง (แยกส่วน)
-        ======================= */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">รวมสิทธิการลาทั้งหมด</div>
-            <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
-          </div>
-
-          <div className="min-w-[180px]">
-            <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เลือกปี (พ.ศ.)</div>
-            <select
-              value={String(summaryYearTH)}
-              onChange={(e) => setSummaryYearTH(Number(e.target.value))}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-gray-800 dark:bg-gray-900"
+          {/* Submit button (ขวาล่างเหมือนเดิม) */}
+          <div className="flex justify-end">
+            <AppButton
+              type="submit"
+              variant="primary"
+              disabled={submitting}
+              loading={submitting}
             >
-              {summaryYearOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+              {submitting ? "กำลังส่ง..." : "ส่งคำร้อง"}
+            </AppButton>
           </div>
-        </div>
+          </form>
 
-        {summaryErr && (
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
-            * โหลดข้อมูลย้อนหลังไม่สำเร็จ: {summaryErr}
+        {/* รวมสิทธิการลาทั้งหมด */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">รวมสิทธิการลาทั้งหมด</div>
+              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
+            </div>
+
+            <div className="min-w-[180px]">
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เลือกปี (พ.ศ.)</div>
+              <select
+                value={String(summaryYearTH)}
+                onChange={(e) => setSummaryYearTH(Number(e.target.value))}
+                className={`${inputTheme.control} mt-2`}
+              >
+                {summaryYearOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
 
-        <div className="mt-6 grid gap-4">
-  {/* 1) ลาป่วย */}
-  <EntitlementRow title="ลาป่วย (รวม)" total={LIMIT_SICK} used={summarySickUsed} loading={summaryLoading} />
+          {summaryErr && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+              * โหลดข้อมูลย้อนหลังไม่สำเร็จ: {summaryErr}
+            </div>
+          )}
 
-  {/* 2) ลากิจ */}
-  <EntitlementRow title="ลากิจ" total={LIMIT_BUSINESS} used={summaryBizUsed} loading={summaryLoading} />
+          <div className="mt-6 grid gap-4">
+            <EntitlementRow title="ลาป่วย (รวม)" total={LIMIT_SICK} used={summarySickUsed} loading={summaryLoading} />
+            <EntitlementRow title="ลากิจ" total={LIMIT_BUSINESS} used={summaryBizUsed} loading={summaryLoading} />
+            <EntitlementRow title="ลาพักร้อนประจำปี" total={LIMIT_VACATION} used={summaryVacationUsed} loading={summaryLoading} />
+            <EntitlementRow
+              title="ลาคลอด"
+              total={LIMIT_MATERNITY}
+              used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0}
+              loading={summaryLoading}
+            />
+            <EntitlementRow
+              title="ลาเพื่อทำหมัน"
+              total={LIMIT_STERILIZATION}
+              used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0}
+              loading={summaryLoading}
+            />
+            <EntitlementRow
+              title="ลาเพื่อรับราชการทหาร"
+              total={LIMIT_MILITARY}
+              used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0}
+              loading={summaryLoading}
+            />
+          </div>
 
-  {/* 3) ลาพักร้อน */}
-  <EntitlementRow title="ลาพักร้อนประจำปี" total={LIMIT_VACATION} used={summaryVacationUsed} loading={summaryLoading} />
-
-  {/* 4) ลาคลอด */}
-  <EntitlementRow
-    title="ลาคลอด"
-    total={LIMIT_MATERNITY}
-    used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0}
-    loading={summaryLoading}
-  />
-
-  {/* 5) ลาทำหมัน (ไม่จำกัด) */}
-  <EntitlementRow
-    title="ลาเพื่อทำหมัน"
-    total={LIMIT_STERILIZATION}
-    used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0}
-    loading={summaryLoading}
-  />
-
-  {/* 6) ลารับราชการทหาร */}
-  <EntitlementRow
-    title="ลาเพื่อรับราชการทหาร"
-    total={LIMIT_MILITARY}
-    used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0}
-    loading={summaryLoading}
-  />
-</div>
-
-        <div className="mt-5 text-xs text-gray-500 dark:text-gray-400">
-          * หมายเหตุ: ไม่นับคำร้องที่ “ไม่อนุมัติ/REJECTED” และ “ยกเลิก/CANCELED”
+          <div className="mt-5 text-xs text-gray-500 dark:text-gray-400">
+            * หมายเหตุ: ไม่นับคำร้องที่ “ไม่อนุมัติ/REJECTED” และ “ยกเลิก/CANCELED”
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
