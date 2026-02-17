@@ -4,10 +4,10 @@ import { getAuth } from "firebase/auth";
 const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
 
-async function getToken() {
+async function getToken(forceRefresh = false) {
   const u = getAuth().currentUser;
   if (!u) throw new Error("UNAUTHORIZED");
-  return u.getIdToken();
+  return u.getIdToken(forceRefresh);
 }
 
 export type UploadedAttachment = {
@@ -17,13 +17,46 @@ export type UploadedAttachment = {
   contentType?: string;
 };
 
+function normalizeStorageKey(key: string) {
+  let k = String(key || "").trim();
+
+  // ถ้าเผลอส่งเป็น URL มา ไม่ต้อง normalize
+  if (/^https?:\/\//i.test(k)) return k;
+
+  // ตัด query/hash เผื่อใครเก็บแปลกๆ
+  k = k.split("?")[0].split("#")[0];
+
+  // ตัด / นำหน้า
+  k = k.replace(/^\/+/, "");
+
+  // บางคนเก็บเป็น public/xxx ให้ตัดออก (แล้วให้ backend map เอง)
+  k = k.replace(/^public\//i, "");
+
+  return k;
+}
+
 /** ขอ signed url จาก backend เพื่อเปิดไฟล์ใน Supabase Storage */
 export async function getSignedUrl(key: string) {
-  const token = await getToken();
-  const res = await fetch(
-    `${API_BASE}/files/signed-url?key=${encodeURIComponent(key)}`,
+  const normalized = normalizeStorageKey(key);
+
+  // ถ้าเป็น URL อยู่แล้ว ใช้ได้เลย
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+
+  // try 1: token ปกติ
+  let token = await getToken(false);
+  let res = await fetch(
+    `${API_BASE}/files/signed-url?key=${encodeURIComponent(normalized)}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
+
+  // ถ้าโดน 401/403 ลอง refresh token แล้ว retry อีกครั้ง
+  if (res.status === 401 || res.status === 403) {
+    token = await getToken(true);
+    res = await fetch(
+      `${API_BASE}/files/signed-url?key=${encodeURIComponent(normalized)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  }
 
   const data = await res.json().catch(() => null);
   if (!res.ok || !data?.ok) throw new Error(data?.error || "SIGNED_URL_FAILED");
@@ -47,7 +80,6 @@ export async function uploadFile(file: File, folder: string) {
   const data = await res.json().catch(() => null);
   if (!res.ok || !data?.ok) throw new Error(data?.error || "UPLOAD_FAILED");
 
-  // backend ส่งได้ทั้ง key/name/size/contentType หรือ attachments[]
   const a: UploadedAttachment =
     data?.attachments?.[0] ||
     (data?.key
