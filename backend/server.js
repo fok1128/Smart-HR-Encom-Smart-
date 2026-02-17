@@ -20,7 +20,9 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ✅ ตอบ OPTIONS ให้ชัด/เร็ว
+// app.options("*", cors(corsOptions)); ❌ ทำให้พังกับ path-to-regexp บางเวอร์ชัน
+app.options(/.*/, cors(corsOptions)); // ✅ ตอบ OPTIONS ทุก path
+
 
 // (เสริม) บาง proxy แปลก ๆ ชอบลืม maxAge ใส่ซ้ำให้ชัวร์
 app.use((req, res, next) => {

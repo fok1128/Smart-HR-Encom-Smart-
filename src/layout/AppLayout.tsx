@@ -5,7 +5,7 @@ import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
 import { useAuth } from "../context/AuthContext";
-import PageMeta from "../components/common/PageMeta"; // ✅ เพิ่ม
+import PageMeta from "../components/common/PageMeta";
 
 const LayoutContent = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
@@ -17,21 +17,18 @@ const LayoutContent = () => {
     const authPaths = ["/signin", "/signup", "/reset-password"];
     const isAuthPage = authPaths.includes(location.pathname);
 
-    // ✅ รอให้ auth เช็คเสร็จก่อนค่อยเด้ง
     if (!loading && !user && !isAuthPage) {
       navigate("/signin", { replace: true });
     }
   }, [user, loading, location.pathname, navigate]);
 
-  // ✅ ระหว่างกำลังโหลด session จะไม่เด้ง/ไม่กระพริบ
-  if (loading) return null; // หรือใส่ Loading UI ก็ได้
+  if (loading) return null;
 
   return (
     <>
-      {/* ✅ กัน title โดน template ทับหลังล็อกอิน */}
       <PageMeta title="Smart HR @PEA ENCOM SMART" description="Smart HR Dashboard" />
 
-      <div className="min-h-screen xl:flex">
+      <div className="min-h-screen bg-gray-50 xl:flex dark:bg-gray-950">
         <div>
           <AppSidebar />
           <Backdrop />
