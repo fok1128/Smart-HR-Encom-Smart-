@@ -788,15 +788,13 @@ export default function AnnouncementsPage() {
 
                     <button
                       type="button"
-                      onClick={() => {
-                        setViewItem(a);
-                        setViewOpen(true);
-                      }}
+                      onClick={() => openView(a)}
                       className="mt-3 inline-flex items-center text-xs font-semibold text-violet-700 hover:underline dark:text-violet-200"
                       title="คลิกเพื่อดูรายละเอียด"
                     >
                       คลิกเพื่ออ่านรายละเอียด →
                     </button>
+
                   </div>
 
                   {/* Admin actions */}
@@ -852,12 +850,9 @@ export default function AnnouncementsPage() {
               }`
             : undefined
         }
-        onClose={() => {
-          setViewOpen(false);
-          setViewItem(null);
-        }}
-        maxWidth="max-w-3xl"
-      >
+                onClose={closeView}
+          maxWidth="max-w-3xl"
+        >
         {viewItem ? (
           <div className="space-y-4">
             <div className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">
