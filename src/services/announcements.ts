@@ -9,27 +9,40 @@ import {
   deleteDoc,
   doc,
   updateDoc,
-  limit, // ✅ NEW
+  limit,
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { getSignedUrl } from "./files"; // ✅ NEW (ใช้ cache/inflight/retry จาก files.ts)
+import { getSignedUrl } from "./files";
+
+export type AnnouncementAttachment = {
+  key: string;
+  name: string;
+  size?: number;
+  contentType?: string;
+};
+
+export type AnnouncementLink = {
+  url: string;
+  label?: string;
+};
 
 export type Announcement = {
   id: string;
   title: string;
   body: string;
 
-  // ✅ new: เก็บ key ไว้ แล้วค่อยขอ signed url ตอนจะเปิด
+  /** ✅ new: multiple */
+  attachments?: AnnouncementAttachment[] | null;
+  links?: AnnouncementLink[] | null;
+
+  /** ✅ legacy/new-single (keep for backward compat) */
   fileKey?: string | null;
   fileName?: string | null;
-
-  // ✅ legacy: รองรับ record เก่า
   fileUrl?: string | null;
 
   pinned?: boolean;
   createdAt?: any;
   updatedAt?: any;
-
   createdBy?: { uid: string; email?: string };
 };
 
@@ -58,15 +71,12 @@ function normalizeUploadResponse(data: any, f: File) {
   return { key, name, size, contentType };
 }
 
-/**
- * ✅ อัปโหลดไฟล์ประกาศไป Supabase Storage ผ่าน Backend (/files/upload)
- * คืนค่า { key, name } เพื่อเอาไปใส่ fileKey/fileName
- */
+/** ✅ upload single file */
 export async function uploadAnnouncementFile(
   uid: string,
   file: File,
   onProgress?: (percent: number) => void
-): Promise<{ key: string; name: string }> {
+): Promise<AnnouncementAttachment> {
   if (!uid) throw new Error("MISSING_UID");
   if (!file) throw new Error("MISSING_FILE");
 
@@ -76,7 +86,6 @@ export async function uploadAnnouncementFile(
   fd.append("file", file);
   fd.append("folder", "announcement");
 
-  // fetch upload ไม่มี progress จริง
   onProgress?.(1);
 
   const res = await fetch(`${API_BASE}/files/upload`, {
@@ -94,13 +103,33 @@ export async function uploadAnnouncementFile(
   const up = normalizeUploadResponse(data, file);
   onProgress?.(100);
 
-  return { key: up.key, name: up.name };
+  return { key: up.key, name: up.name, size: up.size, contentType: up.contentType };
 }
 
-/**
- * ✅ ขอ signed url เพื่อเปิดไฟล์ประกาศ
- * เปลี่ยนมาใช้ getSignedUrl จาก files.ts (ได้ cache/inflight/retry)
- */
+/** ✅ upload multiple files by looping single upload (safe, no backend change) */
+export async function uploadAnnouncementFiles(
+  uid: string,
+  files: File[],
+  onProgress?: (percent: number) => void
+): Promise<AnnouncementAttachment[]> {
+  const list = (files || []).filter(Boolean);
+  if (!list.length) return [];
+
+  const out: AnnouncementAttachment[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const base = Math.floor((i / list.length) * 100);
+    onProgress?.(Math.max(1, base));
+
+    const att = await uploadAnnouncementFile(uid, list[i]);
+    out.push(att);
+
+    const done = Math.floor(((i + 1) / list.length) * 100);
+    onProgress?.(done);
+  }
+  return out;
+}
+
+/** ✅ signed url (cached via files.ts) */
 export async function getAnnouncementSignedUrl(fileKey: string): Promise<string> {
   return getSignedUrl(fileKey);
 }
@@ -109,24 +138,34 @@ export async function createAnnouncement(params: {
   title: string;
   body: string;
 
+  /** ✅ new */
+  attachments?: AnnouncementAttachment[] | null;
+  links?: AnnouncementLink[] | null;
+
+  /** legacy */
   fileKey?: string | null;
   fileName?: string | null;
-
-  // legacy
   fileUrl?: string | null;
 
   createdBy: { uid: string; email?: string };
   pinned?: boolean;
 }) {
+  const atts = params.attachments ?? null;
+
+  // ✅ backward compat: keep fileKey/fileName = first attachment if provided
+  const first = Array.isArray(atts) && atts.length ? atts[0] : null;
+
   return addDoc(collection(db, COL), {
     title: params.title,
     body: params.body,
 
-    // ✅ new
-    fileKey: params.fileKey ?? null,
-    fileName: params.fileName ?? null,
+    // ✅ new (multiple)
+    attachments: atts,
+    links: params.links ?? null,
 
-    // ✅ legacy
+    // ✅ keep old fields for existing UI/records
+    fileKey: params.fileKey ?? (first?.key ?? null),
+    fileName: params.fileName ?? (first?.name ?? null),
     fileUrl: params.fileUrl ?? null,
 
     pinned: !!params.pinned,
@@ -136,9 +175,41 @@ export async function createAnnouncement(params: {
   });
 }
 
-/**
- * ✅ ถ้ามีไฟล์แนบ ให้อัปโหลดก่อน แล้วค่อย createAnnouncement
- */
+/** ✅ create with multiple files (preferred) */
+export async function createAnnouncementWithFiles(
+  params: {
+    title: string;
+    body: string;
+    createdBy: { uid: string; email?: string };
+    pinned?: boolean;
+    links?: AnnouncementLink[] | null;
+  },
+  files?: File[] | null,
+  onProgress?: (percent: number) => void
+) {
+  const list = (files || []).filter(Boolean);
+  if (list.length) {
+    const atts = await uploadAnnouncementFiles(params.createdBy.uid, list, onProgress);
+    return createAnnouncement({
+      ...params,
+      attachments: atts,
+      links: params.links ?? null,
+      fileUrl: null,
+      // fileKey/fileName จะถูก set จาก attachment แรกอัตโนมัติ
+    });
+  }
+
+  return createAnnouncement({
+    ...params,
+    attachments: null,
+    links: params.links ?? null,
+    fileKey: null,
+    fileName: null,
+    fileUrl: null,
+  });
+}
+
+/** ✅ keep old API (single file) for compatibility */
 export async function createAnnouncementWithFile(
   params: {
     title: string;
@@ -149,25 +220,10 @@ export async function createAnnouncementWithFile(
   file?: File | null,
   onProgress?: (percent: number) => void
 ) {
-  if (file) {
-    const up = await uploadAnnouncementFile(params.createdBy.uid, file, onProgress);
-    return createAnnouncement({
-      ...params,
-      fileKey: up.key,
-      fileName: up.name,
-      fileUrl: null,
-    });
-  }
-
-  return createAnnouncement({
-    ...params,
-    fileKey: null,
-    fileName: null,
-    fileUrl: null,
-  });
+  const files = file ? [file] : [];
+  return createAnnouncementWithFiles(params, files, onProgress);
 }
 
-// ✅ เพิ่ม opts.limit + ใส่ limit() กันโหลดทั้งคอลเลกชัน
 export function listenAnnouncements(
   cb: (items: Announcement[]) => void,
   onError?: (message: string) => void,
@@ -206,11 +262,31 @@ export async function deleteAnnouncement(id: string) {
 export async function updateAnnouncement(
   id: string,
   data: Partial<
-    Pick<Announcement, "title" | "body" | "fileKey" | "fileName" | "fileUrl" | "pinned">
+    Pick<
+      Announcement,
+      | "title"
+      | "body"
+      | "attachments"
+      | "links"
+      | "fileKey"
+      | "fileName"
+      | "fileUrl"
+      | "pinned"
+    >
   >
 ) {
+  // ✅ if attachments provided, also keep fileKey/fileName as first attachment (compat)
+  const atts = data.attachments;
+  const first = Array.isArray(atts) && atts.length ? atts[0] : null;
+
   await updateDoc(doc(db, COL, id), {
     ...data,
+    ...(atts !== undefined
+      ? {
+          fileKey: data.fileKey ?? (first?.key ?? null),
+          fileName: data.fileName ?? (first?.name ?? null),
+        }
+      : {}),
     updatedAt: serverTimestamp(),
   });
 }

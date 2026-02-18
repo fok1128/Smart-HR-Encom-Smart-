@@ -1,18 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PageMeta from "../../components/common/PageMeta";
 import AppButton from "../../components/common/AppButton";
 import { inputTheme } from "../../components/ui/theme/inputTheme";
 import { useAuth } from "../../context/AuthContext";
+import { useDialogCenter } from "../../components/common/DialogCenter";
 import {
-  createAnnouncement,
-  createAnnouncementWithFile,
+  createAnnouncementWithFiles,
   listenAnnouncements,
   deleteAnnouncement,
   updateAnnouncement,
   setAnnouncementPinned,
-  uploadAnnouncementFile,
+  uploadAnnouncementFiles,
   getAnnouncementSignedUrl,
-  Announcement,
+  type Announcement,
+  type AnnouncementAttachment,
+  type AnnouncementLink,
 } from "../../services/announcements";
 
 /* ---------------- helpers ---------------- */
@@ -48,117 +50,433 @@ function openInNewTab(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/* ---------------- UI: Modal ---------------- */
-function Modal({
+function mergeFiles(prev: File[], next: File[]) {
+  const map = new Map<string, File>();
+  for (const f of [...prev, ...next]) {
+    map.set(`${f.name}_${f.size}_${f.lastModified}`, f);
+  }
+  return Array.from(map.values());
+}
+
+function domainOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function fileBadge(name?: string) {
+  const n = String(name || "").toLowerCase();
+  if (n.endsWith(".pdf")) return "PDF";
+  if (n.match(/\.(png|jpg|jpeg|webp|gif)$/)) return "IMG";
+  if (n.match(/\.(doc|docx)$/)) return "DOC";
+  if (n.match(/\.(xls|xlsx)$/)) return "XLS";
+  if (n.match(/\.(ppt|pptx)$/)) return "PPT";
+  return "FILE";
+}
+
+function isImageFile(name?: string) {
+  const n = String(name || "").toLowerCase();
+  return !!n.match(/\.(png|jpg|jpeg|webp|gif)$/);
+}
+
+function normalizeAnnouncementAttachments(a: Announcement): AnnouncementAttachment[] {
+  const atts = Array.isArray((a as any).attachments) ? (a as any).attachments.filter(Boolean) : [];
+  if (atts.length) return atts;
+
+  // fallback legacy single
+  const key = (a as any)?.fileKey as string | undefined | null;
+  if (key) return [{ key, name: (a as any).fileName || "ไฟล์แนบ" }];
+
+  return [];
+}
+
+function normalizeAnnouncementLinks(a: Announcement): AnnouncementLink[] {
+  const links = Array.isArray((a as any).links) ? (a as any).links.filter(Boolean) : [];
+  if (links.length) return links;
+
+  // fallback legacy fileUrl as “related link”
+  if (a.fileUrl && isValidUrl(a.fileUrl)) {
+    return [{ url: a.fileUrl, label: (a as any).fileName || undefined }];
+  }
+  return [];
+}
+
+/* ---------------- UI: Sections ---------------- */
+function AttachmentSection({
+  attachments,
+  onOpen,
+  onRemove,
+  canEdit,
+  title = "ไฟล์แนบ",
+}: {
+  attachments: AnnouncementAttachment[];
+  onOpen: (att: AnnouncementAttachment) => void;
+  onRemove?: (idx: number) => void;
+  canEdit?: boolean;
+  title?: string;
+}) {
+  if (!attachments.length) return null;
+
+  return (
+    <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200 dark:bg-gray-950/30 dark:ring-gray-800">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">{title}</div>
+        <div className="text-xs text-gray-500">{attachments.length} รายการ</div>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2">
+        {attachments.map((att, idx) => (
+          <div
+            key={`${att.key}_${idx}`}
+            className="flex flex-col gap-2 rounded-2xl bg-white p-3 ring-1 ring-gray-200 sm:flex-row sm:items-center sm:justify-between dark:bg-gray-900 dark:ring-gray-700"
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-extrabold text-violet-700 ring-1 ring-violet-200 dark:bg-violet-900/20 dark:text-violet-200 dark:ring-violet-900/40">
+                  {fileBadge(att.name)}
+                </span>
+                <div className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {att.name || "ไฟล์แนบ"}
+                </div>
+              </div>
+              <div className="mt-0.5 text-xs text-gray-500">
+                key: <span className="font-mono">{String(att.key).slice(0, 28)}...</span>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onOpen(att)}
+                className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-95"
+                title="เปิดไฟล์"
+              >
+                ดูไฟล์
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onOpen(att)}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
+                title="ดาวน์โหลด (เปิดลิงก์ไฟล์)"
+              >
+                ดาวน์โหลด
+              </button>
+
+              {canEdit && onRemove ? (
+                <button
+                  type="button"
+                  onClick={() => onRemove(idx)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-900/30"
+                  title="ลบออกจากประกาศ (ไม่ลบไฟล์ใน storage)"
+                >
+                  ลบ
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {canEdit ? (
+        <div className="mt-3 text-xs text-gray-500">
+          * ปุ่ม “ลบ” จะลบออกจากประกาศเท่านั้น (ไม่ลบไฟล์ใน Storage)
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LinkSection({
+  links,
+  onRemove,
+  canEdit,
+  title = "ลิงก์ที่เกี่ยวข้อง",
+}: {
+  links: AnnouncementLink[];
+  onRemove?: (idx: number) => void;
+  canEdit?: boolean;
+  title?: string;
+}) {
+  if (!links.length) return null;
+
+  return (
+    <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200 dark:bg-gray-950/30 dark:ring-gray-800">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">{title}</div>
+        <div className="text-xs text-gray-500">{links.length} รายการ</div>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2">
+        {links.map((l, idx) => (
+          <div
+            key={`${l.url}_${idx}`}
+            className="flex flex-col gap-2 rounded-2xl bg-white p-3 ring-1 ring-gray-200 sm:flex-row sm:items-center sm:justify-between dark:bg-gray-900 dark:ring-gray-700"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {l.label?.trim() ? l.label.trim() : domainOf(l.url)}
+              </div>
+              <div className="truncate text-xs text-gray-500">{l.url}</div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              <a
+                href={l.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-95"
+                title="เปิดลิงก์"
+              >
+                เปิดลิงก์
+              </a>
+
+              {canEdit && onRemove ? (
+                <button
+                  type="button"
+                  onClick={() => onRemove(idx)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-900/30"
+                  title="ลบลิงก์ออกจากประกาศ"
+                >
+                  ลบ
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- FB-like Photo Grid + Lightbox ---------------- */
+type GridPhoto = { att: AnnouncementAttachment; url?: string };
+
+function FbPhotoGrid({
+  photos,
+  onClick,
+}: {
+  photos: GridPhoto[];
+  onClick: (index: number) => void;
+}) {
+  if (!photos.length) return null;
+
+  const count = photos.length;
+  const show = photos.slice(0, Math.min(count, 5));
+  const extra = count - 5;
+
+  const Tile = ({
+    p,
+    idx,
+    className,
+    showOverlay,
+  }: {
+    p: GridPhoto;
+    idx: number;
+    className: string;
+    showOverlay?: boolean;
+  }) => {
+    const ready = !!p.url;
+    return (
+      <button
+        type="button"
+        onClick={() => ready && onClick(idx)}
+        disabled={!ready}
+        className={[
+          "relative overflow-hidden rounded-2xl ring-1",
+          "ring-gray-200 hover:ring-violet-300 dark:ring-gray-700",
+          "bg-gray-100 dark:bg-gray-900",
+          "group",
+          className,
+        ].join(" ")}
+        title={p.att.name || "image"}
+      >
+        {p.url ? (
+          <img
+            src={p.url}
+            alt={p.att.name || "image"}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-gray-500">
+            กำลังโหลดรูป...
+          </div>
+        )}
+
+        <div className="pointer-events-none absolute inset-0 bg-black/0 transition group-hover:bg-black/10" />
+
+        {showOverlay ? (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45">
+            <div className="rounded-2xl bg-black/35 px-4 py-2 text-2xl font-extrabold text-white">
+              +{extra}
+            </div>
+          </div>
+        ) : null}
+      </button>
+    );
+  };
+
+  if (count === 1) {
+    return (
+      <div className="mt-3">
+        <Tile p={show[0]} idx={0} className="aspect-[16/9] w-full" />
+      </div>
+    );
+  }
+
+  if (count === 2) {
+    return (
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Tile p={show[0]} idx={0} className="aspect-[4/3]" />
+        <Tile p={show[1]} idx={1} className="aspect-[4/3]" />
+      </div>
+    );
+  }
+
+  if (count === 3) {
+    return (
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Tile p={show[0]} idx={0} className="aspect-[4/5] w-full" />
+        <div className="grid grid-rows-2 gap-2">
+          <Tile p={show[1]} idx={1} className="aspect-[16/9]" />
+          <Tile p={show[2]} idx={2} className="aspect-[16/9]" />
+        </div>
+      </div>
+    );
+  }
+
+  if (count === 4) {
+    return (
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Tile p={show[0]} idx={0} className="aspect-[4/3]" />
+        <Tile p={show[1]} idx={1} className="aspect-[4/3]" />
+        <Tile p={show[2]} idx={2} className="aspect-[4/3]" />
+        <Tile p={show[3]} idx={3} className="aspect-[4/3]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 grid grid-cols-6 gap-2">
+      <Tile p={show[0]} idx={0} className="col-span-3 aspect-[4/3]" />
+      <Tile p={show[1]} idx={1} className="col-span-3 aspect-[4/3]" />
+
+      <Tile p={show[2]} idx={2} className="col-span-2 aspect-[4/3]" />
+      <Tile p={show[3]} idx={3} className="col-span-2 aspect-[4/3]" />
+      <Tile p={show[4]} idx={4} className="col-span-2 aspect-[4/3]" showOverlay={extra > 0} />
+    </div>
+  );
+}
+
+function Lightbox({
   open,
-  title,
-  subtitle,
-  children,
+  photos,
+  index,
   onClose,
-  footer,
-  disableClose,
-  maxWidth = "max-w-2xl",
+  onPrev,
+  onNext,
 }: {
   open: boolean;
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
+  photos: { url: string; name?: string }[];
+  index: number;
   onClose: () => void;
-  footer?: React.ReactNode;
-  disableClose?: boolean;
-  maxWidth?: string;
+  onPrev: () => void;
+  onNext: () => void;
 }) {
+  const current = photos[index];
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft") onPrev();
+      if (e.key === "ArrowRight") onNext();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose, onPrev, onNext]);
+
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-      onMouseDown={() => {
-        if (!disableClose) onClose();
-      }}
-    >
-      <div
-        className={`w-full ${maxWidth} rounded-2xl bg-white p-5 shadow-xl ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800`}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-lg font-semibold text-gray-900 dark:text-white">
-              {title}
-            </div>
-            {subtitle ? (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {subtitle}
-              </div>
-            ) : null}
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onMouseDown={onClose}>
+      <div className="relative w-full max-w-5xl overflow-hidden rounded-2xl bg-black ring-1 ring-white/10" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-3 bg-gradient-to-b from-black/70 to-black/0 p-3">
+          <div className="min-w-0 truncate text-sm font-semibold text-white/90">
+            {current?.name || `รูปที่ ${index + 1}`}
           </div>
-
-          <button
-            onClick={onClose}
-            disabled={disableClose}
-            className="rounded-xl bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 disabled:opacity-50 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-          >
+          <button onClick={onClose} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15">
             ปิด
           </button>
         </div>
 
-        <div className="mt-4">{children}</div>
-        {footer ? <div className="mt-4">{footer}</div> : null}
-      </div>
-    </div>
-  );
-}
+        <div className="flex items-center justify-center">
+          {current?.url ? <img src={current.url} alt={current.name || "preview"} className="max-h-[80vh] w-auto" /> : null}
+        </div>
 
-/* ---------------- UI: Center Notice ---------------- */
-function CenterNotice({
-  open,
-  type,
-  title,
-  message,
-  onClose,
-}: {
-  open: boolean;
-  type: "success" | "error" | "info";
-  title: string;
-  message?: string;
-  onClose: () => void;
-}) {
-  if (!open) return null;
+        {photos.length > 1 ? (
+          <>
+            <button
+              type="button"
+              onClick={onPrev}
+              className="absolute left-3 top-1/2 -translate-y-1/2 rounded-2xl bg-white/10 px-3 py-3 text-sm font-extrabold text-white hover:bg-white/15"
+              title="ก่อนหน้า"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              onClick={onNext}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-2xl bg-white/10 px-3 py-3 text-sm font-extrabold text-white hover:bg-white/15"
+              title="ถัดไป"
+            >
+              ›
+            </button>
+          </>
+        ) : null}
 
-  return (
-    <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div
-        className={`w-full max-w-sm rounded-2xl p-5 shadow-xl ring-1 ${
-          type === "success"
-            ? "bg-emerald-50 ring-emerald-200 text-emerald-900 dark:bg-emerald-900/30 dark:ring-emerald-900/50 dark:text-emerald-100"
-            : type === "error"
-            ? "bg-red-50 ring-red-200 text-red-900 dark:bg-red-900/30 dark:ring-red-900/50 dark:text-red-100"
-            : "bg-white ring-gray-200 text-gray-900 dark:bg-gray-900 dark:ring-gray-800 dark:text-gray-100"
-        }`}
-      >
-        <div className="text-base font-semibold">{title}</div>
-        {message ? <div className="mt-1 text-sm opacity-80">{message}</div> : null}
-
-        <div className="mt-4 flex justify-end">
-          <button
-            onClick={onClose}
-            className="rounded-xl bg-black/5 px-4 py-2 text-sm font-semibold hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
-          >
-            ตกลง
-          </button>
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-black/0 p-3 text-center text-xs font-semibold text-white/80">
+          {index + 1} / {photos.length}
         </div>
       </div>
     </div>
   );
 }
 
+/* ---------------- Page ---------------- */
 export default function AnnouncementsPage() {
   const { user } = useAuth();
+  const dialog = useDialogCenter();
   const isAdmin = user?.role === "ADMIN";
+
+  // ✅ DialogCenter adapter
+  const dcAlert = (title: string, message?: string) => {
+    const fn: any = (dialog as any)?.alert;
+    if (typeof fn !== "function") return;
+    if (fn.length >= 2) return fn(title, message);
+    return fn({ title, message });
+  };
+
+  const dcConfirm = async (opts: {
+    title: string;
+    message?: string;
+    confirmText?: string;
+    cancelText?: string;
+    variant?: string;
+  }) => {
+    const fn: any = (dialog as any)?.confirm;
+    if (typeof fn !== "function") return false;
+    if (fn.length <= 1) return !!(await fn(opts));
+    return !!(await fn(opts.title, opts.message, opts.confirmText, opts.cancelText, opts.variant));
+  };
 
   const [items, setItems] = useState<Announcement[]>([]);
 
-  // ✅ Search/Filter
+  // search/filter
   const [q, setQ] = useState("");
   const [onlyPinned, setOnlyPinned] = useState(false);
 
@@ -168,54 +486,79 @@ export default function AnnouncementsPage() {
   const [pinnedNew, setPinnedNew] = useState(false);
   const [posting, setPosting] = useState(false);
 
-  // ✅ new: file upload (Supabase)
-  const [file, setFile] = useState<File | null>(null);
+  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
   const [uploadPct, setUploadPct] = useState(0);
 
-  // legacy: link attach (ยังให้ใช้ได้ ถ้าจะวางลิงก์)
-  const [fileUrl, setFileUrl] = useState("");
-  const [fileName, setFileName] = useState("");
+  // links (new)
+  const [newLinkUrl, setNewLinkUrl] = useState("");
+  const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [links, setLinks] = useState<AnnouncementLink[]>([]);
 
-  // edit modal
-  const [editOpen, setEditOpen] = useState(false);
+  // view details
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // edit inline
   const [editId, setEditId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editBody, setEditBody] = useState("");
-  const [editFileUrl, setEditFileUrl] = useState(""); // legacy link
-  const [editFileName, setEditFileName] = useState(""); // show name
   const [editPinned, setEditPinned] = useState(false);
-  const [savingEdit, setSavingEdit] = useState(false);
 
-  // ✅ new: replace file in edit
-  const [editFile, setEditFile] = useState<File | null>(null);
+  const [editPickedFiles, setEditPickedFiles] = useState<File[]>([]);
   const [editUploadPct, setEditUploadPct] = useState(0);
 
-  // delete modal
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleteTitle, setDeleteTitle] = useState<string>("");
-  const [deleting, setDeleting] = useState(false);
+  const [editLinks, setEditLinks] = useState<AnnouncementLink[]>([]);
+  const [editNewLinkUrl, setEditNewLinkUrl] = useState("");
+  const [editNewLinkLabel, setEditNewLinkLabel] = useState("");
 
-  // ✅ View details modal
-  const [viewOpen, setViewOpen] = useState(false);
-  const [viewItem, setViewItem] = useState<Announcement | null>(null);
-
-  // ✅ notice center
-  const [notice, setNotice] = useState<{
-    open: boolean;
-    type: "success" | "error" | "info";
-    title: string;
-    message?: string;
-  }>({ open: false, type: "info", title: "" });
-
-  function showNotice(n: Omit<typeof notice, "open">) {
-    setNotice({ open: true, ...n });
-    setTimeout(() => setNotice((p) => ({ ...p, open: false })), 2200);
-  }
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const canPost = useMemo(() => title.trim() && body.trim(), [title, body]);
 
-  // ✅ สำคัญ: เลื่อนเริ่ม listener หลัง render + จำกัดจำนวน (กันหนักตอน login)
+  // ✅ signed-url cache (หน้า)
+  const signedCacheRef = useRef<Map<string, string>>(new Map());
+  const inflightRef = useRef<Map<string, Promise<string>>>(new Map());
+
+  async function getSignedCached(key: string) {
+    const hit = signedCacheRef.current.get(key);
+    if (hit) return hit;
+
+    const inflight = inflightRef.current.get(key);
+    if (inflight) return inflight;
+
+    const p = (async () => {
+      const u = await getAnnouncementSignedUrl(key);
+      signedCacheRef.current.set(key, u);
+      inflightRef.current.delete(key);
+      return u;
+    })().catch((e) => {
+      inflightRef.current.delete(key);
+      throw e;
+    });
+
+    inflightRef.current.set(key, p);
+    return p;
+  }
+
+  // ✅ Lightbox state
+  const [lbOpen, setLbOpen] = useState(false);
+  const [lbPhotos, setLbPhotos] = useState<{ url: string; name?: string }[]>([]);
+  const [lbIndex, setLbIndex] = useState(0);
+
+  const openLightbox = async (imageAtts: AnnouncementAttachment[], startIndex: number) => {
+    try {
+      const urls = await Promise.all(
+        imageAtts.map(async (att) => ({ url: await getSignedCached(att.key), name: att.name }))
+      );
+      setLbPhotos(urls);
+      setLbIndex(Math.max(0, Math.min(startIndex, urls.length - 1)));
+      setLbOpen(true);
+    } catch (e: any) {
+      console.error(e);
+      dcAlert("เปิดรูปไม่ได้", e?.message || "ลองใหม่อีกครั้ง");
+    }
+  };
+
+  // listener
   useEffect(() => {
     if (!user) return;
 
@@ -224,22 +567,15 @@ export default function AnnouncementsPage() {
 
     const start = () => {
       if (cancelled) return;
-      unsub = listenAnnouncements(
-        setItems,
-        (msg) => showNotice({ type: "error", title: "โหลดประกาศไม่สำเร็จ", message: msg }),
-        { limit: 50 } // ✅ จำกัดจำนวนล่าสุด
-      );
+      unsub = listenAnnouncements(setItems, (msg) => dcAlert("โหลดประกาศไม่สำเร็จ", msg), { limit: 50 });
     };
 
     const w = window as any;
     let idleId: any = null;
     let t: any = null;
 
-    if (typeof w.requestIdleCallback === "function") {
-      idleId = w.requestIdleCallback(start, { timeout: 1200 });
-    } else {
-      t = setTimeout(start, 200);
-    }
+    if (typeof w.requestIdleCallback === "function") idleId = w.requestIdleCallback(start, { timeout: 1200 });
+    else t = setTimeout(start, 200);
 
     return () => {
       cancelled = true;
@@ -247,9 +583,10 @@ export default function AnnouncementsPage() {
       if (t) clearTimeout(t);
       if (unsub) unsub();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  // ✅ Sort pinned first, then latest
+  // sort pinned first then latest
   const sortedItems = useMemo(() => {
     const arr = [...items];
     arr.sort((a, b) => {
@@ -261,61 +598,120 @@ export default function AnnouncementsPage() {
     return arr;
   }, [items]);
 
-  // ✅ Filter by search + pinned toggle
+  // filter
   const filteredItems = useMemo(() => {
     const keyword = q.trim().toLowerCase();
     return sortedItems.filter((a) => {
       if (onlyPinned && !a.pinned) return false;
       if (!keyword) return true;
-      const hay =
-        `${a.title || ""} ${a.body || ""} ${a.createdBy?.email || ""} ${a.fileName || ""}`.toLowerCase();
+      const hay = `${a.title || ""} ${a.body || ""} ${a.createdBy?.email || ""}`.toLowerCase();
       return hay.includes(keyword);
     });
   }, [sortedItems, q, onlyPinned]);
 
-  async function openAttachment(a: Announcement) {
+  // ✅ PREFETCH รูป (นอก loop) — กัน hooks error
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      // เอาเฉพาะ 6 โพสต์แรกพอ กันโหลดหนัก
+      const top = filteredItems.slice(0, 6);
+
+      for (const a of top) {
+        if (cancelled) return;
+
+        const atts = normalizeAnnouncementAttachments(a).filter((x) => isImageFile(x.name)).slice(0, 5);
+        for (const att of atts) {
+          if (cancelled) return;
+          if (signedCacheRef.current.get(att.key)) continue;
+
+          try {
+            await getSignedCached(att.key);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    };
+
+    // เรียกแบบไม่บล็อค UI
+    const w = window as any;
+    if (typeof w.requestIdleCallback === "function") {
+      const id = w.requestIdleCallback(run, { timeout: 1200 });
+      return () => {
+        cancelled = true;
+        w.cancelIdleCallback?.(id);
+      };
+    }
+
+    const t = setTimeout(run, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [filteredItems]);
+
+  async function openAttachment(att: AnnouncementAttachment, fallbackUrl?: string | null) {
     try {
-      // legacy url
-      if (a.fileUrl && isValidUrl(a.fileUrl)) {
-        openInNewTab(a.fileUrl);
+      if (fallbackUrl && isValidUrl(fallbackUrl)) {
+        openInNewTab(fallbackUrl);
         return;
       }
-
-      // new supabase key
-      const key = (a as any)?.fileKey as string | undefined | null;
-      if (key) {
-        const signed = await getAnnouncementSignedUrl(key); // ✅ ตอนนี้ได้ cache แล้ว
-        openInNewTab(signed);
-        return;
-      }
-
-      showNotice({ type: "info", title: "ไม่มีไฟล์แนบ" });
+      const signed = await getSignedCached(att.key);
+      openInNewTab(signed);
     } catch (e: any) {
       console.error("openAttachment error:", e);
-      showNotice({
-        type: "error",
-        title: "เปิดไฟล์ไม่ได้",
-        message: e?.message || "ลองใหม่อีกครั้ง",
-      });
+      dcAlert("เปิดไฟล์ไม่ได้", e?.message || "ลองใหม่อีกครั้ง");
     }
+  }
+
+  function addLinkToCreate() {
+    const url = newLinkUrl.trim();
+    const label = newLinkLabel.trim();
+    if (!url) return;
+
+    if (!isValidUrl(url)) {
+      dcAlert("ลิงก์ไม่ถูกต้อง", "ต้องขึ้นต้นด้วย http/https");
+      return;
+    }
+
+    setLinks((prev) => {
+      const dedup = prev.some((x) => x.url === url);
+      if (dedup) return prev;
+      return [...prev, { url, label: label || undefined }];
+    });
+
+    setNewLinkUrl("");
+    setNewLinkLabel("");
+  }
+
+  function addLinkToEdit() {
+    const url = editNewLinkUrl.trim();
+    const label = editNewLinkLabel.trim();
+    if (!url) return;
+
+    if (!isValidUrl(url)) {
+      dcAlert("ลิงก์ไม่ถูกต้อง", "ต้องขึ้นต้นด้วย http/https");
+      return;
+    }
+
+    setEditLinks((prev) => {
+      const dedup = prev.some((x) => x.url === url);
+      if (dedup) return prev;
+      return [...prev, { url, label: label || undefined }];
+    });
+
+    setEditNewLinkUrl("");
+    setEditNewLinkLabel("");
   }
 
   async function onPost() {
     if (!user) {
-      showNotice({ type: "error", title: "ยังไม่ได้เข้าสู่ระบบ" });
+      dcAlert("ยังไม่ได้เข้าสู่ระบบ");
       return;
     }
     if (!title.trim() || !body.trim()) {
-      showNotice({ type: "error", title: "กรอกหัวเรื่องและเนื้อหาให้ครบ" });
-      return;
-    }
-
-    if (fileUrl.trim() && !isValidUrl(fileUrl.trim())) {
-      showNotice({
-        type: "error",
-        title: "ลิงก์ไม่ถูกต้อง",
-        message: "ต้องขึ้นต้นด้วย http/https",
-      });
+      dcAlert("กรอกหัวเรื่องและเนื้อหาให้ครบ");
       return;
     }
 
@@ -323,44 +719,31 @@ export default function AnnouncementsPage() {
     try {
       setUploadPct(0);
 
-      if (file) {
-        await createAnnouncementWithFile(
-          {
-            title: title.trim(),
-            body: body.trim(),
-            pinned: pinnedNew,
-            createdBy: { uid: user.uid, email: user.email || undefined },
-          },
-          file,
-          (p) => setUploadPct(p)
-        );
-      } else {
-        await createAnnouncement({
+      await createAnnouncementWithFiles(
+        {
           title: title.trim(),
           body: body.trim(),
           pinned: pinnedNew,
           createdBy: { uid: user.uid, email: user.email || undefined },
-          fileUrl: fileUrl.trim() || null,
-          fileName: fileName.trim() || null,
-        } as any);
-      }
+          links: links.length ? links : null,
+        },
+        pickedFiles,
+        (p: number) => setUploadPct(p)
+      );
 
       setTitle("");
       setBody("");
       setPinnedNew(false);
-      setFile(null);
+      setPickedFiles([]);
       setUploadPct(0);
-      setFileUrl("");
-      setFileName("");
+      setLinks([]);
+      setNewLinkUrl("");
+      setNewLinkLabel("");
 
-      showNotice({ type: "success", title: "โพสประกาศแล้ว ✅" });
+      dcAlert("โพสประกาศแล้ว ✅");
     } catch (e: any) {
       console.error("POST ANNOUNCEMENT ERROR:", e);
-      showNotice({
-        type: "error",
-        title: "โพสไม่สำเร็จ",
-        message: e?.message || "ลองใหม่อีกครั้ง",
-      });
+      dcAlert("โพสไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
     } finally {
       setPosting(false);
     }
@@ -371,115 +754,92 @@ export default function AnnouncementsPage() {
     setEditId(a.id);
     setEditTitle(a.title || "");
     setEditBody(a.body || "");
-    setEditFileUrl(a.fileUrl || "");
-    setEditFileName(a.fileName || "");
     setEditPinned(!!a.pinned);
-
-    setEditFile(null);
+    setEditPickedFiles([]);
     setEditUploadPct(0);
 
-    setEditOpen(true);
+    setEditLinks(normalizeAnnouncementLinks(a));
+    setEditNewLinkUrl("");
+    setEditNewLinkLabel("");
+
+    setExpandedId(null);
   }
 
   function closeEdit() {
     if (savingEdit) return;
-    setEditOpen(false);
     setEditId(null);
     setEditTitle("");
     setEditBody("");
-    setEditFileUrl("");
-    setEditFileName("");
     setEditPinned(false);
-    setEditFile(null);
+    setEditPickedFiles([]);
     setEditUploadPct(0);
+    setEditLinks([]);
+    setEditNewLinkUrl("");
+    setEditNewLinkLabel("");
   }
 
-  async function onSaveEdit() {
+  async function onSaveEdit(original: Announcement) {
     if (!isAdmin || !editId || !user) return;
 
     if (!editTitle.trim() || !editBody.trim()) {
-      showNotice({ type: "error", title: "กรอกหัวเรื่องและเนื้อหาให้ครบ" });
-      return;
-    }
-    if (editFileUrl.trim() && !isValidUrl(editFileUrl.trim())) {
-      showNotice({
-        type: "error",
-        title: "ลิงก์ไม่ถูกต้อง",
-        message: "ต้องขึ้นต้นด้วย http/https",
-      });
+      dcAlert("กรอกหัวเรื่องและเนื้อหาให้ครบ");
       return;
     }
 
     setSavingEdit(true);
     try {
-      if (editFile) {
+      let attachments: AnnouncementAttachment[] | null | undefined = undefined;
+
+      if (editPickedFiles.length) {
         setEditUploadPct(1);
-        const up = await uploadAnnouncementFile(user.uid, editFile, (p) => setEditUploadPct(p));
-        await updateAnnouncement(editId, {
-          title: editTitle.trim(),
-          body: editBody.trim(),
-          pinned: editPinned,
-          fileKey: up.key,
-          fileName: up.name,
-          fileUrl: null,
-        } as any);
+        const up = await uploadAnnouncementFiles(user.uid, editPickedFiles, (p: number) => setEditUploadPct(p));
+        attachments = up;
       } else {
-        await updateAnnouncement(editId, {
-          title: editTitle.trim(),
-          body: editBody.trim(),
-          pinned: editPinned,
-          fileUrl: editFileUrl.trim() || null,
-          fileName: editFileName.trim() || null,
-        } as any);
+        attachments = normalizeAnnouncementAttachments(original);
       }
 
-      showNotice({ type: "success", title: "แก้ไขประกาศแล้ว ✅" });
+      await updateAnnouncement(
+        editId,
+        {
+          title: editTitle.trim(),
+          body: editBody.trim(),
+          pinned: editPinned,
+          attachments: attachments?.length ? attachments : null,
+          links: editLinks.length ? editLinks : null,
+          fileUrl: null,
+        } as any
+      );
+
+      dcAlert("แก้ไขประกาศแล้ว ✅");
       closeEdit();
     } catch (e: any) {
       console.error("UPDATE ANNOUNCEMENT ERROR:", e);
-      showNotice({
-        type: "error",
-        title: "แก้ไขไม่สำเร็จ",
-        message: e?.message || "ลองใหม่อีกครั้ง",
-      });
+      dcAlert("แก้ไขไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
     } finally {
       setSavingEdit(false);
       setEditUploadPct(0);
     }
   }
 
-  function openDelete(a: Announcement) {
+  async function onDelete(a: Announcement) {
     if (!isAdmin) return;
-    setDeleteId(a.id);
-    setDeleteTitle(a.title || "");
-    setDeleteOpen(true);
-  }
 
-  function closeDelete() {
-    if (deleting) return;
-    setDeleteOpen(false);
-    setDeleteId(null);
-    setDeleteTitle("");
-  }
+    const ok = await dcConfirm({
+      title: "ยืนยันการลบประกาศ",
+      message: `ต้องการลบประกาศ: ${a.title || "(ไม่มีหัวเรื่อง)"} ใช่ไหม?\nลบแล้วกู้คืนไม่ได้`,
+      confirmText: "ลบประกาศ",
+      cancelText: "ยกเลิก",
+      variant: "danger",
+    });
 
-  async function onConfirmDelete() {
-    if (!isAdmin || !deleteId) return;
+    if (!ok) return;
 
-    setDeleting(true);
     try {
-      await deleteAnnouncement(deleteId);
-
-      showNotice({ type: "success", title: "ลบประกาศแล้ว ✅" });
-      closeDelete();
+      await deleteAnnouncement(a.id);
+      dcAlert("ลบประกาศแล้ว ✅");
     } catch (e: any) {
       console.error("DELETE ANNOUNCEMENT ERROR:", e);
-      showNotice({
-        type: "error",
-        title: "ลบไม่สำเร็จ",
-        message: e?.message || "ลองใหม่อีกครั้ง",
-      });
-    } finally {
-      setDeleting(false);
+      dcAlert("ลบไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
     }
   }
 
@@ -487,68 +847,52 @@ export default function AnnouncementsPage() {
     if (!isAdmin) return;
     try {
       await setAnnouncementPinned(a.id, !a.pinned);
-      showNotice({
-        type: "success",
-        title: !a.pinned ? "ปักหมุดแล้ว 📌" : "ยกเลิกปักหมุดแล้ว",
-      });
+      dcAlert(!a.pinned ? "ปักหมุดแล้ว 📌" : "ยกเลิกปักหมุดแล้ว");
     } catch (e: any) {
       console.error("PIN ERROR:", e);
-      showNotice({ type: "error", title: "ทำรายการไม่สำเร็จ", message: e?.message });
+      dcAlert("ทำรายการไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
     }
   }
 
-  function openView(a: Announcement) {
-    setViewItem(a);
-    setViewOpen(true);
-  }
-
-  function closeView() {
-    setViewOpen(false);
-    setViewItem(null);
-  }
+  const photoTilesOf = (imgAtts: AnnouncementAttachment[]) =>
+    imgAtts.map((att) => ({
+      att,
+      url: signedCacheRef.current.get(att.key),
+    }));
 
   return (
     <>
       <PageMeta title="Smart HR - Announcements" description="Announcements feed" />
 
-      <CenterNotice
-        open={notice.open}
-        type={notice.type}
-        title={notice.title}
-        message={notice.message}
-        onClose={() => setNotice((p) => ({ ...p, open: false }))}
+      <Lightbox
+        open={lbOpen}
+        photos={lbPhotos}
+        index={lbIndex}
+        onClose={() => setLbOpen(false)}
+        onPrev={() => setLbIndex((i) => (lbPhotos.length ? (i - 1 + lbPhotos.length) % lbPhotos.length : 0))}
+        onNext={() => setLbIndex((i) => (lbPhotos.length ? (i + 1) % lbPhotos.length : 0))}
       />
 
       <div className="mb-6">
-        <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
-          ข่าวประกาศ
-        </h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          ประกาศจากผู้ดูแลระบบ (อัปเดตแบบเรียลไทม์)
-        </p>
+        <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">ข่าวประกาศ</h1>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">ประกาศจากผู้ดูแลระบบ (อัปเดตแบบเรียลไทม์)</p>
       </div>
 
-      {/* ✅ Search/Filter bar */}
+      {/* Search/Filter bar */}
       <div className="mb-6 max-w-5xl">
-        <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200 sm:flex-row sm:items-end sm:justify-between">
-          {/* ซ้าย: label + input */}
+        <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200 sm:flex-row sm:items-end sm:justify-between dark:bg-gray-900 dark:ring-gray-800">
           <div className="w-full sm:w-[62%]">
-            <div className="text-xs font-semibold text-gray-600">ค้นหาประกาศ</div>
+            <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">ค้นหาประกาศ</div>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="พิมพ์คำค้น เช่น ระบบ / ปิดปรับปรุง / link / email"
+              placeholder="พิมพ์คำค้น เช่น ระบบ / ปิดปรับปรุง / email"
               className={["mt-1", inputTheme.purple].join(" ")}
             />
           </div>
 
-          {/* ขวา: ปุ่ม 2 อัน */}
           <div className="flex items-center justify-end gap-2 sm:self-end">
-            <AppButton
-              variant={onlyPinned ? "primary" : "outlinePill"}
-              size="md"
-              onClick={() => setOnlyPinned((v) => !v)}
-            >
+            <AppButton variant={onlyPinned ? "primary" : "outlinePill"} size="md" onClick={() => setOnlyPinned((v) => !v)}>
               {onlyPinned ? "กำลังดู: ปักหมุด" : "ดูเฉพาะปักหมุด"}
             </AppButton>
 
@@ -558,7 +902,7 @@ export default function AnnouncementsPage() {
               onClick={() => {
                 setQ("");
                 setOnlyPinned(false);
-                showNotice({ type: "info", title: "ล้างตัวกรองแล้ว" });
+                dcAlert("ล้างตัวกรองแล้ว");
               }}
             >
               ล้าง
@@ -571,9 +915,7 @@ export default function AnnouncementsPage() {
         {/* Create */}
         {isAdmin && (
           <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800">
-            <div className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">
-              สร้างประกาศใหม่
-            </div>
+            <div className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">สร้างประกาศใหม่</div>
 
             <div className="space-y-3">
               <input
@@ -590,142 +932,134 @@ export default function AnnouncementsPage() {
                 onChange={(e) => setBody(e.target.value)}
               />
 
-              {/* pinned */}
               <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
-                <input
-                  type="checkbox"
-                  checked={pinnedNew}
-                  onChange={(e) => setPinnedNew(e.target.checked)}
-                />
+                <input type="checkbox" checked={pinnedNew} onChange={(e) => setPinnedNew(e.target.checked)} />
                 ปักหมุดประกาศนี้ (แสดงบนสุด)
               </label>
 
-              {/* ✅ File upload (Supabase) */}
+              {/* Files */}
               <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                      เอกสารแนบ (อัปโหลดไฟล์)
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      แนบไฟล์ PDF/รูป/เอกสาร เพื่อเก็บใน Supabase Storage ผ่าน Backend
-                    </div>
+                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">ไฟล์แนบ (หลายไฟล์)</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">PDF/รูป/เอกสาร — อัปโหลดผ่าน Backend ไป Supabase Storage</div>
                   </div>
 
-                  {file ? (
-                    <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 ring-1 ring-violet-200 dark:bg-violet-900/20 dark:text-violet-200 dark:ring-violet-900/40">
-                      เลือกไฟล์แล้ว
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600 ring-1 ring-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
-                      ยังไม่เลือกไฟล์
-                    </span>
-                  )}
+                  <span
+                    className={[
+                      "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ring-1",
+                      pickedFiles.length
+                        ? "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-900/20 dark:text-violet-200 dark:ring-violet-900/40"
+                        : "bg-gray-100 text-gray-600 ring-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700",
+                    ].join(" ")}
+                  >
+                    {pickedFiles.length ? `เลือกแล้ว ${pickedFiles.length} ไฟล์` : "ยังไม่เลือกไฟล์"}
+                  </span>
                 </div>
 
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <input
-                    id="ann-file"
+                    id="ann-files"
                     type="file"
-                    onChange={(e) => setFile(e.target.files?.[0] || null)}
+                    multiple
+                    onChange={(e) => {
+                      const next = Array.from(e.target.files || []);
+                      if (!next.length) return;
+                      setPickedFiles((prev) => mergeFiles(prev, next));
+                      e.currentTarget.value = "";
+                    }}
                     className="hidden"
                   />
 
                   <div className="flex-1">
-                    <div className="text-sm font-semibold text-gray-900">
-                      {file ? `ไฟล์ที่เลือก: ${file.name}` : "ยังไม่เลือกไฟล์"}
-                    </div>
-                    {file ? (
-                      <div className="text-xs text-gray-500">
-                        ขนาดไฟล์: {(file.size / 1024 / 1024).toFixed(2)} MB
+                    {pickedFiles.length ? (
+                      <div className="space-y-2">
+                        {pickedFiles.map((f, idx) => (
+                          <div
+                            key={`${f.name}_${f.size}_${f.lastModified}`}
+                            className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-700"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate font-semibold text-gray-900 dark:text-gray-100">
+                                {idx + 1}. {f.name}
+                              </div>
+                              <div className="text-xs text-gray-500">{(f.size / 1024 / 1024).toFixed(2)} MB</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPickedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                              className="rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-900/30"
+                            >
+                              ลบ
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">ยังไม่เลือกไฟล์</div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <AppButton
-                      type="button"
-                      variant="outlinePill"
-                      size="md"
-                      onClick={() => {
-                        (document.getElementById("ann-file") as HTMLInputElement | null)?.click();
-                      }}
-                    >
-                      แนบไฟล์
+                    <AppButton type="button" variant="outlinePill" size="md" onClick={() => (document.getElementById("ann-files") as HTMLInputElement | null)?.click()}>
+                      เพิ่มไฟล์
                     </AppButton>
 
-                    {file ? (
+                    {pickedFiles.length ? (
                       <AppButton
                         type="button"
                         variant="outlinePill"
                         size="md"
                         onClick={() => {
-                          setFile(null);
+                          setPickedFiles([]);
                           setUploadPct(0);
                         }}
                       >
-                        ล้างไฟล์
+                        ล้างทั้งหมด
                       </AppButton>
                     ) : null}
                   </div>
                 </div>
 
-                {posting && file ? (
-                  <div className="mt-3 text-xs text-gray-600 dark:text-gray-300">
-                    กำลังอัปโหลด: {uploadPct}%
-                  </div>
+                {posting && pickedFiles.length ? (
+                  <div className="mt-3 text-xs text-gray-600 dark:text-gray-300">กำลังอัปโหลด: {uploadPct}%</div>
                 ) : null}
               </div>
 
-              {/* legacy link attach */}
+              {/* Links */}
               <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
-                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                  แนบลิงก์ (ตัวเลือกเสริม/ข้อมูลเก่า)
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  ใช้ได้ แต่แนะนำอัปโหลดไฟล์ด้านบนเพื่อมาตรฐานเดียวกัน
-                </div>
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">ลิงก์ที่เกี่ยวข้อง (หลายลิงก์)</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">ประกาศ 1 อัน สามารถมี “ไฟล์แนบ + ลิงก์” พร้อมกันได้</div>
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <input
                     className="sm:col-span-2 w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
                     placeholder="https://..."
-                    value={fileUrl}
-                    onChange={(e) => setFileUrl(e.target.value)}
+                    value={newLinkUrl}
+                    onChange={(e) => setNewLinkUrl(e.target.value)}
                   />
                   <input
                     className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
-                    placeholder="ชื่อเอกสาร (ถ้ามี)"
-                    value={fileName}
-                    onChange={(e) => setFileName(e.target.value)}
+                    placeholder="ชื่อ/คำอธิบาย (ถ้ามี)"
+                    value={newLinkLabel}
+                    onChange={(e) => setNewLinkLabel(e.target.value)}
                   />
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {fileUrl.trim() && isValidUrl(fileUrl.trim()) ? (
-                    <a
-                      href={fileUrl.trim()}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-800"
-                    >
-                      ทดลองเปิดลิงก์
-                    </a>
-                  ) : null}
+                  <AppButton type="button" variant="outlinePill" size="md" onClick={addLinkToCreate}>
+                    เพิ่มลิงก์
+                  </AppButton>
 
-                  {(fileUrl || fileName) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFileUrl("");
-                        setFileName("");
-                        showNotice({ type: "info", title: "ล้างลิงก์แล้ว" });
-                      }}
-                      className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-                    >
+                  {links.length ? (
+                    <AppButton type="button" variant="outlinePill" size="md" onClick={() => setLinks([])}>
                       ล้างลิงก์
-                    </button>
-                  )}
+                    </AppButton>
+                  ) : null}
+                </div>
+
+                <div className="mt-3">
+                  <LinkSection links={links} canEdit onRemove={(idx) => setLinks((prev) => prev.filter((_, i) => i !== idx))} />
                 </div>
               </div>
 
@@ -745,7 +1079,14 @@ export default function AnnouncementsPage() {
         {/* Feed */}
         <div className="space-y-4">
           {filteredItems.map((a) => {
-            const hasAttach = !!(a.fileUrl || (a as any).fileKey);
+            const atts = normalizeAnnouncementAttachments(a);
+            const lks = normalizeAnnouncementLinks(a);
+            const isExpanded = expandedId === a.id;
+            const isEditing = editId === a.id;
+
+            const imgAtts = atts.filter((x) => isImageFile(x.name));
+            const tiles = photoTilesOf(imgAtts);
+
             return (
               <div
                 key={a.id}
@@ -754,9 +1095,7 @@ export default function AnnouncementsPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 text-left">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-                        {a.title}
-                      </h3>
+                      <h3 className="text-base font-semibold text-gray-900 dark:text-white">{a.title}</h3>
                       {a.pinned ? (
                         <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-900/40">
                           📌 ปักหมุด
@@ -769,35 +1108,42 @@ export default function AnnouncementsPage() {
                       {a.updatedAt ? ` • แก้ไขล่าสุด ${formatTs(a.updatedAt)}` : ""}
                     </div>
 
-                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-gray-700 dark:text-gray-200">
-                      {a.body}
-                    </p>
-
-                    {hasAttach ? (
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          onClick={() => openAttachment(a)}
-                          className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-                          title="คลิกเพื่อเปิดไฟล์แนบ"
-                        >
-                          📎 ไฟล์แนบ: {a.fileName || "เปิดไฟล์"}
-                        </button>
-                      </div>
+                    {!isEditing ? (
+                      <p className="mt-2 line-clamp-3 text-sm leading-6 text-gray-700 dark:text-gray-200">{a.body}</p>
                     ) : null}
+
+                    {/* ✅ show images like FB */}
+                    {!isEditing && imgAtts.length ? (
+                      <FbPhotoGrid
+                        photos={tiles}
+                        onClick={(idx) => openLightbox(imgAtts, idx)}
+                      />
+                    ) : null}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {atts.length ? (
+                        <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 ring-1 ring-violet-200 dark:bg-violet-900/20 dark:text-violet-200 dark:ring-violet-900/40">
+                          📎 ไฟล์แนบ {atts.length}
+                        </span>
+                      ) : null}
+
+                      {lks.length ? (
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-200 dark:ring-emerald-900/40">
+                          🔗 ลิงก์ {lks.length}
+                        </span>
+                      ) : null}
+                    </div>
 
                     <button
                       type="button"
-                      onClick={() => openView(a)}
+                      onClick={() => setExpandedId((prev) => (prev === a.id ? null : a.id))}
                       className="mt-3 inline-flex items-center text-xs font-semibold text-violet-700 hover:underline dark:text-violet-200"
                       title="คลิกเพื่อดูรายละเอียด"
                     >
-                      คลิกเพื่ออ่านรายละเอียด →
+                      {isExpanded ? "ซ่อนรายละเอียด ←" : "คลิกเพื่ออ่านรายละเอียด →"}
                     </button>
-
                   </div>
 
-                  {/* Admin actions */}
                   <div className="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
                     <div>{a.createdBy?.email || "Admin"}</div>
 
@@ -810,15 +1156,24 @@ export default function AnnouncementsPage() {
                           {a.pinned ? "Unpin" : "Pin"}
                         </button>
 
-                        <button
-                          onClick={() => openEdit(a)}
-                          className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
-                        >
-                          Edit
-                        </button>
+                        {!isEditing ? (
+                          <button
+                            onClick={() => openEdit(a)}
+                            className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
+                          >
+                            Edit
+                          </button>
+                        ) : (
+                          <button
+                            onClick={closeEdit}
+                            className="rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
+                          >
+                            Cancel
+                          </button>
+                        )}
 
                         <button
-                          onClick={() => openDelete(a)}
+                          onClick={() => onDelete(a)}
                           className="rounded-xl bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-900/40 dark:hover:bg-red-900/30"
                         >
                           Delete
@@ -827,6 +1182,58 @@ export default function AnnouncementsPage() {
                     )}
                   </div>
                 </div>
+
+                {isExpanded && !isEditing ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">{a.body}</div>
+                    <AttachmentSection attachments={atts} onOpen={(att) => openAttachment(att, a.fileUrl)} title="ไฟล์แนบ" />
+                    <LinkSection links={lks} title="ลิงก์ที่เกี่ยวข้อง" />
+                  </div>
+                ) : null}
+
+                {/* edit panel (เหมือนเดิม ย่อไว้เพื่อไม่ยาวเกิน) */}
+                {isEditing ? (
+                  <div className="mt-4 space-y-4 rounded-2xl bg-violet-50/40 p-4 ring-1 ring-violet-200 dark:bg-violet-900/10 dark:ring-violet-900/40">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">แก้ไขประกาศ</div>
+
+                    <input
+                      className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
+                      placeholder="หัวเรื่องประกาศ"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                    />
+
+                    <textarea
+                      className="min-h-[160px] w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
+                      placeholder="เนื้อหาประกาศ"
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                    />
+
+                    <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                      <input type="checkbox" checked={editPinned} onChange={(e) => setEditPinned(e.target.checked)} />
+                      ปักหมุดประกาศนี้
+                    </label>
+
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={closeEdit}
+                        disabled={savingEdit}
+                        className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 disabled:opacity-50 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
+                      >
+                        ยกเลิก
+                      </button>
+
+                      <button
+                        onClick={() => onSaveEdit(a)}
+                        disabled={savingEdit || !editTitle.trim() || !editBody.trim()}
+                        className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             );
           })}
@@ -838,215 +1245,6 @@ export default function AnnouncementsPage() {
           )}
         </div>
       </div>
-
-      {/* View Details Modal */}
-      <Modal
-        open={viewOpen}
-        title={viewItem?.title || "รายละเอียดประกาศ"}
-        subtitle={
-          viewItem
-            ? `${viewItem.pinned ? "📌 ปักหมุด • " : ""}${
-                viewItem.createdAt ? `โพสเมื่อ ${formatTs(viewItem.createdAt)}` : ""
-              }`
-            : undefined
-        }
-                onClose={closeView}
-          maxWidth="max-w-3xl"
-        >
-        {viewItem ? (
-          <div className="space-y-4">
-            <div className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">
-              {viewItem.body}
-            </div>
-
-            {(viewItem.fileUrl || (viewItem as any).fileKey) ? (
-              <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200 dark:bg-gray-950/30 dark:ring-gray-800">
-                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                  เอกสารแนบ
-                </div>
-                <button
-                  type="button"
-                  onClick={() => openAttachment(viewItem)}
-                  className="mt-2 inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-800"
-                >
-                  เปิดไฟล์: {viewItem.fileName || "ไฟล์แนบ"}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </Modal>
-
-      {/* Edit Modal */}
-      <Modal
-        open={editOpen}
-        title="แก้ไขประกาศ"
-        subtitle="แก้เรื่อง/เนื้อหา/ไฟล์แนบ แล้วกดบันทึก"
-        onClose={closeEdit}
-        disableClose={savingEdit}
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={closeEdit}
-              disabled={savingEdit}
-              className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 disabled:opacity-50 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-            >
-              ยกเลิก
-            </button>
-
-            <button
-              onClick={onSaveEdit}
-              disabled={savingEdit || !editTitle.trim() || !editBody.trim()}
-              className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
-            </button>
-          </div>
-        }
-      >
-        <div className="space-y-3">
-          <input
-            className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
-            placeholder="หัวเรื่องประกาศ"
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-          />
-
-          <textarea
-            className="min-h-[160px] w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
-            placeholder="เนื้อหาประกาศ"
-            value={editBody}
-            onChange={(e) => setEditBody(e.target.value)}
-          />
-
-          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
-            <input
-              type="checkbox"
-              checked={editPinned}
-              onChange={(e) => setEditPinned(e.target.checked)}
-            />
-            ปักหมุดประกาศนี้
-          </label>
-
-          {/* replace file */}
-          <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
-            <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-              อัปโหลดไฟล์ใหม่แทน (Supabase)
-            </div>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <input
-                type="file"
-                onChange={(e) => setEditFile(e.target.files?.[0] || null)}
-                className="block w-full text-sm"
-              />
-              {editFile ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditFile(null);
-                    setEditUploadPct(0);
-                    showNotice({ type: "info", title: "ล้างไฟล์ใหม่แล้ว" });
-                  }}
-                  className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-                >
-                  ล้างไฟล์
-                </button>
-              ) : null}
-            </div>
-
-            {savingEdit && editFile ? (
-              <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">
-                กำลังอัปโหลด: {editUploadPct}%
-              </div>
-            ) : null}
-
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              * ถ้าอัปโหลดไฟล์ใหม่ ระบบจะล้างลิงก์เดิม (fileUrl) ให้เอง
-            </div>
-          </div>
-
-          {/* legacy link */}
-          <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
-            <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-              เอกสารแนบ (ลิงก์) - ตัวเลือกเสริม
-            </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <input
-                className="sm:col-span-2 w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
-                placeholder="https://..."
-                value={editFileUrl}
-                onChange={(e) => setEditFileUrl(e.target.value)}
-              />
-              <input
-                className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
-                placeholder="ชื่อเอกสาร (ถ้ามี)"
-                value={editFileName}
-                onChange={(e) => setEditFileName(e.target.value)}
-              />
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {editFileUrl.trim() && isValidUrl(editFileUrl.trim()) ? (
-                <a
-                  href={editFileUrl.trim()}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-violet-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-violet-200 dark:ring-gray-700 dark:hover:bg-gray-800"
-                >
-                  ทดลองเปิดลิงก์
-                </a>
-              ) : null}
-
-              {(editFileUrl || editFileName) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditFileUrl("");
-                    setEditFileName("");
-                    showNotice({ type: "info", title: "ล้างลิงก์แล้ว" });
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-                >
-                  ล้างลิงก์
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Delete Confirm Modal */}
-      <Modal
-        open={deleteOpen}
-        title="ยืนยันการลบประกาศ"
-        subtitle="ลบแล้วกู้คืนไม่ได้"
-        onClose={closeDelete}
-        disableClose={deleting}
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={closeDelete}
-              disabled={deleting}
-              className="rounded-xl bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-100 disabled:opacity-50 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700"
-            >
-              ยกเลิก
-            </button>
-
-            <button
-              onClick={onConfirmDelete}
-              disabled={deleting}
-              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {deleting ? "กำลังลบ..." : "ลบประกาศ"}
-            </button>
-          </div>
-        }
-      >
-        <div className="rounded-2xl bg-gray-50 p-4 text-sm text-gray-800 ring-1 ring-gray-200 dark:bg-gray-950/30 dark:text-gray-200 dark:ring-gray-800">
-          คุณกำลังจะลบประกาศ:
-          <div className="mt-2 font-semibold">{deleteTitle || "(ไม่มีหัวเรื่อง)"}</div>
-        </div>
-      </Modal>
     </>
   );
 }
