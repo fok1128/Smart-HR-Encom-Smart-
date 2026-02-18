@@ -76,6 +76,13 @@ function normalizeKey(raw: string) {
   return k;
 }
 
+function looksLikeStoragePath(s: string) {
+  const k = normalizeKey(s);
+  if (!k) return false;
+  if (looksLikeHttpUrl(k)) return false;
+  return k.includes("/");
+}
+
 /** cache-bust แบบไม่แตะ query (ไม่ทำให้ token/signature เพี้ยน) */
 function fragmentBust(url: string) {
   const base = String(url || "").split("#")[0];
@@ -137,10 +144,11 @@ const AppHeader: React.FC = () => {
 
   const employeePosition = useMemo(() => u?.position || "พนักงาน", [u?.position]);
 
-  // ✅ rawAvatar ให้ dependency เป็นค่าที่ใช้จริง
+  // ✅ ทำ rawAvatar ให้ dependency เป็น "ค่าที่ใช้จริง" ไม่ใช้ u ทั้งก้อน (กัน rerun เกิน)
   const rawAvatar = useMemo(() => {
     const nested = getNestedAvatarKey(u);
 
+    // ✅ จัดลำดับ: path ก่อน url (ของคุณเป็น storagePath)
     return pickStr(
       u?.avatarPath,
       u?.storagePath,
@@ -159,6 +167,7 @@ const AppHeader: React.FC = () => {
     u?.photoURL,
     u?.photoUrl,
     u?.profilePhoto,
+    // nested: ใส่เฉพาะ field ที่อาจเปลี่ยนจริง ๆ
     (u as any)?.avatar,
     (u as any)?.avatarData,
     (u as any)?.avatarFile,
@@ -169,64 +178,79 @@ const AppHeader: React.FC = () => {
   const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string>("");
   const [imgOk, setImgOk] = useState(true);
 
-  // ✅ กัน race
+  // ✅ track request เพื่อกันผลลัพธ์ทับกัน
   const reqIdRef = useRef(0);
 
-  // ✅ จำ key ล่าสุด (ไว้ invalidate ตอน error)
-  const lastKeyRef = useRef<string>("");
+  // ✅ จำ key ล่าสุดที่เป็น storagePath (ไว้ invalidate ตอน error)
+  const lastStorageKeyRef = useRef<string>("");
 
   useEffect(() => {
     const raw = String(rawAvatar || "").trim();
+
+    // เพิ่ม req id ทุกครั้งที่ rawAvatar เปลี่ยน
     const myReqId = ++reqIdRef.current;
 
     if (isDev) console.log("[AppHeader/avatar] rawAvatar =", raw);
 
     if (!raw) {
-      lastKeyRef.current = "";
+      lastStorageKeyRef.current = "";
       setImgOk(true);
-      setResolvedAvatarUrl("");
+      setResolvedAvatarUrl(""); // ไม่มีรูป -> ใช้ initials
       return;
     }
 
-    // 1) URL อยู่แล้ว
+    // 1) URL อยู่แล้ว -> set ทันที (และไม่ต้องล้างรูปก่อน)
     if (looksLikeHttpUrl(raw)) {
-      lastKeyRef.current = "";
+      lastStorageKeyRef.current = "";
       setImgOk(true);
       setResolvedAvatarUrl(raw);
       return;
     }
 
-    // 2) ✅ ไม่ใช่ http -> ลอง signed-url เสมอ (กันพลาดบน Render)
+    // 2) storagePath -> ขอ signed-url แบบ async
     const key = normalizeKey(raw);
-    lastKeyRef.current = key;
+    if (looksLikeStoragePath(key)) {
+      lastStorageKeyRef.current = key;
 
-    (async () => {
-      try {
-        const url = await getSignedUrl(key);
-        if (isDev) console.log("[AppHeader/avatar] signedUrl =", url);
+      // ✅ ไม่ต้อง setResolvedAvatarUrl("") เพื่อกันกระพริบ
+      // ปล่อยให้รูปเดิมโชว์ไปก่อน จนกว่าจะได้ url ใหม่
 
-        if (reqIdRef.current !== myReqId) return;
+      (async () => {
+        try {
+          const url = await getSignedUrl(key);
+          if (isDev) console.log("[AppHeader/avatar] signedUrl =", url);
 
-        setImgOk(true);
-        setResolvedAvatarUrl(url || "");
-      } catch (e) {
-        console.error("[AppHeader/avatar] resolve error:", e);
-        if (reqIdRef.current !== myReqId) return;
+          // กันผลลัพธ์เก่ามาทับ
+          if (reqIdRef.current !== myReqId) return;
 
-        // fallback initials
-        setImgOk(false);
-        setResolvedAvatarUrl("");
-      }
-    })();
+          setImgOk(true);
+          setResolvedAvatarUrl(url);
+        } catch (e) {
+          console.error("[AppHeader/avatar] resolve error:", e);
+          if (reqIdRef.current !== myReqId) return;
+
+          // ถ้าพัง ให้ fallback เป็น initials
+          setImgOk(false);
+          setResolvedAvatarUrl("");
+        }
+      })();
+
+      return;
+    }
+
+    // 3) fallback string อื่น ๆ
+    lastStorageKeyRef.current = "";
+    setImgOk(true);
+    setResolvedAvatarUrl(raw);
   }, [rawAvatar]);
 
   const handleImgError = async () => {
     setImgOk(false);
 
-    const key = lastKeyRef.current;
+    const key = lastStorageKeyRef.current;
     if (!key) return;
 
-    // ✅ invalidate cache ก่อน retry
+    // ✅ invalidate cache ก่อน retry (กันได้ url เดิมที่เสีย/หมดอายุ)
     invalidateSignedUrlCache(key);
 
     try {
