@@ -16,11 +16,12 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  maxAge: 86400, // ✅ 24h ให้ browser cache preflight
+  maxAge: 86400,
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ✅ ตอบ OPTIONS ให้ชัด/เร็ว
+// app.options("*", cors(corsOptions)); ❌ ทำให้พังกับ path-to-regexp บางเวอร์ชัน
+app.options(/.*/, cors(corsOptions)); // ✅ ตอบ OPTIONS ทุก path
 
 // (เสริม) บาง proxy แปลก ๆ ชอบลืม maxAge ใส่ซ้ำให้ชัวร์
 app.use((req, res, next) => {
@@ -32,14 +33,12 @@ app.use(express.json());
 
 // ----------------- Firebase Admin Init -----------------
 function readServiceAccount() {
-  // 1) Render/Prod: service account เป็น JSON string ใน ENV
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
     if (typeof sa.private_key === "string") sa.private_key = sa.private_key.replace(/\\n/g, "\n");
     return sa;
   }
 
-  // 2) Local: อ่านจากไฟล์ที่ GOOGLE_APPLICATION_CREDENTIALS ชี้อยู่
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     const p = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     const sa = JSON.parse(fs.readFileSync(p, "utf8"));
@@ -74,18 +73,65 @@ function initFirebaseAdmin() {
 initFirebaseAdmin();
 const db = admin.firestore();
 
-// ----------------- ✅ CLAIMS HELPERS -----------------
+// ----------------- ✅ HELPERS -----------------
 function normalizeRole(r) {
   const role = String(r || "USER").trim().toUpperCase();
   const allowed = ["USER", "ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"];
   return allowed.includes(role) ? role : "USER";
 }
 
+function pickStr(...vals) {
+  for (const v of vals) {
+    const s = String(v ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function isHttpUrl(s) {
+  return /^https?:\/\//i.test(String(s || "").trim());
+}
+
 /**
- * ✅ Sync custom claims role ให้ตรงกับ Firestore users/{uid}.role
- * - merge claims เดิม (ไม่ทับของอื่น)
- * - ถ้า role ตรงอยู่แล้ว จะไม่ set ซ้ำ
+ * ✅ normalize avatar จาก doc (รองรับหลายชื่อ field)
+ * - ได้ทั้ง avatarUrl (ต้องเป็น https://) และ avatarPath/storagePath (เช่น profile/xxx.jpg)
  */
+function normalizeAvatarFromDoc(doc = {}) {
+  const avatarUrlMaybe = pickStr(
+    doc.avatarUrl,
+    doc.photoURL,
+    doc.photoUrl,
+    doc.profilePhoto,
+    doc.avatar?.url
+  );
+
+  const avatarPathMaybe = pickStr(
+    doc.avatarPath,
+    doc.storagePath,
+    doc.avatar?.storagePath,
+    doc.avatar?.path,
+    doc.avatar?.key
+  );
+
+  // ถ้า avatarUrl เป็น URL จริง ใช้เป็น url
+  const url = isHttpUrl(avatarUrlMaybe) ? avatarUrlMaybe : "";
+
+  // ถ้า avatarUrl ไม่ใช่ URL (บางคนเก็บเป็น path) ให้โยนไปเป็น path
+  const path = avatarPathMaybe || (!isHttpUrl(avatarUrlMaybe) ? pickStr(avatarUrlMaybe) : "");
+
+  return {
+    avatarUrl: url || undefined,
+    avatarPath: path || undefined,
+    storagePath: path || undefined,
+    avatar: {
+      url: url || undefined,
+      storagePath: path || undefined,
+      path: path || undefined,
+    },
+  };
+}
+
+// ----------------- ✅ CLAIMS HELPERS -----------------
 async function syncRoleClaimFromFirestore(uid) {
   const userRef = db.collection("users").doc(uid);
   const userSnap = await userRef.get();
@@ -113,7 +159,6 @@ async function syncRoleClaimFromFirestore(uid) {
 // ----------------- Auth Middleware -----------------
 async function requireAuth(req, res, next) {
   try {
-    // ✅ สำคัญ: OPTIONS ไม่ต้อง auth (กัน preflight เข้า verifyIdToken)
     if (req.method === "OPTIONS") return res.sendStatus(204);
 
     const authHeader = req.headers.authorization || "";
@@ -128,7 +173,6 @@ async function requireAuth(req, res, next) {
           error: "DEV_BYPASS_AUTH is on. Provide ?devUid=XXX or header x-dev-uid",
         });
       }
-      // DEV ให้เป็น ADMIN ไว้ก่อน (ช่วยเทส)
       req.user = { uid: String(devUid), email: null, dev: true, role: "ADMIN" };
       return next();
     }
@@ -138,9 +182,7 @@ async function requireAuth(req, res, next) {
     const idToken = match[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
 
-    // ✅ role จาก claim (ถ้ามี)
     const role = normalizeRole(decoded?.role);
-
     req.user = { ...decoded, role };
     return next();
   } catch (err) {
@@ -150,7 +192,6 @@ async function requireAuth(req, res, next) {
 }
 
 // ----------------- Basic Routes -----------------
-// ✅ health สำหรับ warm-up (เบาๆ)
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
 app.get("/debug-project", (req, res) => {
@@ -172,12 +213,11 @@ app.get("/test-firestore", async (req, res) => {
   }
 });
 
-// ----------------- /me -----------------
+// ----------------- /me (✅ FIX) -----------------
 app.get("/me", requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
 
-    // ✅ 1) อ่าน user doc ก่อน
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
     if (!userSnap.exists) {
@@ -202,10 +242,8 @@ app.get("/me", requireAuth, async (req, res) => {
       });
     }
 
-    // ✅ 2) Sync custom claims role ให้ตรงกับ Firestore
     const claimSync = await syncRoleClaimFromFirestore(uid);
 
-    // ✅ 3) โหลด employee
     const empRef = db.collection("employees").doc(employeeNo);
     const empSnap = await empRef.get();
     if (!empSnap.exists) {
@@ -217,6 +255,16 @@ app.get("/me", requireAuth, async (req, res) => {
       });
     }
 
+    const empData = empSnap.data() || {};
+
+    // ✅ normalize avatar จาก doc ทั้งสองฝั่ง
+    const userAvatar = normalizeAvatarFromDoc(userData);
+    const empAvatar = normalizeAvatarFromDoc(empData);
+
+    // ✅ ให้ employee ชนะ ถ้ามีค่า
+    const avatarUrl = pickStr(empAvatar.avatarUrl, userAvatar.avatarUrl);
+    const avatarPath = pickStr(empAvatar.avatarPath, userAvatar.avatarPath);
+
     return res.json({
       ok: true,
       projectId: admin.app().options.projectId || null,
@@ -224,8 +272,20 @@ app.get("/me", requireAuth, async (req, res) => {
       email: req.user.email || null,
       role: roleFs,
       claimSync,
-      user: { id: userSnap.id, ...userData },
-      employee: { id: empSnap.id, ...empSnap.data() },
+
+      // ✅ top-level ใช้ง่ายสุดสำหรับ frontend/header
+      avatarUrl: avatarUrl || undefined,
+      avatarPath: avatarPath || undefined,
+      storagePath: avatarPath || undefined,
+      avatar: {
+        url: avatarUrl || undefined,
+        storagePath: avatarPath || undefined,
+        path: avatarPath || undefined,
+      },
+
+      // ✅ keep original docs ด้วย แต่ใส่ normalized avatar ซ้ำให้ด้วย
+      user: { id: userSnap.id, ...userData, ...userAvatar },
+      employee: { id: empSnap.id, ...empData, ...empAvatar },
     });
   } catch (err) {
     console.error("/me error:", err);
@@ -236,7 +296,6 @@ app.get("/me", requireAuth, async (req, res) => {
 /**
  * ✅ endpoint สำหรับ admin ตั้ง role ให้ user คนอื่น
  * POST /admin/set-role  body: { uid, role }
- * ต้องเป็น ADMIN (จาก claim) เท่านั้น
  */
 app.post("/admin/set-role", requireAuth, async (req, res) => {
   try {
@@ -255,7 +314,6 @@ app.post("/admin/set-role", requireAuth, async (req, res) => {
     );
 
     const claimSync = await syncRoleClaimFromFirestore(uid);
-
     return res.json({ ok: true, uid, role, claimSync });
   } catch (err) {
     console.error("/admin/set-role error:", err);

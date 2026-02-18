@@ -215,10 +215,39 @@ export default function AnnouncementsPage() {
 
   const canPost = useMemo(() => title.trim() && body.trim(), [title, body]);
 
+  // ✅ สำคัญ: เลื่อนเริ่ม listener หลัง render + จำกัดจำนวน (กันหนักตอน login)
   useEffect(() => {
-    const unsub = listenAnnouncements(setItems);
-    return () => unsub();
-  }, []);
+    if (!user) return;
+
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+
+    const start = () => {
+      if (cancelled) return;
+      unsub = listenAnnouncements(
+        setItems,
+        (msg) => showNotice({ type: "error", title: "โหลดประกาศไม่สำเร็จ", message: msg }),
+        { limit: 50 } // ✅ จำกัดจำนวนล่าสุด
+      );
+    };
+
+    const w = window as any;
+    let idleId: any = null;
+    let t: any = null;
+
+    if (typeof w.requestIdleCallback === "function") {
+      idleId = w.requestIdleCallback(start, { timeout: 1200 });
+    } else {
+      t = setTimeout(start, 200);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId && typeof w.cancelIdleCallback === "function") w.cancelIdleCallback(idleId);
+      if (t) clearTimeout(t);
+      if (unsub) unsub();
+    };
+  }, [user?.uid]);
 
   // ✅ Sort pinned first, then latest
   const sortedItems = useMemo(() => {
@@ -255,7 +284,7 @@ export default function AnnouncementsPage() {
       // new supabase key
       const key = (a as any)?.fileKey as string | undefined | null;
       if (key) {
-        const signed = await getAnnouncementSignedUrl(key);
+        const signed = await getAnnouncementSignedUrl(key); // ✅ ตอนนี้ได้ cache แล้ว
         openInNewTab(signed);
         return;
       }
@@ -263,7 +292,11 @@ export default function AnnouncementsPage() {
       showNotice({ type: "info", title: "ไม่มีไฟล์แนบ" });
     } catch (e: any) {
       console.error("openAttachment error:", e);
-      showNotice({ type: "error", title: "เปิดไฟล์ไม่ได้", message: e?.message || "ลองใหม่อีกครั้ง" });
+      showNotice({
+        type: "error",
+        title: "เปิดไฟล์ไม่ได้",
+        message: e?.message || "ลองใหม่อีกครั้ง",
+      });
     }
   }
 
@@ -277,7 +310,6 @@ export default function AnnouncementsPage() {
       return;
     }
 
-    // ถ้าจะใช้ link (legacy) ต้องเป็น url ถูกต้อง
     if (fileUrl.trim() && !isValidUrl(fileUrl.trim())) {
       showNotice({
         type: "error",
@@ -291,7 +323,6 @@ export default function AnnouncementsPage() {
     try {
       setUploadPct(0);
 
-      // ✅ กรณีแนบไฟล์จริง -> อัปโหลดผ่าน backend แล้วค่อยสร้างประกาศ
       if (file) {
         await createAnnouncementWithFile(
           {
@@ -304,7 +335,6 @@ export default function AnnouncementsPage() {
           (p) => setUploadPct(p)
         );
       } else {
-        // ✅ ไม่มีไฟล์จริง -> ยังอนุญาตให้แนบ link ได้ (หรือไม่แนบก็ได้)
         await createAnnouncement({
           title: title.trim(),
           body: body.trim(),
@@ -312,7 +342,6 @@ export default function AnnouncementsPage() {
           createdBy: { uid: user.uid, email: user.email || undefined },
           fileUrl: fileUrl.trim() || null,
           fileName: fileName.trim() || null,
-          // fileKey จะถูก set ใน service เป็น null ถ้าไม่ได้ส่ง
         } as any);
       }
 
@@ -383,7 +412,6 @@ export default function AnnouncementsPage() {
 
     setSavingEdit(true);
     try {
-      // ✅ ถ้าเลือกไฟล์ใหม่ -> อัปโหลดแล้วแทนไฟล์เดิม (set fileUrl = null)
       if (editFile) {
         setEditUploadPct(1);
         const up = await uploadAnnouncementFile(user.uid, editFile, (p) => setEditUploadPct(p));
@@ -396,14 +424,12 @@ export default function AnnouncementsPage() {
           fileUrl: null,
         } as any);
       } else {
-        // ✅ ไม่อัปโหลดไฟล์ใหม่ -> update ตามข้อมูลที่กรอก (อนุญาต link legacy)
         await updateAnnouncement(editId, {
           title: editTitle.trim(),
           body: editBody.trim(),
           pinned: editPinned,
           fileUrl: editFileUrl.trim() || null,
           fileName: editFileName.trim() || null,
-          // ไม่แตะ fileKey ถ้าไม่อัปไฟล์ใหม่ (กันหาย)
         } as any);
       }
 
@@ -502,45 +528,44 @@ export default function AnnouncementsPage() {
         </p>
       </div>
 
-      
-{/* ✅ Search/Filter bar */}
-<div className="mb-6 max-w-5xl">
-  <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200 sm:flex-row sm:items-end sm:justify-between">
-    {/* ซ้าย: label + input (ลดความยาวลง) */}
-    <div className="w-full sm:w-[62%]">
-      <div className="text-xs font-semibold text-gray-600">ค้นหาประกาศ</div>
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="พิมพ์คำค้น เช่น ระบบ / ปิดปรับปรุง / link / email"
-        className={["mt-1", inputTheme.purple].join(" ")}
-      />
-    </div>
+      {/* ✅ Search/Filter bar */}
+      <div className="mb-6 max-w-5xl">
+        <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200 sm:flex-row sm:items-end sm:justify-between">
+          {/* ซ้าย: label + input */}
+          <div className="w-full sm:w-[62%]">
+            <div className="text-xs font-semibold text-gray-600">ค้นหาประกาศ</div>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="พิมพ์คำค้น เช่น ระบบ / ปิดปรับปรุง / link / email"
+              className={["mt-1", inputTheme.purple].join(" ")}
+            />
+          </div>
 
-    {/* ขวา: ปุ่ม 2 อัน (ให้ม่วง + อยู่ระดับเดียวกับช่องค้นหา) */}
-    <div className="flex items-center justify-end gap-2 sm:self-end">
-      <AppButton
-        variant={onlyPinned ? "primary" : "outlinePill"}
-        size="md"
-        onClick={() => setOnlyPinned((v) => !v)}
-      >
-        {onlyPinned ? "กำลังดู: ปักหมุด" : "ดูเฉพาะปักหมุด"}
-      </AppButton>
+          {/* ขวา: ปุ่ม 2 อัน */}
+          <div className="flex items-center justify-end gap-2 sm:self-end">
+            <AppButton
+              variant={onlyPinned ? "primary" : "outlinePill"}
+              size="md"
+              onClick={() => setOnlyPinned((v) => !v)}
+            >
+              {onlyPinned ? "กำลังดู: ปักหมุด" : "ดูเฉพาะปักหมุด"}
+            </AppButton>
 
-      <AppButton
-        variant="outlinePill"
-        size="md"
-        onClick={() => {
-          setQ("");
-          setOnlyPinned(false);
-          showNotice({ type: "info", title: "ล้างตัวกรองแล้ว" });
-        }}
-      >
-        ล้าง
-      </AppButton>
-    </div>
-  </div>
-</div>
+            <AppButton
+              variant="outlinePill"
+              size="md"
+              onClick={() => {
+                setQ("");
+                setOnlyPinned(false);
+                showNotice({ type: "info", title: "ล้างตัวกรองแล้ว" });
+              }}
+            >
+              ล้าง
+            </AppButton>
+          </div>
+        </div>
+      </div>
 
       <div className="max-w-5xl space-y-6">
         {/* Create */}
@@ -611,7 +636,9 @@ export default function AnnouncementsPage() {
                       {file ? `ไฟล์ที่เลือก: ${file.name}` : "ยังไม่เลือกไฟล์"}
                     </div>
                     {file ? (
-                      <div className="text-xs text-gray-500">ขนาดไฟล์: {(file.size / 1024 / 1024).toFixed(2)} MB</div>
+                      <div className="text-xs text-gray-500">
+                        ขนาดไฟล์: {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </div>
                     ) : null}
                   </div>
 
@@ -650,7 +677,7 @@ export default function AnnouncementsPage() {
                 ) : null}
               </div>
 
-              {/* legacy link attach (optional) */}
+              {/* legacy link attach */}
               <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
                 <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
                   แนบลิงก์ (ตัวเลือกเสริม/ข้อมูลเก่า)
@@ -767,6 +794,7 @@ export default function AnnouncementsPage() {
                     >
                       คลิกเพื่ออ่านรายละเอียด →
                     </button>
+
                   </div>
 
                   {/* Admin actions */}
@@ -822,9 +850,9 @@ export default function AnnouncementsPage() {
               }`
             : undefined
         }
-        onClose={closeView}
-        maxWidth="max-w-3xl"
-      >
+                onClose={closeView}
+          maxWidth="max-w-3xl"
+        >
         {viewItem ? (
           <div className="space-y-4">
             <div className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">
@@ -900,7 +928,7 @@ export default function AnnouncementsPage() {
             ปักหมุดประกาศนี้
           </label>
 
-          {/* ✅ replace file (Supabase) */}
+          {/* replace file */}
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
             <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
               อัปโหลดไฟล์ใหม่แทน (Supabase)
@@ -937,7 +965,7 @@ export default function AnnouncementsPage() {
             </div>
           </div>
 
-          {/* legacy link (optional) */}
+          {/* legacy link */}
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
             <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">
               เอกสารแนบ (ลิงก์) - ตัวเลือกเสริม

@@ -9,19 +9,21 @@ import {
   deleteDoc,
   doc,
   updateDoc,
+  limit, // ✅ NEW
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getSignedUrl } from "./files"; // ✅ NEW (ใช้ cache/inflight/retry จาก files.ts)
 
 export type Announcement = {
   id: string;
   title: string;
   body: string;
 
-  // ✅ เปลี่ยนแนวทาง: เก็บ key ไว้ แล้วค่อยขอ signed url ตอนจะเปิด
+  // ✅ new: เก็บ key ไว้ แล้วค่อยขอ signed url ตอนจะเปิด
   fileKey?: string | null;
   fileName?: string | null;
 
-  // ✅ ยังรองรับของเก่าไว้กันพัง (ถ้ามี record เก่าที่เป็น url อยู่แล้ว)
+  // ✅ legacy: รองรับ record เก่า
   fileUrl?: string | null;
 
   pinned?: boolean;
@@ -74,8 +76,7 @@ export async function uploadAnnouncementFile(
   fd.append("file", file);
   fd.append("folder", "announcement");
 
-  // หมายเหตุ: fetch อัปโหลดแบบนี้ “ไม่มี progress จริง” เหมือน uploadBytesResumable
-  // เลยยิง onProgress แบบง่าย ๆ
+  // fetch upload ไม่มี progress จริง
   onProgress?.(1);
 
   const res = await fetch(`${API_BASE}/files/upload`, {
@@ -98,22 +99,10 @@ export async function uploadAnnouncementFile(
 
 /**
  * ✅ ขอ signed url เพื่อเปิดไฟล์ประกาศ
+ * เปลี่ยนมาใช้ getSignedUrl จาก files.ts (ได้ cache/inflight/retry)
  */
 export async function getAnnouncementSignedUrl(fileKey: string): Promise<string> {
-  const token = await getIdToken();
-  const url = `${API_BASE}/files/signed-url?key=${encodeURIComponent(fileKey)}`;
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.ok || !data?.signedUrl) {
-    const msg = data?.error || `SIGNED_URL_FAILED (${res.status})`;
-    throw new Error(msg);
-  }
-
-  return data.signedUrl as string;
+  return getSignedUrl(fileKey);
 }
 
 export async function createAnnouncement(params: {
@@ -137,7 +126,7 @@ export async function createAnnouncement(params: {
     fileKey: params.fileKey ?? null,
     fileName: params.fileName ?? null,
 
-    // ✅ legacy (กัน record เก่า)
+    // ✅ legacy
     fileUrl: params.fileUrl ?? null,
 
     pinned: !!params.pinned,
@@ -148,7 +137,7 @@ export async function createAnnouncement(params: {
 }
 
 /**
- * ✅ สะดวกสุด: ถ้ามีไฟล์แนบ ให้อัปโหลดก่อน แล้วค่อย createAnnouncement
+ * ✅ ถ้ามีไฟล์แนบ ให้อัปโหลดก่อน แล้วค่อย createAnnouncement
  */
 export async function createAnnouncementWithFile(
   params: {
@@ -166,7 +155,7 @@ export async function createAnnouncementWithFile(
       ...params,
       fileKey: up.key,
       fileName: up.name,
-      fileUrl: null, // ✅ ไม่ใช้ firebase url แล้ว
+      fileUrl: null,
     });
   }
 
@@ -178,12 +167,14 @@ export async function createAnnouncementWithFile(
   });
 }
 
-// ✅ เพิ่ม onError แบบ optional (โค้ดเก่าเรียก listenAnnouncements(cb) ยังใช้ได้เหมือนเดิม)
+// ✅ เพิ่ม opts.limit + ใส่ limit() กันโหลดทั้งคอลเลกชัน
 export function listenAnnouncements(
   cb: (items: Announcement[]) => void,
-  onError?: (message: string) => void
+  onError?: (message: string) => void,
+  opts?: { limit?: number }
 ) {
-  const q = query(collection(db, COL), orderBy("createdAt", "desc"));
+  const lim = Math.max(1, Math.min(Number(opts?.limit ?? 50), 200));
+  const q = query(collection(db, COL), orderBy("createdAt", "desc"), limit(lim));
 
   return onSnapshot(
     q,
@@ -214,7 +205,9 @@ export async function deleteAnnouncement(id: string) {
 
 export async function updateAnnouncement(
   id: string,
-  data: Partial<Pick<Announcement, "title" | "body" | "fileKey" | "fileName" | "fileUrl" | "pinned">>
+  data: Partial<
+    Pick<Announcement, "title" | "body" | "fileKey" | "fileName" | "fileUrl" | "pinned">
+  >
 ) {
   await updateDoc(doc(db, COL, id), {
     ...data,
