@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageMeta from "../../components/common/PageMeta";
 import AppButton from "../../components/common/AppButton";
 import { inputTheme } from "../../components/ui/theme/inputTheme";
@@ -107,12 +107,14 @@ function normalizeAnnouncementLinks(a: Announcement): AnnouncementLink[] {
 function AttachmentSection({
   attachments,
   onOpen,
+  onDownload,
   onRemove,
   canEdit,
   title = "ไฟล์แนบ",
 }: {
   attachments: AnnouncementAttachment[];
   onOpen: (att: AnnouncementAttachment) => void;
+  onDownload?: (att: AnnouncementAttachment) => void;
   onRemove?: (idx: number) => void;
   canEdit?: boolean;
   title?: string;
@@ -137,10 +139,18 @@ function AttachmentSection({
                 <span className="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-extrabold text-violet-700 ring-1 ring-violet-200 dark:bg-violet-900/20 dark:text-violet-200 dark:ring-violet-900/40">
                   {fileBadge(att.name)}
                 </span>
-                <div className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+
+                {/* ✅ clickable filename (FB-like) */}
+                <button
+                  type="button"
+                  onClick={() => onOpen(att)}
+                  className="truncate text-left text-sm font-semibold text-violet-700 hover:underline dark:text-violet-200"
+                  title="คลิกเพื่อเปิดไฟล์"
+                >
                   {att.name || "ไฟล์แนบ"}
-                </div>
+                </button>
               </div>
+
               <div className="mt-0.5 text-xs text-gray-500">
                 key: <span className="font-mono">{String(att.key).slice(0, 28)}...</span>
               </div>
@@ -158,9 +168,9 @@ function AttachmentSection({
 
               <button
                 type="button"
-                onClick={() => onOpen(att)}
+                onClick={() => (onDownload ? onDownload(att) : onOpen(att))}
                 className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
-                title="ดาวน์โหลด (เปิดลิงก์ไฟล์)"
+                title="ดาวน์โหลด"
               >
                 ดาวน์โหลด
               </button>
@@ -403,13 +413,22 @@ function Lightbox({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onMouseDown={onClose}>
-      <div className="relative w-full max-w-5xl overflow-hidden rounded-2xl bg-black ring-1 ring-white/10" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onMouseDown={onClose}
+    >
+      <div
+        className="relative w-full max-w-5xl overflow-hidden rounded-2xl bg-black ring-1 ring-white/10"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-3 bg-gradient-to-b from-black/70 to-black/0 p-3">
           <div className="min-w-0 truncate text-sm font-semibold text-white/90">
             {current?.name || `รูปที่ ${index + 1}`}
           </div>
-          <button onClick={onClose} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15">
+          <button
+            onClick={onClose}
+            className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+          >
             ปิด
           </button>
         </div>
@@ -515,29 +534,38 @@ export default function AnnouncementsPage() {
   const canPost = useMemo(() => title.trim() && body.trim(), [title, body]);
 
   // ✅ signed-url cache (หน้า)
-  const signedCacheRef = useRef<Map<string, string>>(new Map());
+  const PAGE_SIGNED_TTL_MS = 8 * 60 * 1000; // 8 นาที (ปลอดภัย ไม่ยาวเกิน)
+  const signedCacheRef = useRef<Map<string, { url: string; exp: number }>>(new Map());
   const inflightRef = useRef<Map<string, Promise<string>>>(new Map());
 
   async function getSignedCached(key: string) {
-    const hit = signedCacheRef.current.get(key);
-    if (hit) return hit;
+  const now = Date.now();
 
-    const inflight = inflightRef.current.get(key);
-    if (inflight) return inflight;
+  const hit = signedCacheRef.current.get(key);
+  if (hit && hit.exp > now) return hit.url;
 
-    const p = (async () => {
-      const u = await getAnnouncementSignedUrl(key);
-      signedCacheRef.current.set(key, u);
-      inflightRef.current.delete(key);
-      return u;
-    })().catch((e) => {
-      inflightRef.current.delete(key);
-      throw e;
-    });
+  // exp แล้ว -> ลบทิ้ง
+  if (hit) signedCacheRef.current.delete(key);
 
-    inflightRef.current.set(key, p);
-    return p;
-  }
+  const inflight = inflightRef.current.get(key);
+  if (inflight) return inflight;
+
+  const p = (async () => {
+    const u = await getAnnouncementSignedUrl(key);
+
+    // เก็บแบบมี TTL
+    signedCacheRef.current.set(key, { url: u, exp: Date.now() + PAGE_SIGNED_TTL_MS });
+
+    inflightRef.current.delete(key);
+    return u;
+  })().catch((e) => {
+    inflightRef.current.delete(key);
+    throw e;
+  });
+
+  inflightRef.current.set(key, p);
+  return p;
+}
 
   // ✅ Lightbox state
   const [lbOpen, setLbOpen] = useState(false);
@@ -623,7 +651,8 @@ export default function AnnouncementsPage() {
         const atts = normalizeAnnouncementAttachments(a).filter((x) => isImageFile(x.name)).slice(0, 5);
         for (const att of atts) {
           if (cancelled) return;
-          if (signedCacheRef.current.get(att.key)) continue;
+          const hit = signedCacheRef.current.get(att.key);
+          if (hit && hit.exp > Date.now()) continue;
 
           try {
             await getSignedCached(att.key);
@@ -634,7 +663,6 @@ export default function AnnouncementsPage() {
       }
     };
 
-    // เรียกแบบไม่บล็อค UI
     const w = window as any;
     if (typeof w.requestIdleCallback === "function") {
       const id = w.requestIdleCallback(run, { timeout: 1200 });
@@ -662,6 +690,30 @@ export default function AnnouncementsPage() {
     } catch (e: any) {
       console.error("openAttachment error:", e);
       dcAlert("เปิดไฟล์ไม่ได้", e?.message || "ลองใหม่อีกครั้ง");
+    }
+  }
+
+  // ✅ download จริง (blob) สำหรับ signed url/cross-origin
+  async function downloadAttachment(att: AnnouncementAttachment, fallbackUrl?: string | null) {
+    try {
+      const url = fallbackUrl && isValidUrl(fallbackUrl) ? fallbackUrl : await getSignedCached(att.key);
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`DOWNLOAD_FAILED (${res.status})`);
+
+      const blob = await res.blob();
+
+      const a = document.createElement("a");
+      const objectUrl = URL.createObjectURL(blob);
+      a.href = objectUrl;
+      a.download = att.name || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (e: any) {
+      console.error("downloadAttachment error:", e);
+      dcAlert("ดาวน์โหลดไม่ได้", e?.message || "ลองใหม่อีกครั้ง");
     }
   }
 
@@ -855,10 +907,10 @@ export default function AnnouncementsPage() {
   }
 
   const photoTilesOf = (imgAtts: AnnouncementAttachment[]) =>
-    imgAtts.map((att) => ({
-      att,
-      url: signedCacheRef.current.get(att.key),
-    }));
+  imgAtts.map((att) => ({
+    att,
+    url: signedCacheRef.current.get(att.key)?.url,
+  }));
 
   return (
     <>
@@ -1001,7 +1053,12 @@ export default function AnnouncementsPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <AppButton type="button" variant="outlinePill" size="md" onClick={() => (document.getElementById("ann-files") as HTMLInputElement | null)?.click()}>
+                    <AppButton
+                      type="button"
+                      variant="outlinePill"
+                      size="md"
+                      onClick={() => (document.getElementById("ann-files") as HTMLInputElement | null)?.click()}
+                    >
                       เพิ่มไฟล์
                     </AppButton>
 
@@ -1186,12 +1243,19 @@ export default function AnnouncementsPage() {
                 {isExpanded && !isEditing ? (
                   <div className="mt-4 space-y-4">
                     <div className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">{a.body}</div>
-                    <AttachmentSection attachments={atts} onOpen={(att) => openAttachment(att, a.fileUrl)} title="ไฟล์แนบ" />
+
+                    <AttachmentSection
+                      attachments={atts}
+                      onOpen={(att) => openAttachment(att, a.fileUrl)}
+                      onDownload={(att) => downloadAttachment(att, a.fileUrl)}
+                      title="ไฟล์แนบ"
+                    />
+
                     <LinkSection links={lks} title="ลิงก์ที่เกี่ยวข้อง" />
                   </div>
                 ) : null}
 
-                {/* edit panel (เหมือนเดิม ย่อไว้เพื่อไม่ยาวเกิน) */}
+                {/* edit panel */}
                 {isEditing ? (
                   <div className="mt-4 space-y-4 rounded-2xl bg-violet-50/40 p-4 ring-1 ring-violet-200 dark:bg-violet-900/10 dark:ring-violet-900/40">
                     <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">แก้ไขประกาศ</div>
@@ -1214,6 +1278,52 @@ export default function AnnouncementsPage() {
                       <input type="checkbox" checked={editPinned} onChange={(e) => setEditPinned(e.target.checked)} />
                       ปักหมุดประกาศนี้
                     </label>
+
+                    {/* ✅ show edit upload pct when uploading */}
+                    {savingEdit && editPickedFiles.length ? (
+                      <div className="text-xs text-gray-600 dark:text-gray-300">กำลังอัปโหลด: {editUploadPct}%</div>
+                    ) : null}
+
+                    {/* ✅ Edit Links (ใช้ addLinkToEdit กัน TS6133 + แก้ UX ให้ครบ) */}
+                    <div className="rounded-2xl border border-dashed border-gray-300 bg-white/60 p-4 dark:border-gray-700 dark:bg-gray-950/30">
+                      <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">ลิงก์ที่เกี่ยวข้อง (แก้ไข)</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">เพิ่ม/ลบลิงก์ได้</div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <input
+                          className="sm:col-span-2 w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
+                          placeholder="https://..."
+                          value={editNewLinkUrl}
+                          onChange={(e) => setEditNewLinkUrl(e.target.value)}
+                        />
+                        <input
+                          className="w-full rounded-xl border border-violet-400/80 bg-white px-4 py-2 text-sm outline-none focus:border-violet-500 dark:border-gray-700 dark:bg-gray-950"
+                          placeholder="ชื่อ/คำอธิบาย (ถ้ามี)"
+                          value={editNewLinkLabel}
+                          onChange={(e) => setEditNewLinkLabel(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <AppButton type="button" variant="outlinePill" size="md" onClick={addLinkToEdit}>
+                          เพิ่มลิงก์
+                        </AppButton>
+
+                        {editLinks.length ? (
+                          <AppButton type="button" variant="outlinePill" size="md" onClick={() => setEditLinks([])}>
+                            ล้างลิงก์
+                          </AppButton>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-3">
+                        <LinkSection
+                          links={editLinks}
+                          canEdit
+                          onRemove={(idx) => setEditLinks((prev) => prev.filter((_, i) => i !== idx))}
+                        />
+                      </div>
+                    </div>
 
                     <div className="flex items-center justify-end gap-2">
                       <button
