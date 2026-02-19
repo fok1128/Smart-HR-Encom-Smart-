@@ -117,10 +117,18 @@ export async function uploadAnnouncementFiles(
 
   const out: AnnouncementAttachment[] = [];
   for (let i = 0; i < list.length; i++) {
+    // เริ่มต้น progress คร่าว ๆ
     const base = Math.floor((i / list.length) * 100);
     onProgress?.(Math.max(1, base));
 
-    const att = await uploadAnnouncementFile(uid, list[i]);
+    // ✅ ส่ง progress ของไฟล์นี้ให้ map เป็น overall progress
+    const att = await uploadAnnouncementFile(uid, list[i], (p) => {
+      const start = (i / list.length) * 100;
+      const span = (1 / list.length) * 100;
+      const overall = Math.floor(start + (Math.max(0, Math.min(p, 100)) / 100) * span);
+      onProgress?.(Math.max(1, Math.min(100, overall)));
+    });
+
     out.push(att);
 
     const done = Math.floor(((i + 1) / list.length) * 100);
