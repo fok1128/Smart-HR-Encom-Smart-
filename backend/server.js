@@ -562,10 +562,54 @@ async function getPhoneByUid(uid) {
 }
 
 // TODO: ผูก SMS provider จริงทีหลัง (ตอนนี้ log เพื่อทดสอบ flow)
+// TODO: ผูก SMS provider จริงทีหลัง (ตอนนี้แค่ log เพื่อทดสอบ flow)
 async function sendSmsMaybe({ to, message }) {
-  const msisdn = normalizeThaiPhone(to); // ต้องได้ +66...
-  if (!msisdn || !message) return { ok: false, msisdn };
+  const phone = normalizeThaiPhone(to);
+  if (!phone || !message) return { ok: false, to: phone || to, message };
+  console.log("[SMS] to:", phone, "\n" + message);
+  return { ok: true, to: phone, message };
+}
 
+// ✅ ส่ง SMS ไปตาม role (ดึงเบอร์จาก users -> employees)
+async function getPhonesByRole(role) {
+  const R = asUpper(role);
+  const out = new Set();
+
+  // 1) users ที่ role ตรงกัน
+  const usersSnap = await db.collection("users").where("role", "==", R).get();
+
+  for (const doc of usersSnap.docs) {
+    const u = doc.data() || {};
+
+    // เผื่อบางโปรเจกต์มี phone ใน users เลย
+    const direct = pickStr(u.phone, ...(Array.isArray(u.phones) ? u.phones : []));
+    if (direct) out.add(direct);
+
+    // 2) ไปดึง employees/{employeeNo} เพื่อเอา phone
+    const employeeNo = pickStr(u.employeeNo, u.employee_id, u.empNo);
+    if (!employeeNo) continue;
+
+    const empSnap = await db.collection("employees").doc(String(employeeNo)).get();
+    if (!empSnap.exists) continue;
+
+    const emp = empSnap.data() || {};
+    const empPhone = pickStr(emp.phone, ...(Array.isArray(emp.phones) ? emp.phones : []));
+    if (empPhone) out.add(empPhone);
+  }
+
+  return Array.from(out);
+}
+
+async function sendSmsToRole(role, message) {
+  const phones = await getPhonesByRole(role);
+  const results = [];
+
+  for (const p of phones) {
+    results.push(await sendSmsMaybe({ to: p, message }));
+  }
+
+  return { ok: true, role: asUpper(role), count: phones.length, results };
+}
   const API_KEY = process.env.THAIBULK_API_KEY || "";
   const API_SECRET = process.env.THAIBULK_API_SECRET || "";
   const SENDER = process.env.THAIBULK_SENDER || ""; // แนะนำให้ตั้งใน Render
@@ -608,7 +652,7 @@ async function sendSmsMaybe({ to, message }) {
     console.error("[SMS-ERROR]", msisdn, err?.message || err);
     return { ok: false, error: err?.message || String(err) };
   }
-}
+
 /**
  * POST /leave-requests/:id/notify-submit
  * ใช้กรณีที่ client สร้าง leave_requests ตรงผ่าน Firestore (addDoc) แล้วอยากให้ backend สร้าง notification ให้ HR
