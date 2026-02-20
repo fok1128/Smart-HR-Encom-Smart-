@@ -393,15 +393,250 @@ function canOwnerEditOrCancel(leave, uid) {
   );
 }
 
-// TODO: ผูก SMS จริงทีหลัง
-async function sendSmsMaybe({ to, message }) {
-  return { ok: true, to, message };
+ // ----------------- ✅ NOTIFICATIONS + SMS (DETAIL) -----------------
+ const NOTI_COL = "notifications";
+
+ function fmtDateThaiLike(x) {
+   try {
+     const d = x?.toDate ? x.toDate() : (x ? new Date(x) : null);
+     if (!d || isNaN(d.getTime())) return "-";
+     const yyyy = d.getFullYear();
+     const mm = String(d.getMonth() + 1).padStart(2, "0");
+     const dd = String(d.getDate()).padStart(2, "0");
+     return `${yyyy}-${mm}-${dd}`;
+   } catch {
+     return "-";
+   }
+ }
+
+ function fmtDateTimeThaiLike(x) {
+   try {
+     const d = x?.toDate ? x.toDate() : (x ? new Date(x) : null);
+     if (!d || isNaN(d.getTime())) return "-";
+     const yyyy = d.getFullYear();
+     const mm = String(d.getMonth() + 1).padStart(2, "0");
+     const dd = String(d.getDate()).padStart(2, "0");
+     const hh = String(d.getHours()).padStart(2, "0");
+     const mi = String(d.getMinutes()).padStart(2, "0");
+     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+   } catch {
+     return "-";
+   }
+ }
+
+ function fmtTimeRangeFromLeave(leave) {
+   // ของคุณมี mode: "allDay" | "time"
+   const mode = String(leave?.mode || "").trim();
+   if (mode && mode !== "time") return "ทั้งวัน";
+
+   const s = String(leave?.startAt || "").trim();
+   const e = String(leave?.endAt || "").trim();
+
+   // รูปแบบตัวอย่าง: 2026-02-20T11:45
+   const sh = s.includes("T") ? s.split("T")[1] : "";
+   const eh = e.includes("T") ? e.split("T")[1] : "";
+   if (!sh && !eh) return "ทั้งวัน";
+   return `${sh || "-"}–${eh || "-"}`;
+ }
+
+ function fmtDateRangeFromLeave(leave) {
+   const s = String(leave?.startAt || "").trim();
+   const e = String(leave?.endAt || "").trim();
+   const sd = s.includes("T") ? s.split("T")[0] : s || "-";
+   const ed = e.includes("T") ? e.split("T")[0] : e || "-";
+   return sd === ed ? sd : `${sd}–${ed}`;
+ }
+
+ function pickActorName(req) {
+   const f = String(req.user?.fname || "").trim();
+   const l = String(req.user?.lname || "").trim();
+   const full = `${f} ${l}`.trim();
+   return full || pickStr(req.user?.name, req.user?.displayName, req.user?.email, "SYSTEM");
+ }
+
+ async function createNotification({ toUid, toRole, type, title, message, ref, meta }) {
+   const data = {
+     toUid: String(toUid),
+     toRole: toRole || null,
+     type: String(type || "GENERIC"),
+     title: String(title || "Notification"),
+     message: String(message || ""),
+     ref: ref || null,
+     meta: meta || null,
+     createdAt: nowTs(),
+     readAt: null,
+   };
+   await db.collection(NOTI_COL).add(data);
+ }
+
+ async function findUsersByRole(roleUpper) {
+   const role = String(roleUpper || "").trim().toUpperCase();
+   if (!role) return [];
+   const snap = await db.collection("users").where("role", "==", role).get();
+   return snap.docs
+     .map((d) => ({ uid: d.id, ...(d.data() || {}) }))
+     .filter((u) => {
+       // ใน DB ของคุณ active เป็น "true" (string) — รองรับทั้ง boolean ด้วย
+       const a = u.active;
+       return a === true || String(a || "").toLowerCase() === "true";
+     });
+ }
+
+ async function getEmployeeDocByNo(employeeNo) {
+   const no = String(employeeNo || "").trim();
+   if (!no) return null;
+   const snap = await db.collection("employees").doc(no).get();
+   return snap.exists ? { id: snap.id, ...(snap.data() || {}) } : null;
+ }
+
+ function pickOwnerPhoneFromData(wf, empDoc) {
+   // ลำดับ: leave_requests.phone -> employees.phone -> employees.phones[0]
+   const p1 = pickStr(wf.phone);
+   const p2 = pickStr(empDoc?.phone);
+   const p3 = Array.isArray(empDoc?.phones) ? pickStr(empDoc.phones[0]) : "";
+   return p1 || p2 || p3 || "";
+ }
+
+ function buildSmsText({ stage, decision, wf, actorRole, actorName, reason }) {
+   // wf = leave doc หลัง normalize/derive
+   const reqNo = wf.requestNo || wf.id || "-";
+   const cat = wf.category || "-";
+   const sub = wf.subType || "-";
+   const submitted = fmtDateTimeThaiLike(wf.submittedAt);
+   const dateRange = fmtDateRangeFromLeave(wf);
+   const timeRange = fmtTimeRangeFromLeave(wf);
+
+   const note = String(wf.reason || "").trim(); // หมายเหตุพนักงาน
+   const rs = String(reason || "").trim();
+
+   const who = `${actorRole}(${actorName || "-"})`;
+
+   if (decision === "APPROVED" && stage === "HR") {
+     return `[LEAVE] HR อนุมัติแล้ว (รอผู้บริหาร)\nเลข:${reqNo}\nประเภท:${cat}•${sub}\nยื่น:${submitted}\nลา:${dateRange} เวลา:${timeRange}\nหมายเหตุ:${note || "-"}\nผู้อนุมัติ:${who}`;
+   }
+   if (decision === "APPROVED" && stage === "EXEC") {
+     return `[LEAVE] ผู้บริหารอนุมัติแล้ว ✅ (คำร้องสมบูรณ์)\nเลข:${reqNo}\nประเภท:${cat}•${sub}\nยื่น:${submitted}\nลา:${dateRange} เวลา:${timeRange}\nหมายเหตุ:${note || "-"}\nผู้อนุมัติ:${who}`;
+   }
+
+   const dc = decision === "REJECTED" ? "ไม่อนุมัติ" : "ยกเลิก";
+   return `[LEAVE] ${actorRole} ${dc} (จบคำร้อง)\nเลข:${reqNo}\nประเภท:${cat}•${sub}\nยื่น:${submitted}\nลา:${dateRange} เวลา:${timeRange}\nเหตุผล:${rs || "-"}\nผู้ดำเนินการ:${who}`;
+ }
+
+async function pickOwnerContact(wf) {
+  // ใช้ employeeNo จาก leave_requests เพื่อดึง employees/{employeeNo}
+  const empNo = wf.employeeNo || (wf.user && wf.user.employeeNo);
+  const empDoc = await getEmployeeDocByNo(empNo);
+  return pickOwnerPhoneFromData(wf, empDoc);
 }
 
-function pickOwnerContact(leave) {
-  const phone = pickStr(leave.phone, leave.employee?.phone, leave.user?.phone);
-  return phone || "";
+ // ----------------- ✅ PHONE + SMS HELPERS -----------------
+function normalizeThaiPhone(p) {
+  const s = String(p || "").replace(/[^0-9+]/g, "");
+  if (!s) return "";
+  if (s.startsWith("+66")) return s;
+  if (s.startsWith("0") && s.length >= 9) return "+66" + s.slice(1);
+  if (s.startsWith("66")) return "+66" + s.slice(2);
+  return s;
 }
+
+async function getEmployeeNoByUid(uid) {
+  const id = String(uid || "").trim();
+  if (!id) return "";
+  const us = await db.collection("users").doc(id).get();
+  if (!us.exists) return "";
+  return String(us.data()?.employeeNo || "").trim();
+}
+
+async function getPhoneByEmployeeNo(employeeNo) {
+  const no = String(employeeNo || "").trim();
+  if (!no) return "";
+  const empDoc = await getEmployeeDocByNo(no);
+  if (!empDoc) return "";
+  const p = pickStr(empDoc.phone, Array.isArray(empDoc.phones) ? empDoc.phones[0] : "");
+  return normalizeThaiPhone(p);
+}
+
+async function getPhoneByUid(uid) {
+  const empNo = await getEmployeeNoByUid(uid);
+  return await getPhoneByEmployeeNo(empNo);
+}
+
+// TODO: ผูก SMS provider จริงทีหลัง (ตอนนี้ log เพื่อทดสอบ flow)
+async function sendSmsMaybe({ to, message }) {
+  const phone = normalizeThaiPhone(to);
+  if (!phone || !message) return { ok: false, to: phone || to, message };
+
+  console.log(`[SMS] to: ${phone}\n${message}`);
+  return { ok: true, to: phone, message };
+}
+
+async function sendSmsToUids(uids, message) {
+  const xs = Array.isArray(uids) ? uids : [];
+  await Promise.all(
+    xs.map(async (uid) => {
+      const phone = await getPhoneByUid(uid);
+      if (phone) await sendSmsMaybe({ to: phone, message });
+    })
+  );
+}
+
+async function sendSmsToRole(roleUpper, message) {
+  const users = await findUsersByRole(roleUpper);
+  const uids = users.map((u) => u.uid);
+  await sendSmsToUids(uids, message);
+  return { count: uids.length };
+}
+/**
+ * POST /leave-requests/:id/notify-submit
+ * ใช้กรณีที่ client สร้าง leave_requests ตรงผ่าน Firestore (addDoc) แล้วอยากให้ backend สร้าง notification ให้ HR
+ * body: {}
+ */
+app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const { data } = await getLeaveOrThrow(id);
+    const wf = deriveWorkflowFromLegacy(data);
+
+    // เฉพาะเจ้าของคำร้องเท่านั้นที่เรียกได้
+    if (String(wf.uid || "") !== String(req.user.uid || "")) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_NOT_OWNER" });
+    }
+
+    // ต้องยังอยู่ช่วง pending HR เท่านั้น
+    if (asUpper(wf.overallStatus) !== "PENDING_HR") {
+      return res.status(409).json({ ok: false, error: "NOT_IN_PENDING_HR" });
+    }
+
+    const hrs = await findUsersByRole("HR");
+    await Promise.all(
+      hrs.map((u) =>
+        createNotification({
+          toUid: u.uid,
+          toRole: "HR",
+          type: "LEAVE_SUBMITTED",
+          title: "มีคำร้องลาใหม่",
+          message: `เลขคำร้อง ${wf.requestNo || id} รอ HR ตรวจสอบ`,
+          ref: { col: LEAVE_COL, id },
+          meta: { overallStatus: wf.overallStatus, employeeNo: wf.employeeNo || null },
+        })
+      )
+    );
+
+    
+// ✅ SMS: แจ้ง HR ทุกคน + แจ้งเจ้าของคำร้อง (รวมถึงกรณีเจ้าของเป็น HR/EXEC ด้วย)
+const smsToHr = `[LEAVE] มีคำร้องลาใหม่\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})\nประเภท:${wf.category || "-"}•${wf.subType || "-"}\nลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\nเข้าไปตรวจสอบในระบบ`;
+await sendSmsToRole("HR", smsToHr);
+
+const smsToOwner = `[LEAVE] ส่งคำร้องลาแล้ว\nเลข:${wf.requestNo || id}\nประเภท:${wf.category || "-"}•${wf.subType || "-"}\nลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\nสถานะ: รอ HR ตรวจสอบ`;
+await sendSmsToUids([wf.uid], smsToOwner);
+return res.json({ ok: true, id, notified: hrs.length });
+  } catch (err) {
+    console.error("/leave-requests/:id/notify-submit error:", err);
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: String(err?.message || err) });
+  }
+});
 
 /**
  * POST /leave-requests/:id/hr-action
@@ -453,16 +688,59 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
         updatedAt: nowTs(),
       };
 
-      await ref.set(patch, { merge: true });
+      
+await ref.set(patch, { merge: true });
 
-      const toEmp = pickOwnerContact(wf);
-      if (toEmp)
-        await sendSmsMaybe({
-          to: toEmp,
-          message: `คำร้อง ${wf.requestNo || id} HR อนุมัติแล้ว กำลังรอผู้บังคับบัญชา`,
+      // ✅ In-app: แจ้งเจ้าของคำร้องว่า HR อนุมัติแล้ว (ยังไม่สมบูรณ์)
+      await createNotification({
+        toUid: wf.uid,
+        toRole: "EMPLOYEE",
+        type: "LEAVE_STAGE1_APPROVED",
+        title: "HR อนุมัติคำร้องแล้ว",
+        message: `เลขคำร้อง ${wf.requestNo || id} HR อนุมัติแล้ว (รอผู้บริหาร)`,
+        ref: { col: LEAVE_COL, id },
+        meta: { overallStatus: "PENDING_MANAGER" },
+      });
+
+      // ✅ In-app: แจ้ง EXEC ทุกคนว่ามีคำร้องรออนุมัติขั้นสุดท้าย
+      const execs = await findUsersByRole("EXECUTIVE_MANAGER");
+      await Promise.all(
+        execs.map((u) =>
+          createNotification({
+            toUid: u.uid,
+            toRole: "EXECUTIVE_MANAGER",
+            type: "LEAVE_NEED_EXEC",
+            title: "มีคำร้องรออนุมัติขั้นสุดท้าย",
+            message: `เลขคำร้อง ${wf.requestNo || id} รอผู้บริหารอนุมัติ`,
+            ref: { col: LEAVE_COL, id },
+            meta: { overallStatus: "PENDING_MANAGER" },
+          })
+        )
+      );
+
+      // ✅ SMS (รายละเอียดครบ)
+      const toEmp = await pickOwnerContact(wf);
+      if (toEmp) {
+        const sms = buildSmsText({
+          stage: "HR",
+          decision: "APPROVED",
+          wf: { ...wf, id },
+          actorRole: "HR",
+          actorName: pickActorName(req),
+          reason: comment || null,
         });
+        await sendSmsMaybe({ to: toEmp, message: sms });
+      }
 
-      return res.json({ ok: true, id, patch });
+      
+// ✅ SMS: แจ้ง EXEC ทุกคนว่ามีงานรออนุมัติขั้นสุดท้าย
+const smsToExec = `[LEAVE] รออนุมัติขั้นสุดท้าย\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})\nประเภท:${wf.category || "-"}•${wf.subType || "-"}\nลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\nโปรดอนุมัติในระบบ`;
+await sendSmsToRole("EXECUTIVE_MANAGER", smsToExec);
+
+// ✅ SMS: log ให้ HR ทุกคน (กันตกหล่น)
+const smsHrLog = `[LEAVE] HR อนุมัติแล้ว (ส่งต่อผู้บริหาร)\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})`;
+await sendSmsToRole("HR", smsHrLog);
+return res.json({ ok: true, id, patch, notifiedExec: execs.length });
     }
 
     const patch = {
@@ -486,16 +764,39 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
       updatedAt: nowTs(),
     };
 
-    await ref.set(patch, { merge: true });
+    
+await ref.set(patch, { merge: true });
 
-    const toEmp = pickOwnerContact(wf);
-    if (toEmp)
-      await sendSmsMaybe({
-        to: toEmp,
-        message: `คำร้อง ${wf.requestNo || id} ไม่อนุมัติโดย HR เหตุผล: ${comment}`,
+    // ✅ In-app: แจ้งเจ้าของคำร้องว่า HR ไม่อนุมัติ (จบคำร้อง)
+    await createNotification({
+      toUid: wf.uid,
+      toRole: "EMPLOYEE",
+      type: "LEAVE_FINAL",
+      title: "คำร้องไม่อนุมัติ",
+      message: `เลขคำร้อง ${wf.requestNo || id} ไม่อนุมัติโดย HR`,
+      ref: { col: LEAVE_COL, id },
+      meta: { overallStatus: "REJECTED_BY_HR", reason: comment },
+    });
+
+    // ✅ SMS (รายละเอียดครบ)
+    const toEmp = await pickOwnerContact(wf);
+    if (toEmp) {
+      const sms = buildSmsText({
+        stage: "HR",
+        decision: "REJECTED",
+        wf: { ...wf, id },
+        actorRole: "HR",
+        actorName: pickActorName(req),
+        reason: comment,
       });
+      await sendSmsMaybe({ to: toEmp, message: sms });
+    }
 
-    return res.json({ ok: true, id, patch });
+    
+// ✅ SMS: log ให้ HR ทุกคนว่าได้ตัดสินใจแล้ว (REJECT)
+const smsHrLog = `[LEAVE] HR ไม่อนุมัติ (จบคำร้อง)\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})\nเหตุผล:${comment || "-"}`;
+await sendSmsToRole("HR", smsHrLog);
+return res.json({ ok: true, id, patch });
   } catch (err) {
     console.error("/leave-requests/:id/hr-action error:", err);
     const status = err?.status || 500;
@@ -555,16 +856,43 @@ app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => 
         updatedAt: nowTs(),
       };
 
-      await ref.set(patch, { merge: true });
+      
+await ref.set(patch, { merge: true });
 
-      const toEmp = pickOwnerContact(wf);
-      if (toEmp)
-        await sendSmsMaybe({
-          to: toEmp,
-          message: `คำร้อง ${wf.requestNo || id} อนุมัติสำเร็จแล้ว`,
+      // ✅ In-app: แจ้งเจ้าของคำร้องว่า EXEC อนุมัติแล้ว (สมบูรณ์)
+      await createNotification({
+        toUid: wf.uid,
+        toRole: "EMPLOYEE",
+        type: "LEAVE_FINAL",
+        title: "คำร้องอนุมัติแล้ว ✅",
+        message: `เลขคำร้อง ${wf.requestNo || id} ผู้บริหารอนุมัติแล้ว (คำร้องสมบูรณ์)`,
+        ref: { col: LEAVE_COL, id },
+        meta: { overallStatus: "APPROVED" },
+      });
+
+      // ✅ SMS (รายละเอียดครบ)
+      const toEmp = await pickOwnerContact(wf);
+      if (toEmp) {
+        const sms = buildSmsText({
+          stage: "EXEC",
+          decision: "APPROVED",
+          wf: { ...wf, id },
+          actorRole: "EXEC",
+          actorName: pickActorName(req),
+          reason: comment || null,
         });
+        await sendSmsMaybe({ to: toEmp, message: sms });
+      }
 
-      return res.json({ ok: true, id, patch });
+      
+// ✅ SMS: log ให้ EXEC ทุกคนว่าได้อนุมัติแล้ว (ทีมเห็นตรงกัน)
+const smsExecLog = `[LEAVE] ผู้บริหารอนุมัติแล้ว ✅\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})`;
+await sendSmsToRole("EXECUTIVE_MANAGER", smsExecLog);
+
+// ✅ SMS: log ให้ HR ทุกคนว่าเคสปิดแล้ว (APPROVED)
+const smsHrFinal = `[LEAVE] คำร้องสมบูรณ์แล้ว ✅\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})\nผลลัพธ์: APPROVED`;
+await sendSmsToRole("HR", smsHrFinal);
+return res.json({ ok: true, id, patch });
     }
 
     const patch = {
@@ -583,16 +911,43 @@ app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => 
       updatedAt: nowTs(),
     };
 
-    await ref.set(patch, { merge: true });
+    
+await ref.set(patch, { merge: true });
 
-    const toEmp = pickOwnerContact(wf);
-    if (toEmp)
-      await sendSmsMaybe({
-        to: toEmp,
-        message: `คำร้อง ${wf.requestNo || id} ไม่อนุมัติโดยผู้บังคับบัญชา เหตุผล: ${comment}`,
+    // ✅ In-app: แจ้งเจ้าของคำร้องว่า EXEC ไม่อนุมัติ (จบคำร้อง)
+    await createNotification({
+      toUid: wf.uid,
+      toRole: "EMPLOYEE",
+      type: "LEAVE_FINAL",
+      title: "คำร้องไม่อนุมัติ",
+      message: `เลขคำร้อง ${wf.requestNo || id} ไม่อนุมัติโดยผู้บริหาร`,
+      ref: { col: LEAVE_COL, id },
+      meta: { overallStatus: "REJECTED_BY_MANAGER", reason: comment },
+    });
+
+    // ✅ SMS (รายละเอียดครบ)
+    const toEmp = await pickOwnerContact(wf);
+    if (toEmp) {
+      const sms = buildSmsText({
+        stage: "EXEC",
+        decision: "REJECTED",
+        wf: { ...wf, id },
+        actorRole: "EXEC",
+        actorName: pickActorName(req),
+        reason: comment,
       });
+      await sendSmsMaybe({ to: toEmp, message: sms });
+    }
 
-    return res.json({ ok: true, id, patch });
+    
+// ✅ SMS: log ให้ EXEC ทุกคนว่าได้ตัดสินใจแล้ว (REJECT)
+const smsExecLog = `[LEAVE] ผู้บริหารไม่อนุมัติ (จบคำร้อง)\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})\nเหตุผล:${comment || "-"}`;
+await sendSmsToRole("EXECUTIVE_MANAGER", smsExecLog);
+
+// ✅ SMS: log ให้ HR ทุกคนว่าเคสปิดแล้ว (REJECTED_BY_MANAGER)
+const smsHrFinal = `[LEAVE] คำร้องถูกปฏิเสธโดยผู้บริหาร\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})`;
+await sendSmsToRole("HR", smsHrFinal);
+return res.json({ ok: true, id, patch });
   } catch (err) {
     console.error("/leave-requests/:id/manager-action error:", err);
     const status = err?.status || 500;
@@ -663,14 +1018,83 @@ app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
 
     await ref.set(patch, { merge: true });
 
-    const toEmp = pickOwnerContact(wf);
-    if (toEmp)
-      await sendSmsMaybe({
-        to: toEmp,
-        message: `คำร้อง ${wf.requestNo || id} ถูกยกเลิกโดย ${canceledByRole} เหตุผล: ${reason}`,
-      });
+    
+// ✅ In-app: แจ้งเจ้าของคำร้องว่ามีการยกเลิก (จบคำร้อง)
+await createNotification({
+  toUid: wf.uid,
+  toRole: "EMPLOYEE",
+  type: "LEAVE_FINAL",
+  title: "คำร้องถูกยกเลิก",
+  message: `เลขคำร้อง ${wf.requestNo || id} ถูกยกเลิกโดย ${canceledByRole}`,
+  ref: { col: LEAVE_COL, id },
+  meta: { overallStatus: "CANCELED", canceledByRole, reason },
+});
 
-    return res.json({ ok: true, id, patch });
+// ✅ SMS (รายละเอียดครบ)
+const toEmp = await pickOwnerContact(wf);
+if (toEmp) {
+  // map role -> template stage/actorRole
+  const actorRole =
+    canceledByRole === "EXECUTIVE_MANAGER" ? "EXEC" :
+    canceledByRole === "HR" ? "HR" :
+    canceledByRole === "ADMIN" ? "ADMIN" : "OWNER";
+
+  const sms = buildSmsText({
+    stage: actorRole === "EXEC" ? "EXEC" : "HR",
+    decision: "CANCELLED",
+    wf: { ...wf, id },
+    actorRole,
+    actorName: pickActorName(req),
+    reason,
+  });
+  await sendSmsMaybe({ to: toEmp, message: sms });
+// ✅ SMS: แจ้งทีมอนุมัติทุกครั้งที่มีการยกเลิก
+const smsCancelLog = `[LEAVE] ยกเลิกคำร้อง (CANCELED)\nเลข:${wf.requestNo || id}\nพนักงาน:${wf.employeeName || "-"} (${wf.employeeNo || "-"})\nผู้ยกเลิก:${canceledByRole}\nเหตุผล:${reason || "-"}`;
+await sendSmsToRole("HR", smsCancelLog);
+
+// ถ้าเคสเคยไปถึงขั้นผู้บริหารแล้ว ค่อยแจ้ง EXEC ด้วย (กัน spam เคสที่ยังไม่ถึง)
+if (asUpper(wf.overallStatus) === "PENDING_MANAGER" || asUpper(wf.managerStatus) === "PENDING") {
+  await sendSmsToRole("EXECUTIVE_MANAGER", smsCancelLog);
+}
+
+}
+
+// (optional) ถ้า owner cancel ระหว่าง pending HR/EXEC -> แจ้งคนอนุมัติให้รู้ด้วย
+if (canceledByRole === "OWNER") {
+  const hrs = await findUsersByRole("HR");
+  await Promise.all(
+    hrs.map((u) =>
+      createNotification({
+        toUid: u.uid,
+        toRole: "HR",
+        type: "LEAVE_FINAL",
+        title: "คำร้องถูกยกเลิกโดยพนักงาน",
+        message: `เลขคำร้อง ${wf.requestNo || id} ถูกยกเลิกโดยผู้ยื่น`,
+        ref: { col: LEAVE_COL, id },
+        meta: { overallStatus: "CANCELED", reason },
+      })
+    )
+  );
+
+  if (asUpper(wf.overallStatus) === "PENDING_MANAGER") {
+    const execs = await findUsersByRole("EXECUTIVE_MANAGER");
+    await Promise.all(
+      execs.map((u) =>
+        createNotification({
+          toUid: u.uid,
+          toRole: "EXECUTIVE_MANAGER",
+          type: "LEAVE_FINAL",
+          title: "คำร้องถูกยกเลิกโดยพนักงาน",
+          message: `เลขคำร้อง ${wf.requestNo || id} ถูกยกเลิกโดยผู้ยื่น`,
+          ref: { col: LEAVE_COL, id },
+          meta: { overallStatus: "CANCELED", reason },
+        })
+      )
+    );
+  }
+}
+
+return res.json({ ok: true, id, patch });
   } catch (err) {
     console.error("/leave-requests/:id/cancel error:", err);
     const status = err?.status || 500;
