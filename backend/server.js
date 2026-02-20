@@ -563,28 +563,51 @@ async function getPhoneByUid(uid) {
 
 // TODO: ผูก SMS provider จริงทีหลัง (ตอนนี้ log เพื่อทดสอบ flow)
 async function sendSmsMaybe({ to, message }) {
-  const phone = normalizeThaiPhone(to);
-  if (!phone || !message) return { ok: false, to: phone || to, message };
+  const msisdn = normalizeThaiPhone(to); // ต้องได้ +66...
+  if (!msisdn || !message) return { ok: false, msisdn };
 
-  console.log(`[SMS] to: ${phone}\n${message}`);
-  return { ok: true, to: phone, message };
-}
+  const API_KEY = process.env.THAIBULK_API_KEY || "";
+  const API_SECRET = process.env.THAIBULK_API_SECRET || "";
+  const SENDER = process.env.THAIBULK_SENDER || ""; // แนะนำให้ตั้งใน Render
 
-async function sendSmsToUids(uids, message) {
-  const xs = Array.isArray(uids) ? uids : [];
-  await Promise.all(
-    xs.map(async (uid) => {
-      const phone = await getPhoneByUid(uid);
-      if (phone) await sendSmsMaybe({ to: phone, message });
-    })
-  );
-}
+  // ถ้ายังไม่ตั้งค่า key ให้ log เฉยๆ กันพัง
+  if (!API_KEY || !API_SECRET) {
+    console.log("[SMS-LOG-ONLY] to:", msisdn, "\n" + message);
+    return { ok: true, mode: "LOG_ONLY" };
+  }
 
-async function sendSmsToRole(roleUpper, message) {
-  const users = await findUsersByRole(roleUpper);
-  const uids = users.map((u) => u.uid);
-  await sendSmsToUids(uids, message);
-  return { count: uids.length };
+  const auth = Buffer.from(`${API_KEY}:${API_SECRET}`).toString("base64");
+
+  const body = new URLSearchParams({
+    msisdn,
+    message,
+    ...(SENDER ? { sender: SENDER } : {}),
+    force: "standard",
+  }).toString();
+
+  try {
+    const res = await fetch("https://api-v2.thaibulksms.com/sms", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      console.error("[SMS-ERROR]", msisdn, res.status, data);
+      return { ok: false, status: res.status, data };
+    }
+
+    console.log("[SMS-SENT]", msisdn, data);
+    return { ok: true, data };
+  } catch (err) {
+    console.error("[SMS-ERROR]", msisdn, err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
 }
 /**
  * POST /leave-requests/:id/notify-submit
