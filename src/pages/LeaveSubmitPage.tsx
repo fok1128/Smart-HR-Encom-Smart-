@@ -458,8 +458,8 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   const effectiveEditId = String(props.editId || "").trim() || urlEditId;
   const isEdit = !!effectiveEditId;
 
-  const [loadingEdit, setLoadingEdit] = useState(false);
-  const [editLoadErr, setEditLoadErr] = useState<string>("");
+  const [, setLoadingEdit] = useState(false);
+  const [, setEditLoadErr] = useState<string | null>(null);
 
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
