@@ -9,17 +9,26 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function isHttpUrl(x: string) {
+  return /^https?:\/\//i.test(String(x || "").trim());
+}
+
 function normalizeStorageKey(key: string) {
   let k = String(key || "").trim();
-  if (/^https?:\/\//i.test(k)) return k; // already url
+  if (isHttpUrl(k)) return k; // already url
+
+  // ตัด query/hash (กันเคสหลุด ?token=... ใน key)
   k = k.split("?")[0].split("#")[0];
+
+  // ตัด / นำหน้า, public/ นำหน้า
   k = k.replace(/^\/+/, "");
   k = k.replace(/^public\//i, "");
+
   return k;
 }
 
 /**
- * ✅ รอให้ currentUser มาแบบ "event-driven" (ไม่ polling)
+ * ✅ รอให้ currentUser มาแบบ event-driven (ไม่ polling)
  * - ป้องกัน race หลัง login/refresh
  * - ลดการหน่วง/loop
  */
@@ -28,14 +37,24 @@ async function waitForUser(timeoutMs = 4500) {
   if (auth.currentUser) return auth.currentUser;
 
   return new Promise<ReturnType<typeof getAuth>["currentUser"]>((resolve) => {
+    let unsub: (() => void) | null = null;
+
     const t = setTimeout(() => {
-      unsub?.();
+      try {
+        unsub?.();
+      } catch {
+        // ignore
+      }
       resolve(null);
     }, timeoutMs);
 
-    const unsub = onAuthStateChanged(auth, (u) => {
+    unsub = onAuthStateChanged(auth, (u) => {
       clearTimeout(t);
-      unsub();
+      try {
+        unsub?.();
+      } catch {
+        // ignore
+      }
       resolve(u);
     });
   });
@@ -110,12 +129,18 @@ async function fetchSignedUrlOnce(normalized: string, token: string) {
  * - inflight กันยิงซ้ำ
  * - 401/403 => refresh token แล้ว retry 1 ครั้ง
  * - 5xx/เครือข่าย => backoff เบา ๆ 1 ครั้ง
+ *
+ * ✅ IMPORTANT FIX:
+ * - ถ้า backend ไม่คืน signedUrl ที่เป็น https:// ให้ throw ทันที (ห้ามคืน key กลับไป)
+ *   เพราะถ้าหลุดไปเป็น src="177...jpg" จะกลายเป็น request ไปที่ localhost:5173 แล้วเจอ 400 แบบที่คุณเห็น
  */
 export async function getSignedUrl(key: string) {
   const normalized = normalizeStorageKey(key);
 
   // already url
-  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (isHttpUrl(normalized)) return normalized;
+
+  if (!normalized) throw new Error("SIGNED_URL_EMPTY_KEY");
 
   // cache hit
   const cached = getCached(normalized);
@@ -136,23 +161,31 @@ export async function getSignedUrl(key: string) {
       ({ res, data } = await fetchSignedUrlOnce(normalized, token));
     }
 
-    // 3) server error / network fail -> retry เบา ๆ 1 ครั้ง
+    // 3) server error -> retry เบา ๆ 1 ครั้ง
     if (!res.ok && res.status >= 500) {
       await sleep(300);
       ({ res, data } = await fetchSignedUrlOnce(normalized, token));
     }
 
-    if (!res.ok || !data?.ok || !data?.signedUrl) {
-      // ถ้าพัง ให้ลบ cache เผื่อมีของค้างผิด
-      signedUrlCache.delete(normalized);
+    const signed = data?.signedUrl ? String(data.signedUrl).trim() : "";
 
+    // ❌ ห้ามปล่อยค่าที่ไม่ใช่ URL เต็มออกไป
+    if (!res.ok || !data?.ok || !signed) {
+      signedUrlCache.delete(normalized);
       const msg = data?.error || `SIGNED_URL_${res.status || "FAILED"}`;
       throw new Error(msg);
     }
 
-    const url = data.signedUrl;
-    setCached(normalized, url);
-    return url;
+    // ✅ validate ให้เป็น https/http เท่านั้น
+    if (!isHttpUrl(signed)) {
+      signedUrlCache.delete(normalized);
+      // log ไว้ช่วย debug ได้เลย
+      console.warn("[getSignedUrl] SIGNED_URL_INVALID", { key: normalized, signed });
+      throw new Error("SIGNED_URL_INVALID");
+    }
+
+    setCached(normalized, signed);
+    return signed;
   })();
 
   inflight.set(normalized, job);
@@ -199,7 +232,10 @@ export async function uploadFile(file: File, folder: string) {
 // ==========================
 // ✅ Delete attachments (owner-only via backend)
 // ==========================
-export async function deleteFilesFromLeaveRequest(params: { requestId: string; keys: string[] }) {
+export async function deleteFilesFromLeaveRequest(params: {
+  requestId: string;
+  keys: string[];
+}) {
   const { requestId, keys } = params || ({} as any);
   if (!requestId || !Array.isArray(keys) || keys.length === 0) {
     throw new Error("requestId/keys required");
@@ -209,11 +245,15 @@ export async function deleteFilesFromLeaveRequest(params: { requestId: string; k
 
   const res = await fetch(`${API_BASE}/files/delete`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify({ requestId, keys }),
   });
 
   const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.ok) throw new Error(data?.error || `DELETE_FAILED (${res.status})`);
+  if (!res.ok || !data?.ok)
+    throw new Error(data?.error || `DELETE_FAILED (${res.status})`);
   return data;
 }

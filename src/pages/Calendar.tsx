@@ -61,7 +61,7 @@ type BarSeg = {
   isEnd: boolean;
   isTimedSingleDay?: boolean;
 };
-
+const BRAND_PURPLE = "#6D1B7B";
 const dayLabelsMonFirst = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const datePart = (s: string) => String(s || "").split("T")[0];
@@ -201,12 +201,11 @@ function splitEventByDay(ev: LeaveEvent): DayOccurrence[] {
 
   const sISO = datePart(ev.startAt);
   const eISO = datePart(ev.endAt);
+  const days = eachDayISOInRange(sISO, eISO);
 
   const hasTimeStart = ev.startAt.includes("T");
   const hasTimeEnd = ev.endAt.includes("T");
   const allDay = !(hasTimeStart && hasTimeEnd);
-
-  const days = eachDayISOInRange(sISO, eISO);
 
   if (allDay) {
     return days.map((d) => ({ event: ev, date: d, allDay: true }));
@@ -274,10 +273,36 @@ const statusStyle: Record<LeaveStatus, string> = {
 };
 
 function leaveLabel(ev: LeaveEvent) {
-  if (ev.category === "ปฏิบัติงานนอกสถานที่") return "ปฏิบัติงานนอกสถานที่";
-  if (ev.category === "ลาพักร้อน") return "ลาพักร้อน";
-  return `${ev.category} • ${ev.subType}`;
+  // ✅ เอาแค่ “ประเภทหลัก” (ไม่เอา subType / code เช่น FIELD_W)
+  const cat = String((ev as any)?.category || "").trim() || "รายการ";
+  return cat;
 }
+function leaveTypeWithSub(ev: any) {
+  const cat = leaveLabel(ev); // ประเภทหลัก
+  const sub = String(ev?.subType || ev?.subtype || ev?.leaveSubType || "").trim();
+  if (!sub || sub === "FIELD_WORK") return cat;
+  return `${cat} • ${sub}`;
+}
+function leaveTimeRange(ev: LeaveEvent) {
+  // ✅ เวลาเฉพาะกรณี “วันเดียวกัน” และมีเวลา (รายชั่วโมง/นาที)
+  const sRaw = String((ev as any)?.startAt || "");
+  const eRaw = String((ev as any)?.endAt || "");
+  if (!sRaw || !eRaw) return "";
+
+  const sNorm = sRaw.includes("T") ? sRaw : sRaw.replace(" ", "T");
+  const eNorm = eRaw.includes("T") ? eRaw : eRaw.replace(" ", "T");
+
+  const same = sNorm.slice(0, 10) === eNorm.slice(0, 10);
+  const hasTime = sNorm.includes("T") && eNorm.includes("T");
+  if (!same || !hasTime) return "";
+
+  const s = parseLocalDateTime(sNorm);
+  const e = parseLocalDateTime(eNorm);
+  const sMin = s.getHours() * 60 + s.getMinutes();
+  const eMin = e.getHours() * 60 + e.getMinutes();
+  return `${formatTimeFromMinutes(sMin)}-${formatTimeFromMinutes(eMin)}`;
+}
+
 
 // ===== helpers for mapping requests =====
 type RequestLike = {
@@ -294,6 +319,11 @@ type RequestLike = {
   category?: string;
   subType?: string;
   status?: string;
+  // ✅ รองรับ schema ที่เป็น 2-stage / final status
+  finalStatus?: string;
+  stage2?: { status?: string } | any;
+  approval?: { status?: string } | any;
+  workflow?: { finalStatus?: string; status?: string } | any;
   startAt?: any;
   endAt?: any;
   reason?: string;
@@ -367,6 +397,37 @@ function normalizeStatus(x?: string): LeaveStatus {
   return "รอดำเนินการ";
 }
 
+function normUpper(x: any) {
+  return String(x ?? "").trim().toUpperCase();
+}
+
+/** ✅ หาสถานะสุดท้ายของคำร้องลา (กัน schema หลายแบบ) */
+function pickFinalStatus(r: RequestLike): any {
+  return (
+    (r as any)?.finalStatus ??
+    (r as any)?.workflow?.finalStatus ??
+    (r as any)?.workflow?.status ??
+    (r as any)?.stage2?.status ??
+    (r as any)?.approval?.status ??
+    (r as any)?.status ??
+    ""
+  );
+}
+
+/** ✅ Calendar ต้องโชว์เฉพาะที่ "อนุมัติแล้ว" */
+function isApprovedRequest(r: RequestLike): boolean {
+  const raw = pickFinalStatus(r);
+  const th = normalizeStatus(typeof raw === "string" ? raw : String(raw ?? ""));
+  if (th === "อนุมัติ") return true;
+
+  // กันเคสที่เก็บเป็นไทยแบบยาว ๆ
+  if (typeof raw === "string" && raw.includes("อนุมัติ")) return true;
+
+  // กันเคสที่เก็บเป็น EN
+  const up = normUpper(raw);
+  return up === "APPROVED";
+}
+
 function getRequestOwnerUid(r: RequestLike): string {
   const uid =
     (r as any).uid ??
@@ -438,7 +499,7 @@ export default function Calendar() {
   }, [myUid]);
 
   // ✅ FILTER UI
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ทั้งหมด");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("อนุมัติ");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ทั้งหมด");
 
   // ✅ holiday map
@@ -457,9 +518,9 @@ export default function Calendar() {
     return list.filter((r) => getRequestOwnerUid(r) === myUid);
   }, [calendarRequests, myUid]);
 
-  // ✅ map leave_requests -> events
+  // ✅ map leave_requests -> events (SHOW ONLY APPROVED ✅)
   const leaveEventsFromLeave: LeaveEvent[] = useMemo(() => {
-    return (myCalendarRequests ?? []).map((r) => {
+    return (myCalendarRequests ?? []).filter(isApprovedRequest).map((r) => {
       const requestNo = r.requestNo ?? r.id ?? "-";
       const category = normalizeCategory(r.category ?? r.type);
       const subType = normalizeSubType(r.subType, category);
@@ -558,35 +619,31 @@ export default function Calendar() {
       const allDay = !(hasTimeStart && hasTimeEnd);
 
       if (allDay && sISO === eISO) {
-        const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true };
-        if (!m.has(sISO)) m.set(sISO, []);
-        m.get(sISO)!.push(seg);
+        // single-day allDay => render as pill in cell list
         continue;
       }
-
-      if (!allDay && sISO === eISO) {
-        const seg: BarSeg = { event: ev, date: sISO, isStart: true, isEnd: true, isTimedSingleDay: true };
-        if (!m.has(sISO)) m.set(sISO, []);
-        m.get(sISO)!.push(seg);
-        continue;
-      }
-
-      if (sISO === eISO) continue;
 
       const days = eachDayISOInRange(sISO, eISO);
+      const isTimedSingleDay = !allDay && sISO === eISO;
+
       for (const d of days) {
-        const seg: BarSeg = { event: ev, date: d, isStart: d === sISO, isEnd: d === eISO };
         if (!m.has(d)) m.set(d, []);
-        m.get(d)!.push(seg);
+        m.get(d)!.push({
+          event: ev,
+          date: d,
+          isStart: d === sISO,
+          isEnd: d === eISO,
+          isTimedSingleDay,
+        });
       }
     }
 
     for (const [k, list] of m.entries()) {
       list.sort((a, b) => {
-        const as = a.event.startAt;
-        const bs = b.event.startAt;
-        if (as !== bs) return as < bs ? -1 : 1;
-        return a.event.id < b.event.id ? -1 : 1;
+        const ac = a.event.category;
+        const bc = b.event.category;
+        if (ac !== bc) return ac.localeCompare(bc);
+        return a.event.requestNo.localeCompare(b.event.requestNo);
       });
       m.set(k, list);
     }
@@ -594,375 +651,330 @@ export default function Calendar() {
     return m;
   }, [leaveEvents]);
 
-  const selectedOccs = occMap.get(selectedISO) ?? [];
+  const selectedOcc = occMap.get(selectedISO) ?? [];
+  const selectedBars = barMap.get(selectedISO) ?? [];
 
-  const goToday = () => {
-    setCurrentMonth(startOfMonth(today));
-    setSelectedDate(today);
-  };
-
-  const monthEvents = useMemo(() => {
-    const monthStart = startOfMonth(currentMonth);
-    const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59);
-
-    return leaveEvents
-      .filter((ev) => {
-        const s = parseLocalDateTime(ev.startAt);
-        const e = parseLocalDateTime(ev.endAt);
-        return e >= monthStart && s <= monthEnd;
-      })
-      .sort((a, b) => (a.startAt < b.startAt ? -1 : 1));
-  }, [leaveEvents, currentMonth]);
-
-  // ✅ ล้างตัวกรอง + popup confirm กลาง
-  const resetFilters = async () => {
-    const alreadyDefault = statusFilter === "ทั้งหมด" && categoryFilter === "ทั้งหมด";
-    if (alreadyDefault) {
-      await dialog.alert("ตอนนี้ไม่มีตัวกรองให้ล้าง", { title: "แจ้งเตือน", variant: "info" });
-      return;
+  const totalMinutesSelected = useMemo(() => {
+    let sum = 0;
+    for (const occ of selectedOcc) {
+      if (occ.allDay) continue;
+      sum += Math.max(0, (occ.endMin ?? 0) - (occ.startMin ?? 0));
     }
+    return sum;
+  }, [selectedOcc]);
 
-    const ok = await dialog.confirm("ต้องการล้างตัวกรองทั้งหมดใช่ไหม?", {
-      title: "ยืนยันการล้างตัวกรอง",
-      confirmText: "ล้างตัวกรอง",
-      cancelText: "ยกเลิก",
-      variant: "warning",
-    });
-
-    if (!ok) return;
-
-    setStatusFilter("ทั้งหมด");
-    setCategoryFilter("ทั้งหมด");
-    await dialog.success("ล้างตัวกรองเรียบร้อย", { title: "สำเร็จ" });
+  const goPrevMonth = () => setCurrentMonth((m) => addMonths(m, -1));
+  const goNextMonth = () => setCurrentMonth((m) => addMonths(m, 1));
+  const goToday = () => {
+    const t = new Date();
+    setCurrentMonth(startOfMonth(t));
+    setSelectedDate(t);
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div className="w-full">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">ปฏิทินวันลา</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{loadingCalendar ? " • กำลังโหลด..." : ""}</p>
+  const clearFilters = async () => {
+  setStatusFilter("อนุมัติ");
+  setCategoryFilter("ทั้งหมด");
 
-          {fwErr && (
+  await dialog.success("ตั้งค่าเริ่มต้นเป็น: สถานะ = อนุมัติ, ประเภท = ทั้งหมด", {
+    title: "ล้างตัวกรองแล้ว",
+  });
+};
+
+  const monthTitle = useMemo(() => {
+    const d = currentMonth;
+    const m = d.toLocaleString("th-TH", { month: "long" });
+    return `${m} ${d.getFullYear()}`;
+  }, [currentMonth]);
+
+  const isCellInMonth = (d: Date) => d.getMonth() === currentMonth.getMonth();
+
+  const pickCellEvents = (iso: string) => {
+    const occ = occMap.get(iso) ?? [];
+    const bars = barMap.get(iso) ?? [];
+    const allDaySingles = occ.filter((x) => x.allDay);
+    return { allDaySingles, bars, occ };
+  };
+
+  const isWeekend = (d: Date) => {
+    const day = d.getDay();
+    return day === 0;
+  };
+
+  // ===== Render =====
+  return (
+    <div className="mx-auto w-full max-w-7xl px-3 py-4">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">{monthTitle}</div>
+            {loadingCalendar && (
+              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
+                กำลังโหลด...
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <AppButton variant="outline" size="sm" onClick={goPrevMonth}>
+              ◀
+            </AppButton>
+            <AppButton variant="outline" size="sm" onClick={goToday}>
+              วันนี้
+            </AppButton>
+            <AppButton variant="outline" size="sm" onClick={goNextMonth}>
+              ▶
+            </AppButton>
+
+            <AppButton variant="outline" size="sm" onClick={clearFilters}>
+              ล้างตัวกรอง
+            </AppButton>
+          </div>
+        </div>
+
+        {/* Fieldwork error */}
+        {!!fwErr && (
+          <div className="mt-3">
             <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
               {fwErr}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* FILTER BAR */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">สถานะ</span>
-              <ThemedSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
-                <option value="ทั้งหมด">ทั้งหมด</option>
-                <option value="รอดำเนินการ">รอดำเนินการ</option>
-                <option value="อนุมัติ">อนุมัติ</option>
-                <option value="ไม่อนุมัติ">ไม่อนุมัติ</option>
-              </ThemedSelect>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">ประเภท</span>
-              <ThemedSelect value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}>
-                <option value="ทั้งหมด">ทั้งหมด</option>
-                <option value="ลากิจ">ลากิจ</option>
-                <option value="ลาป่วย">ลาป่วย</option>
-                <option value="ลาพักร้อน">ลาพักร้อน</option>
-                <option value="ลากรณีพิเศษ">ลากรณีพิเศษ</option>
-                <option value="ปฏิบัติงานนอกสถานที่">ปฏิบัติงานนอกสถานที่</option>
-              </ThemedSelect>
-            </div>
-
-            <AppButton variant="outline" size="sm" onClick={resetFilters} className="h-9">
-              ล้างตัวกรอง
-            </AppButton>
-
-            <div className="ml-auto flex items-center gap-3">
-              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">แสดง {leaveEvents.length} รายการ</span>
-
-              <AppButton variant="outline" size="sm" onClick={goToday} className="h-9 px-4">
-                วันนี้
-              </AppButton>
-            </div>
+        {/* FILTER BAR */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">สถานะ</span>
+            <ThemedSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
+              <option value="ทั้งหมด">ทั้งหมด</option>
+              <option value="อนุมัติ">อนุมัติ</option>
+            </ThemedSelect>
           </div>
 
-          {!myUid && (
-            <p className="mt-2 text-xs text-red-600 dark:text-red-300">
-              ไม่พบข้อมูลผู้ใช้ (uid) — ปฏิทินจะไม่แสดงข้อมูลเพื่อความปลอดภัย
-            </p>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">ประเภท</span>
+            <ThemedSelect value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}>
+              <option value="ทั้งหมด">ทั้งหมด</option>
+              <option value="ลากิจ">ลากิจ</option>
+              <option value="ลาป่วย">ลาป่วย</option>
+              <option value="ลาพักร้อน">ลาพักร้อน</option>
+              <option value="ลากรณีพิเศษ">ลากรณีพิเศษ</option>
+              <option value="ปฏิบัติงานนอกสถานที่">ปฏิบัติงานนอกสถานที่</option>
+            </ThemedSelect>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">แสดง {leaveEvents.length} รายการ</span>
+          </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        {/* Calendar */}
-        <div className="xl:col-span-2 rounded-2xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 sm:p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <AppButton
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentMonth((d) => addMonths(d, -1))}
-                className="h-10 w-10 px-0"
-                aria-label="Previous month"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </AppButton>
+        {/* Calendar Grid */}
+        <div className="mt-3 overflow-hidden rounded-2xl">
+          {/* Weekdays */}
+          <div
+  className="mt-4 grid grid-cols-7 rounded-2xl p-2"
+  style={{ background: `linear-gradient(90deg, ${BRAND_PURPLE} 0%, #7A2A86 55%, ${BRAND_PURPLE} 100%)` }}
+>
+  {dayLabelsMonFirst.map((d) => (
+    <div key={d} className="text-center text-base font-extrabold text-white">
+      {d}
+    </div>
+  ))}
+</div>
 
-              <AppButton
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentMonth((d) => addMonths(d, 1))}
-                className="h-10 w-10 px-0"
-                aria-label="Next month"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </AppButton>
-            </div>
-
-            <div className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              {new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric" }).format(currentMonth)}
-            </div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">เลือกวันเพื่อดูรายละเอียด</div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-7 gap-2">
-            {dayLabelsMonFirst.map((d) => (
-              <div key={d} className="text-center text-xs font-semibold text-gray-500 dark:text-gray-400">
-                {d}
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-2 grid grid-cols-7 gap-2">
-            {cells.map((d, idx) => {
-              const inMonth = d.getMonth() === currentMonth.getMonth();
-              const isToday = sameDay(d, today);
-              const isSelected = sameDay(d, selectedDate);
+          {/* Cells */}
+          <div className="grid grid-cols-7">
+            {cells.map((d) => {
               const iso = toISODate(d);
+              const inMonth = isCellInMonth(d);
+              const { allDaySingles, bars } = pickCellEvents(iso);
 
-              // ✅ บริษัททำงาน จ-ส => weekend = อาทิตย์เท่านั้น
-              const isSunday = d.getDay() === 0;
+              const isSelected = sameDay(d, selectedDate);
+              const dayNum = d.getDate();
+              const weekend = isWeekend(d);
 
               const holidays = holidayMap.get(iso) ?? [];
-              const isHoliday = holidays.length > 0;
-
-              const barSegs = barMap.get(iso) ?? [];
-              const occs = occMap.get(iso) ?? [];
-              const timedOccs = occs.filter((o) => !o.allDay);
-
-              const colIndex = idx % 7; // 0=จันทร์ ... 6=อาทิตย์
-
-              const maxBars = 2;
-              const showBars = barSegs.slice(0, maxBars);
-              const moreBars = barSegs.length - showBars.length;
-
-              const holidayTitle = isHoliday ? holidays.map((h) => h.name).join(", ") : "";
+              const hasHoliday = holidays.length > 0;
 
               return (
                 <button
                   key={iso}
                   type="button"
                   onClick={() => setSelectedDate(d)}
-                  title={holidayTitle}
                   className={[
-                    "relative h-20 rounded-xl border text-left transition dark:border-gray-800",
-                    "overflow-visible",
-                    inMonth
-                      ? "border-gray-200 bg-white hover:bg-gray-50 dark:bg-gray-900 dark:hover:bg-gray-800"
-                      : "border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-400 dark:hover:bg-gray-800/80",
-                    // ✅ selected -> ม่วงเข้ม
-                    isSelected
-                      ? "ring-4 ring-violet-900/30 border-violet-800 shadow-sm shadow-violet-900/10 dark:border-violet-500/50"
-                      : "",
-                    isHoliday ? "bg-red-50/60 dark:bg-red-900/10" : "",
+                    "relative min-h-[94px] border-t border-l border-gray-200 p-2 text-left transition hover:bg-violet-50/50 dark:border-gray-800 dark:hover:bg-violet-900/10",
+                    !inMonth ? "bg-gray-50/60 dark:bg-gray-900/40" : "bg-white dark:bg-gray-900",
+                    isSelected ? "ring-2 ring-inset ring-violet-500" : "",
                   ].join(" ")}
                 >
-                  <div className="pointer-events-none absolute inset-0">
-                    {showBars.map((seg, i) => {
-                      const ev = seg.event;
-                      const style = catStyle[ev.category];
+                  {/* Top row: day number + holiday marker */}
+                  <div className="flex items-center justify-between">
+                    <div
+                      className={[
+                        "text-sm font-extrabold leading-none -mt-0.5",
+                        !inMonth ? "text-gray-400 dark:text-gray-500" : "text-gray-900 dark:text-gray-100",
+                        weekend ? "text-red-500 dark:text-red-300" : "",
+                      ].join(" ")}
+                    >
+                      {dayNum}
+                    </div>
 
-                      const leftRound = seg.isStart || colIndex === 0;
-                      const rightRound = seg.isEnd || colIndex === 6;
-
-                      const base = "absolute left-[-4px] right-[-4px]";
-                      const roundCls = `${leftRound ? "rounded-l-lg" : ""} ${rightRound ? "rounded-r-lg" : ""}`;
-
-                      const barH = seg.isTimedSingleDay ? 12 : 14;
-                      const barGap = 4;
-                      const baseBottom = 6;
-                      const bottom = baseBottom + i * (barH + barGap);
-
-                      return (
-                        <div
-                          key={`${ev.id}-${i}`}
-                          className={`${base} ${roundCls} ${style.barBg} ${style.border} border`}
-                          style={{ bottom, height: barH }}
-                        >
-                          {(seg.isStart || colIndex === 0) && (
-                            <div
-                              className={`px-2 text-[10px] font-semibold ${style.barText} truncate`}
-                              style={{ lineHeight: `${barH}px` }}
-                            >
-                              {leaveLabel(ev)}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {hasHoliday && (
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[12px] font-extrabold text-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+                        วันหยุด
+                      </span>
+                    )}
                   </div>
 
-                  <div
-                    className={[
-                      "absolute top-2 left-2 z-20 text-sm font-semibold leading-none",
-                      // ✅ today -> ม่วงเข้ม
-                      isToday ? "text-violet-800 dark:text-violet-300" : "text-gray-900 dark:text-gray-100",
-                      !inMonth ? "text-gray-600 dark:text-gray-400" : "",
-                      isHoliday ? "text-red-600 dark:text-red-300" : "",
-                      !isHoliday && inMonth && isSunday ? "text-red-600/80 dark:text-red-300/80" : "",
-                    ].join(" ")}
-                  >
-                    {d.getDate()}
-                  </div>
-
-                  {isHoliday && (
-                    <div className="absolute left-2 top-7 z-20 max-w-[75%] truncate rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-200">
-                      {holidays[0].name}
+                  {/* holiday names (small) */}
+                  {hasHoliday && (
+                    <div className="mt-1 line-clamp-1 text-[12px] font-semibold text-rose-700 dark:text-rose-200">
+                      {holidays[0]?.name}
                       {holidays.length > 1 ? ` +${holidays.length - 1}` : ""}
                     </div>
                   )}
 
-                  {(timedOccs.length > 0 || barSegs.length > 0) && (
-                    <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
-                      {Array.from(
-                        new Set([
-                          ...barSegs.map((b) => b.event.category),
-                          ...timedOccs.map((o) => o.event.category),
-                        ])
-                      )
-                        .slice(0, 3)
-                        .map((cat) => (
-                          <span key={cat} className={`inline-flex h-2 w-2 rounded-full ${catStyle[cat].dot}`} title={cat} />
-                        ))}
-                      {moreBars > 0 && (
-                        <span className="ml-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">+{moreBars}</span>
-                      )}
-                    </div>
-                  )}
+                  {/* all-day singles list */}
+                  <div className="mt-1 space-y-1">
+                    {allDaySingles.slice(0, 2).map((occ) => {
+                      const ev = occ.event;
+                      const st = catStyle[ev.category];
+                      return (
+                        <div
+                          key={`${ev.id}:${iso}:all`}
+                          className={[
+                            "flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-extrabold",
+                            st.barBg,
+                            st.barText,
+                            st.border,
+                          ].join(" ")}
+                        >
+                          <span className={["h-2 w-2 rounded-full", st.dot].join(" ")} />
+                          <span className="truncate">{leaveTypeWithSub(ev)}</span>
+                        </div>
+                      );
+                    })}
 
-                  {!isHoliday && timedOccs[0]?.startMin != null && timedOccs[0]?.endMin != null && (
-                    <div className="absolute left-2 top-7 z-20 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
-                      {formatTimeFromMinutes(timedOccs[0].startMin)}–{formatTimeFromMinutes(timedOccs[0].endMin)}
-                    </div>
-                  )}
+                    {/* multi-day bars indicator */}
+{bars.length > 0 && (
+  <div className="mt-1 space-y-1">
+    {bars.slice(0, 2).map((seg) => {
+      const ev = seg.event;
+      const st = catStyle[ev.category];
+
+      // ✅ โชว์ข้อความเฉพาะวันเริ่ม (หรือกรณี timed single-day) กันซ้ำทุกวัน
+      const showText =
+        seg.isStart ||
+        (String(ev.startAt || "").slice(0, 10) === String(ev.endAt || "").slice(0, 10) &&
+          String(ev.startAt || "").slice(0, 10) === iso);
+
+      return (
+        <div
+          key={`${ev.id}:${iso}:bar`}
+          className={[
+            "w-full border px-2 py-1 text-[12px] font-extrabold flex items-center",
+            "min-h-[26px] leading-tight",
+            st.barBg,
+            st.barText,
+            st.border,
+            seg.isStart ? "rounded-l-lg" : "",
+            seg.isEnd ? "rounded-r-lg" : "",
+          ].join(" ")}
+          title={`${leaveTypeWithSub(ev)}${leaveTimeRange(ev) ? ` ${leaveTimeRange(ev)}` : ""}`}
+        >
+          {showText ? (
+            <div className="flex w-full flex-col">
+              <div className="truncate">{leaveTypeWithSub(ev)}</div>
+              {leaveTimeRange(ev) ? (
+                <div className="truncate text-[9px] font-bold opacity-90">{leaveTimeRange(ev)}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      );
+    })}
+
+    {bars.length > 2 && (
+      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400">
+        +{bars.length - 2} อีก
+      </div>
+    )}
+  </div>
+)}
+                  </div>
                 </button>
               );
             })}
           </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-            {(Object.keys(catStyle) as LeaveCategory[]).map((c) => (
-              <div key={c} className="flex items-center gap-2">
-                <span className={`inline-flex h-2 w-2 rounded-full ${catStyle[c].dot}`} />
-                <span className="text-gray-600 dark:text-gray-300">{c}</span>
-              </div>
-            ))}
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-2 w-2 rounded-full bg-red-500" />
-              <span className="text-gray-600 dark:text-gray-300">วันหยุดไทย</span>
-            </div>
-          </div>
         </div>
+      </div>
 
-        {/* Detail Panel */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 sm:p-5">
+      {/* Detail panel */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Selected day details */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <div className="flex items-center justify-between">
-            <div>
-              <div className="text-base font-semibold text-gray-900 dark:text-gray-100">รายละเอียดวันที่เลือก</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {new Intl.DateTimeFormat("th-TH", {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                }).format(selectedDate)}
-              </div>
+            <div className="text-base font-extrabold text-gray-900 dark:text-gray-100">
+              รายการวันที่ {selectedISO}
             </div>
-
-            <span className="rounded-full border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 dark:border-gray-800 dark:text-gray-200">
-              {selectedOccs.length} รายการ
-            </span>
+            <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+              รวมเวลา (เฉพาะแบบระบุเวลา): {formatDurationMinutes(totalMinutesSelected)}
+            </div>
           </div>
 
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/15 dark:text-red-200">
-            <div className="font-semibold">วันหยุด / วันสำคัญ</div>
-            {selectedHolidays.length === 0 ? (
-              <div className="mt-1 text-red-700/80 dark:text-red-200/80">ไม่มีวันหยุดในวันนี้</div>
-            ) : (
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {selectedHolidays.map((h, idx) => (
-                  <li key={`${h.dateISO}-${idx}`}>{h.name}</li>
+          {/* Holiday list */}
+          {selectedHolidays.length > 0 && (
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-100">
+              <div className="font-extrabold">วันหยุด / วันสำคัญ</div>
+              <ul className="mt-1 list-disc pl-5">
+                {selectedHolidays.map((h, i) => (
+                <li key={`${h.dateISO ?? "holiday"}-${i}`}>{h.name}</li>
                 ))}
               </ul>
-            )}
-          </div>
+            </div>
+          )}
 
-          <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+          <div className="mt-3 overflow-hidden rounded-2xl">
+            <table className="w-full">
+              <thead className="bg-gray-50 text-xs font-extrabold text-gray-700 dark:bg-gray-800/40 dark:text-gray-200">
                 <tr>
-                  <th className="px-3 py-2 font-semibold">เลขคำร้อง</th>
-                  <th className="px-3 py-2 font-semibold">ประเภท</th>
-                  <th className="px-3 py-2 font-semibold">สถานะ</th>
-                  <th className="px-3 py-2 font-semibold">เวลา</th>
-                  <th className="px-3 py-2 font-semibold">ระยะเวลา</th>
-                  <th className="px-3 py-2 font-semibold">หมายเหตุ</th>
+                  <th className="px-3 py-2 text-left">ประเภท</th>
+                  <th className="px-3 py-2 text-left">ช่วงเวลา</th>
+                  <th className="px-3 py-2 text-left">หมายเหตุ</th>
+                  <th className="px-3 py-2 text-left">สถานะ</th>
                 </tr>
               </thead>
-
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                {selectedOccs.length === 0 ? (
+              <tbody className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
+                {selectedOcc.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-gray-500 dark:text-gray-400" colSpan={6}>
+                    <td className="px-3 py-3 text-center text-sm font-semibold text-gray-500 dark:text-gray-400" colSpan={4}>
                       ไม่มีรายการในวันนี้
                     </td>
                   </tr>
                 ) : (
-                  selectedOccs.map((occ, idx) => {
+                  selectedOcc.map((occ, idx) => {
                     const ev = occ.event;
-                    const style = catStyle[ev.category];
-
-                    const timeText = occ.allDay
-                      ? "ทั้งวัน"
-                      : `${formatTimeFromMinutes(occ.startMin!)}–${formatTimeFromMinutes(occ.endMin!)}`;
-                    const durMin = occ.allDay ? 0 : occ.endMin! - occ.startMin!;
-                    const durText = occ.allDay ? "ทั้งวัน" : formatDurationMinutes(durMin);
+                    const st = catStyle[ev.category];
+                    const statusCls = statusStyle[ev.status];
+                    const timeLabel = occ.allDay
+                      ? `${datePart(ev.startAt)} - ${datePart(ev.endAt)} (ทั้งวัน)`
+                      : `${formatTimeFromMinutes(occ.startMin ?? 0)} - ${formatTimeFromMinutes(occ.endMin ?? 0)} น.`;
 
                     return (
-                      <tr key={`${ev.id}-${idx}`} className="bg-white dark:bg-gray-900">
-                        <td className="px-3 py-3 font-semibold text-gray-900 dark:text-gray-100">{ev.requestNo}</td>
-
+                      <tr key={`${ev.id}:${idx}`}>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
-                            <span className={`inline-flex h-2 w-2 rounded-full ${style.dot}`} />
-                            <span className="font-semibold text-gray-900 dark:text-gray-100">{leaveLabel(ev)}</span>
+                            <span className={["h-2 w-2 rounded-full", st.dot].join(" ")} />
+                            <span className="font-semibold text-gray-900 dark:text-gray-100">{leaveTypeWithSub(ev)}</span>
                           </div>
                         </td>
-
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{timeLabel}</td>
+                        <td className="px-3 py-3 text-gray-600 dark:text-gray-300">{ev.note || "-"}</td>
                         <td className="px-3 py-3">
-                          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyle[ev.status]}`}>
+                          <span className={["rounded-full px-2 py-0.5 text-xs font-extrabold", statusCls].join(" ")}>
                             {ev.status}
                           </span>
                         </td>
-
-                        <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{timeText}</td>
-                        <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{durText}</td>
-                        <td className="px-3 py-3 text-gray-700 dark:text-gray-200">{ev.note || "-"}</td>
                       </tr>
                     );
                   })
@@ -970,36 +982,36 @@ export default function Calendar() {
               </tbody>
             </table>
           </div>
+        </div>
 
-          <div className="mt-6 border-t border-gray-200 pt-4 dark:border-gray-800">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">รายการในเดือนนี้ (ช่วงเวลา)</div>
+        {/* Legend */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          <div className="text-base font-extrabold text-gray-900 dark:text-gray-100">คำอธิบายสี</div>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {(
+              [
+                "ลากิจ",
+                "ลาป่วย",
+                "ลาพักร้อน",
+                "ลากรณีพิเศษ",
+                "ปฏิบัติงานนอกสถานที่",
+              ] as LeaveCategory[]
+            ).map((cat) => {
+              const st = catStyle[cat];
+              return (
+                <div
+                  key={cat}
+                  className="flex items-center gap-2 rounded-xl border border-gray-200 p-3 dark:border-gray-800"
+                >
+                  <span className={["h-3 w-3 rounded-full", st.dot].join(" ")} />
+                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{cat}</div>
+                </div>
+              );
+            })}
+          </div>
 
-            <div className="mt-2 space-y-2">
-              {monthEvents.length === 0 ? (
-                <div className="text-sm text-gray-500 dark:text-gray-400">เดือนนี้ยังไม่มีข้อมูล</div>
-              ) : (
-                monthEvents.map((ev) => {
-                  const style = catStyle[ev.category];
-                  const startTxt = ev.startAt.replace("T", " ");
-                  const endTxt = ev.endAt.replace("T", " ");
-
-                  return (
-                    <div
-                      key={ev.id}
-                      className="flex items-center justify-between rounded-xl border border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`inline-flex h-2 w-2 rounded-full ${style.dot}`} />
-                        <span className="font-semibold text-gray-900 dark:text-gray-100">
-                          {ev.requestNo} • {startTxt} → {endTxt}
-                        </span>
-                      </div>
-                      <div className="text-gray-600 dark:text-gray-300">{leaveLabel(ev)}</div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+          <div className="mt-5 text-sm font-semibold text-gray-600 dark:text-gray-300">
+            หมายเหตุ: หน้านี้จะแสดงเฉพาะคำร้องลาที่ “อนุมัติแล้ว” เท่านั้น (APPROVED / อนุมัติ)
           </div>
         </div>
       </div>
