@@ -195,3 +195,25 @@ export async function uploadFile(file: File, folder: string) {
   if (!a?.storagePath) throw new Error("UPLOAD_NO_STORAGE_PATH");
   return a;
 }
+
+// ==========================
+// ✅ Delete attachments (owner-only via backend)
+// ==========================
+export async function deleteFilesFromLeaveRequest(params: { requestId: string; keys: string[] }) {
+  const { requestId, keys } = params || ({} as any);
+  if (!requestId || !Array.isArray(keys) || keys.length === 0) {
+    throw new Error("requestId/keys required");
+  }
+
+  const token = await getToken(false);
+
+  const res = await fetch(`${API_BASE}/files/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ requestId, keys }),
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) throw new Error(data?.error || `DELETE_FAILED (${res.status})`);
+  return data;
+}

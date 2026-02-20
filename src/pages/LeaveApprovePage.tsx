@@ -1,51 +1,18 @@
 // src/pages/LeaveApprovePage.tsx
 import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  updateDoc,
-  where,
-  serverTimestamp,
-  deleteDoc,
-} from "firebase/firestore";
-import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { useDialogCenter } from "../components/common/DialogCenter";
-
-type LeaveStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELED" | string;
-
-type LeaveDoc = {
-  id: string;
-  uid?: string;
-  email?: string | null;
-  employeeName?: string | null;
-  employeeNo?: string | null;
-
-  category?: string;
-  subType?: string;
-  mode?: "allDay" | "time" | string;
-
-  startAt?: string;
-  endAt?: string;
-  reason?: string;
-
-  requestNo?: string;
-  status?: LeaveStatus;
-
-  submittedAt?: any;
-  updatedAt?: any;
-
-  decidedAt?: any;
-  approvedAt?: any;
-  rejectedAt?: any;
-  approvedBy?: string | null;
-  rejectedBy?: string | null;
-
-  workdaysCount?: number;
-};
+import AppButton from "../components/common/AppButton";
+import {
+  LeaveRequestDoc,
+  listenApproverQueue,
+  hrApproveLeaveRequest,
+  hrRejectLeaveRequest,
+  managerApproveLeaveRequest,
+  managerRejectLeaveRequest,
+  approverCancelLeaveRequest,
+  adminDeleteLeaveRequest,
+} from "../services/leaveRequests";
 
 function pickStr(...vals: any[]) {
   for (const v of vals) {
@@ -55,13 +22,31 @@ function pickStr(...vals: any[]) {
   return "";
 }
 
-const COL = "leave_requests";
+function badge(s: string) {
+  const x = String(s || "").toUpperCase();
+  if (x.includes("APPROVED"))
+    return "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200";
+  if (x.includes("REJECT"))
+    return "bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-200";
+  if (x.includes("CANCEL"))
+    return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200";
+  if (x.includes("PENDING"))
+    return "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-200";
+  if (x.includes("LOCK"))
+    return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+  return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+}
 
 export default function LeaveApprovePage() {
   const { user } = useAuth();
   const dialog = useDialogCenter();
 
-  const [rows, setRows] = useState<LeaveDoc[]>([]);
+  const role = String(user?.role || "").toUpperCase();
+  const canHR = role === "HR" || role === "ADMIN";
+  const canMgr = role === "EXECUTIVE_MANAGER" || role === "ADMIN";
+  const isAdmin = role === "ADMIN";
+
+  const [rows, setRows] = useState<LeaveRequestDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState<string>("");
@@ -70,47 +55,45 @@ export default function LeaveApprovePage() {
     setLoading(true);
     setErr("");
 
-    const q = query(
-      collection(db, COL),
-      where("status", "==", "PENDING"),
-      orderBy("submittedAt", "desc")
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const next = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as LeaveDoc[];
-        setRows(next);
+    const unsub = listenApproverQueue(
+      role,
+      (r) => {
+        setRows(r || []);
         setLoading(false);
       },
-      (e) => {
-        console.error(e);
-        setErr(e.message || String(e));
+      (m) => {
+        setErr(m || "โหลดคิวไม่สำเร็จ");
+        setRows([]);
         setLoading(false);
       }
     );
 
-    return () => unsub();
-  }, []);
+    return () => unsub?.();
+  }, [role]);
 
-  const title = useMemo(() => "อนุมัติคำขอการลา", []);
+  const title = useMemo(() => {
+    if (role === "HR") return "อนุมัติคำขอการลา (HR)";
+    if (role === "EXECUTIVE_MANAGER") return "อนุมัติคำขอการลา (ผู้บริหาร)";
+    if (role === "ADMIN") return "อนุมัติคำขอการลา (ADMIN/DEV)";
+    return "อนุมัติคำขอการลา";
+  }, [role]);
 
-  async function setStatus(id: string, status: "APPROVED" | "REJECTED") {
-  if (!user?.uid) {
-    await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
-    return;
-  }
+  const actor = useMemo(() => {
+    const name = `${pickStr((user as any)?.fname)} ${pickStr((user as any)?.lname)}`.trim();
+    return {
+      uid: user?.uid || "",
+      email: user?.email ?? null,
+      role,
+      name: name || null,
+    };
+  }, [user?.uid, user?.email, (user as any)?.fname, (user as any)?.lname, role]);
 
-  const uName = pickStr((user as any)?.fname, (user as any)?.firstName, (user as any)?.displayName, user.email);
-
-  // ✅ ถ้า REJECTED ต้องกรอกเหตุผล
-  let rejectReason = "";
-  if (status === "REJECTED") {
-    const reason = await dialog.prompt("กรุณากรอกเหตุผลในการไม่อนุมัติ", {
-      title: "เหตุผลไม่อนุมัติ",
-      confirmText: "ยืนยันไม่อนุมัติ",
+  async function promptReason(titleText: string, variant: "danger" | "warning") {
+    const r = await dialog.prompt("กรุณากรอกเหตุผล", {
+      title: titleText,
+      confirmText: "ยืนยัน",
       cancelText: "ยกเลิก",
-      variant: "danger",
+      variant,
       required: true,
       minLen: 1,
       maxLen: 300,
@@ -118,49 +101,126 @@ export default function LeaveApprovePage() {
       label: "เหตุผล",
       size: "md",
     });
-
-    // กดยกเลิก
-    if (reason === null) return;
-
-    // กันกรณีหลุด (แต่ required=true จะกันให้แล้ว)
-    rejectReason = reason.trim();
-    if (!rejectReason) return;
+    if (r === null) return null;
+    const s = String(r || "").trim();
+    if (!s) return null;
+    return s;
   }
 
-  setBusyId(id);
-  try {
-    const patch: any = {
-      status,
-      decidedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
+  async function doHRApprove(r: LeaveRequestDoc) {
+    setBusyId(r.id);
+    try {
+      const c = await dialog.prompt("เพิ่มหมายเหตุ (ไม่ใส่ก็ได้)", {
+        title: "HR อนุมัติ",
+        confirmText: "ส่งต่อให้ผู้บริหาร",
+        cancelText: "ยกเลิก",
+        variant: "success",
+        required: false,
+        maxLen: 300,
+        placeholder: "หมายเหตุถึงผู้บริหาร/พนักงาน...",
+        label: "หมายเหตุ",
+        size: "md",
+      });
+      if (c === null) return;
 
-    if (status === "APPROVED") {
-      patch.approvedAt = serverTimestamp();
-      patch.approvedBy = uName || user.email || "APPROVER";
-    } else {
-      patch.rejectedAt = serverTimestamp();
-      patch.rejectedBy = uName || user.email || "APPROVER";
-      patch.rejectReason = rejectReason; // ✅ rules อนุญาตอยู่แล้ว
+      await hrApproveLeaveRequest(r.id, actor, String(c || "").trim() || undefined);
+      await dialog.success("ส่งต่อให้ผู้บริหารแล้ว", { title: "อนุมัติ (ขั้น HR) สำเร็จ" });
+    } catch (e: any) {
+      await dialog.alert(e?.message || String(e), { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function doHRReject(r: LeaveRequestDoc) {
+    const reason = await promptReason("HR ไม่อนุมัติ", "danger");
+    if (!reason) return;
+
+    setBusyId(r.id);
+    try {
+      await hrRejectLeaveRequest(r.id, actor, reason);
+      await dialog.success("อัปเดตสถานะเรียบร้อย", { title: "ไม่อนุมัติ (HR) สำเร็จ" });
+    } catch (e: any) {
+      await dialog.alert(e?.message || String(e), { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function doMgrApprove(r: LeaveRequestDoc) {
+    const hrOk = String((r as any).hrStatus || "").toUpperCase() === "APPROVED";
+    if (!hrOk && role !== "ADMIN") {
+      await dialog.alert("คำร้องนี้ยังไม่ผ่าน HR", { title: "ทำรายการไม่ได้", variant: "danger" });
+      return;
     }
 
-    await updateDoc(doc(db, COL, id), patch);
+    setBusyId(r.id);
+    try {
+      const c = await dialog.prompt("เพิ่มหมายเหตุ (ไม่ใส่ก็ได้)", {
+        title: "ผู้บริหารอนุมัติ",
+        confirmText: "อนุมัติ",
+        cancelText: "ยกเลิก",
+        variant: "success",
+        required: false,
+        maxLen: 300,
+        placeholder: "หมายเหตุถึงพนักงาน...",
+        label: "หมายเหตุ",
+        size: "md",
+      });
+      if (c === null) return;
 
-    await dialog.success("อัปเดตสถานะเรียบร้อยแล้ว", {
-      title: status === "APPROVED" ? "อนุมัติสำเร็จ" : "ไม่อนุมัติสำเร็จ",
-    });
-  } catch (e: any) {
-    console.error(e);
-    await dialog.alert(e?.message || String(e), { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
-  } finally {
-    setBusyId("");
+      await managerApproveLeaveRequest(r.id, actor, String(c || "").trim() || undefined);
+      await dialog.success("อัปเดตสถานะเรียบร้อย", { title: "อนุมัติสำเร็จ" });
+    } catch (e: any) {
+      await dialog.alert(e?.message || String(e), { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
+    } finally {
+      setBusyId("");
+    }
   }
-}
 
+  async function doMgrReject(r: LeaveRequestDoc) {
+    const hrOk = String((r as any).hrStatus || "").toUpperCase() === "APPROVED";
+    if (!hrOk && role !== "ADMIN") {
+      await dialog.alert("คำร้องนี้ยังไม่ผ่าน HR", { title: "ทำรายการไม่ได้", variant: "danger" });
+      return;
+    }
 
-  async function askDelete(r: LeaveDoc) {
-    const who = pickStr(r.employeeName, r.email, "-");
-    const reqNo = pickStr(r.requestNo, r.id);
+    const reason = await promptReason("ผู้บริหารไม่อนุมัติ", "danger");
+    if (!reason) return;
+
+    setBusyId(r.id);
+    try {
+      await managerRejectLeaveRequest(r.id, actor, reason);
+      await dialog.success("อัปเดตสถานะเรียบร้อย", { title: "ไม่อนุมัติ (ผู้บริหาร) สำเร็จ" });
+    } catch (e: any) {
+      await dialog.alert(e?.message || String(e), { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function doCancel(r: LeaveRequestDoc) {
+    const reason = await promptReason("ยกเลิกคำร้องนี้", "warning");
+    if (!reason) return;
+
+    setBusyId(r.id);
+    try {
+      const byRole = (role === "HR" ? "HR" : role === "EXECUTIVE_MANAGER" ? "EXECUTIVE_MANAGER" : "ADMIN") as
+        | "HR"
+        | "EXECUTIVE_MANAGER"
+        | "ADMIN";
+      await approverCancelLeaveRequest(r.id, actor, byRole, reason);
+      await dialog.success("ยกเลิกคำร้องเรียบร้อย", { title: "ยกเลิกสำเร็จ" });
+    } catch (e: any) {
+      await dialog.alert(e?.message || String(e), { title: "ทำรายการไม่สำเร็จ", variant: "danger" });
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function doDelete(r: LeaveRequestDoc) {
+    const who = pickStr((r as any).employeeName, r.email, "-");
+    const reqNo = pickStr((r as any).requestNo, r.id);
 
     const ok = await dialog.confirm(`คุณกำลังจะลบ: ${who} · ${reqNo}`, {
       title: "ยืนยันลบคำร้องนี้",
@@ -169,15 +229,13 @@ export default function LeaveApprovePage() {
       variant: "danger",
       size: "md",
     });
-
     if (!ok) return;
 
     setBusyId(r.id);
     try {
-      await deleteDoc(doc(db, COL, r.id));
+      await adminDeleteLeaveRequest(r.id);
       await dialog.success("ลบคำร้องเรียบร้อยแล้ว", { title: "ลบสำเร็จ" });
     } catch (e: any) {
-      console.error(e);
       await dialog.alert(e?.message || String(e), { title: "ลบไม่สำเร็จ", variant: "danger" });
     } finally {
       setBusyId("");
@@ -195,20 +253,34 @@ export default function LeaveApprovePage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      {/* ✅ เอากรอบใหญ่ด้านหลังออก: เหลือแค่พื้นที่โปร่งๆ */}
+      <div className="space-y-4">
         {loading ? (
-          <div className="text-sm text-gray-600 dark:text-gray-300">กำลังโหลดข้อมูล…</div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+            กำลังโหลดข้อมูล…
+          </div>
         ) : err ? (
-          <div className="text-sm font-semibold text-red-600">โหลดไม่สำเร็จ: {err}</div>
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm font-semibold text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/10 dark:text-rose-200">
+            โหลดไม่สำเร็จ: {err}
+          </div>
         ) : rows.length === 0 ? (
-          <div className="text-sm text-gray-600 dark:text-gray-300">ไม่มีคำขอที่รออนุมัติ</div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+            ไม่มีคำขอในคิวของคุณ
+          </div>
         ) : (
           <div className="grid gap-4">
-            {rows.map((r) => {
+            {rows.map((r: any) => {
               const who = pickStr(r.employeeName, r.email, "-");
               const reqNo = pickStr(r.requestNo, r.id);
               const when = `${pickStr(r.startAt, "-")} → ${pickStr(r.endAt, "-")}`;
               const isBusy = busyId === r.id;
+
+              const hrS = String(r.hrStatus || "PENDING");
+              const mgrS = String(r.managerStatus || "LOCKED");
+              const overall = String(r.overallStatus || "");
+
+              const hrApproved = String(r.hrStatus || "").toUpperCase() === "APPROVED";
+              const mgrLocked = !hrApproved;
 
               return (
                 <div
@@ -237,39 +309,84 @@ export default function LeaveApprovePage() {
 
                       <div className="mt-3 text-xs font-semibold text-gray-500 dark:text-gray-400">
                         เลขคำร้อง: <span className="font-extrabold text-gray-800 dark:text-gray-100">{reqNo}</span>
+                        {overall ? <span className="ml-2 text-[11px] text-gray-400">({overall})</span> : null}
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+                        <span className={`rounded-full px-3 py-1 ${badge(hrS)}`}>HR: {hrS}</span>
+                        <span className={`rounded-full px-3 py-1 ${badge(mgrS)}`}>ผู้บริหาร: {mgrS}</span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => setStatus(r.id, "APPROVED")}
-                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-emerald-700 disabled:opacity-60"
-                      >
-                        อนุมัติ
-                      </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canHR && role === "HR" && (
+                        <>
+                          <AppButton variant="primary" disabled={isBusy} onClick={() => doHRApprove(r)}>
+                            HR อนุมัติ
+                          </AppButton>
+                          <AppButton variant="danger" disabled={isBusy} onClick={() => doHRReject(r)}>
+                            HR ไม่อนุมัติ
+                          </AppButton>
+                          <AppButton variant="outline" disabled={isBusy} onClick={() => doCancel(r)}>
+                            ยกเลิก
+                          </AppButton>
+                        </>
+                      )}
 
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => setStatus(r.id, "REJECTED")}
-                        className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-rose-700 disabled:opacity-60"
-                      >
-                        ไม่อนุมัติ
-                      </button>
+                      {canMgr && role === "EXECUTIVE_MANAGER" && (
+                        <>
+                          <AppButton variant="primary" disabled={isBusy || mgrLocked} onClick={() => doMgrApprove(r)}>
+                            อนุมัติ
+                          </AppButton>
+                          <AppButton variant="danger" disabled={isBusy || mgrLocked} onClick={() => doMgrReject(r)}>
+                            ไม่อนุมัติ
+                          </AppButton>
+                          <AppButton variant="outline" disabled={isBusy} onClick={() => doCancel(r)}>
+                            ยกเลิก
+                          </AppButton>
+                        </>
+                      )}
 
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => askDelete(r)}
-                        className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                        title="ลบคำร้อง"
-                      >
-                        ลบ
-                      </button>
+                      {isAdmin && role === "ADMIN" && (
+                        <>
+                          {String((r as any).overallStatus || "").toUpperCase() === "PENDING_HR" ? (
+                            <>
+                              <AppButton variant="primary" disabled={isBusy} onClick={() => doHRApprove(r)}>
+                                (ADMIN) HR Approve
+                              </AppButton>
+                              <AppButton variant="danger" disabled={isBusy} onClick={() => doHRReject(r)}>
+                                (ADMIN) HR Reject
+                              </AppButton>
+                            </>
+                          ) : null}
+
+                          {String((r as any).overallStatus || "").toUpperCase() === "PENDING_MANAGER" ? (
+                            <>
+                              <AppButton variant="primary" disabled={isBusy} onClick={() => doMgrApprove(r)}>
+                                (ADMIN) Mgr Approve
+                              </AppButton>
+                              <AppButton variant="danger" disabled={isBusy} onClick={() => doMgrReject(r)}>
+                                (ADMIN) Mgr Reject
+                              </AppButton>
+                            </>
+                          ) : null}
+
+                          <AppButton variant="outline" disabled={isBusy} onClick={() => doCancel(r)}>
+                            Cancel
+                          </AppButton>
+                          <AppButton variant="outline" disabled={isBusy} onClick={() => doDelete(r)}>
+                            Delete
+                          </AppButton>
+                        </>
+                      )}
                     </div>
                   </div>
+
+                  {role === "EXECUTIVE_MANAGER" && mgrLocked ? (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/10 dark:text-amber-200">
+                      รอ HR อนุมัติก่อน จึงจะดำเนินการในขั้นผู้บริหารได้
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

@@ -1,14 +1,23 @@
 // LeaveSubmitPage.tsx
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../context/AuthContext";
-import { createLeaveRequestWithFiles } from "../services/leaveRequests";
-import { useNavigate } from "react-router-dom";
+import {
+  createLeaveRequestWithFiles,
+  getLeaveRequestById,
+  updateMyPendingLeaveRequest,
+  deleteFilesFromLeaveRequest,
+  getAttachmentKey,
+  type LeaveAttachment,
+} from "../services/leaveRequests";
+
+import { getSignedUrl } from "../services/files";
+
+import { useLocation, useNavigate } from "react-router-dom";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import { useDialogCenter } from "../components/common/DialogCenter";
 import AppButton from "../components/common/AppButton";
 import PageMeta from "../components/common/PageMeta";
-import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import { inputTheme } from "../components/ui/theme/inputTheme";
 
 // ✅ เปลี่ยน path ให้ตรงกับ Router ของคุณ
@@ -113,7 +122,9 @@ function SelectBox<T extends string>({
             if (e.key === "Enter" || e.key === " ") setOpen((v) => !v);
           }}
         >
-          <span className={selected ? "text-gray-900 dark:text-gray-100" : "text-gray-400"}>{selected?.label ?? placeholder}</span>
+          <span className={selected ? "text-gray-900 dark:text-gray-100" : "text-gray-400"}>
+            {selected?.label ?? placeholder}
+          </span>
 
           <span className="flex items-center gap-2 text-gray-500">
             {clearable && value && !disabled && (
@@ -419,10 +430,36 @@ function EntitlementRow({
   );
 }
 
-export default function LeaveSubmitPage() {
+type LeaveSubmitPageProps = {
+  embedded?: boolean;
+  editId?: string;
+  onDone?: () => void;
+  onCancel?: () => void;
+};
+
+export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   const { user } = useAuth();
-  const navigate = useNavigate();
+  const _navigate = useNavigate();
+
+  const allowGoMyLeavesRef = useRef(false);
+
   const dialog = useDialogCenter();
+  const location = useLocation();
+
+  const embedded = !!props.embedded;
+  const urlEditId = useMemo(() => {
+    try {
+      return new URLSearchParams(location.search).get("edit") || "";
+    } catch {
+      return "";
+    }
+  }, [location.search]);
+
+  const effectiveEditId = String(props.editId || "").trim() || urlEditId;
+  const isEdit = !!effectiveEditId;
+
+  const [loadingEdit, setLoadingEdit] = useState(false);
+  const [editLoadErr, setEditLoadErr] = useState<string>("");
 
   const [category, setCategory] = useState<LeaveCategory | "">("");
   const [subType, setSubType] = useState<LeaveSubType | "">("");
@@ -439,11 +476,118 @@ export default function LeaveSubmitPage() {
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ✅ ไฟล์เดิมในคำร้อง (ตอน Edit)
+  const [existingAttachments, setExistingAttachments] = useState<LeaveAttachment[]>([]);
+  const [deletingKey, setDeletingKey] = useState<string>("");
+
+  function navigate(to: any, opts?: any) {
+  console.group("🚨 NAVIGATE called");
+  console.log("to =", to, "opts =", opts);
+  console.trace("stack");
+  console.groupEnd();
+  return _navigate(to, opts);
+}
+  function toArrayMaybe(x: any): any[] {
+    if (!x) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x === "object") return Object.values(x);
+    return [];
+  }
+  function pickAttachmentsFromDoc(doc: any): LeaveAttachment[] {
+    const raw =
+      doc?.attachments ??
+      doc?.files ??
+      doc?.attachment ??
+      doc?.fileAttachments ??
+      doc?.uploadedFiles ??
+      doc?.storagePaths ??
+      null;
+    return toArrayMaybe(raw) as any;
+  }
+  function attachmentKeySafe(a: any): string {
+    return pickStr(getAttachmentKey(a), a?.key, a?.storagePath, a?.path, a?.url, a?.name, a?.originalName);
+  }
+
+  // =======================
+  // ✅ Edit mode: โหลดคำร้องเดิมมาเติมฟอร์ม
+  // =======================
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      setEditLoadErr("");
+      if (!isEdit) return;
+
+      if (!user?.uid) {
+        setEditLoadErr("ยังไม่เข้าสู่ระบบ");
+        return;
+      }
+
+      setLoadingEdit(true);
+      try {
+        const doc = await getLeaveRequestById(effectiveEditId);
+        if (!alive) return;
+
+        if (!doc) {
+          setEditLoadErr("ไม่พบคำร้องนี้");
+          return;
+        }
+
+        // ✅ ต้องเป็นเจ้าของคำร้อง
+        if (String((doc as any).uid || "") !== String(user.uid || "")) {
+          setEditLoadErr("คุณไม่มีสิทธิ์แก้ไขคำร้องนี้");
+          return;
+        }
+
+        // ✅ แก้ได้เฉพาะตอนยังรอ HR
+        const status = String((doc as any).status || "").toUpperCase();
+        const overall = String((doc as any).overallStatus || "").toUpperCase();
+        const okOverall = !overall || overall === "PENDING_HR";
+        if (status !== "PENDING" || !okOverall) {
+          setEditLoadErr("คำร้องนี้ถูกดำเนินการแล้ว (แก้ไขไม่ได้)");
+          return;
+        }
+
+        // ✅ เติมค่าลงฟอร์ม
+        setCategory(((doc as any).category || "") as any);
+        setSubType(((doc as any).subType || "") as any);
+
+        if ((doc as any).startAt) setStartDT(String((doc as any).startAt));
+        if ((doc as any).endAt) setEndDT(String((doc as any).endAt));
+
+        setReason(String((doc as any).reason || ""));
+        setRetroReason(String((doc as any).retroReason || ""));
+
+        // ✅ ไฟล์เดิมในคำร้อง (โชว์ไฟล์ล่าสุด)
+        const atts = pickAttachmentsFromDoc(doc);
+        setExistingAttachments(atts);
+        setDeletingKey("");
+
+        // ไฟล์ใหม่ (ที่เลือกเพิ่ม) ให้เริ่มเป็นว่าง
+        setFiles([]);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      } catch (e: any) {
+        console.error("load edit leave error:", e);
+        setEditLoadErr(e?.message || String(e));
+      } finally {
+        if (alive) setLoadingEdit(false);
+      }
+    }
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [isEdit, effectiveEditId, user?.uid]);
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [uploadPct, setUploadPct] = useState<number>(0);
 
   useEffect(() => {
+    // ✅ ตอนแก้ไข (Edit) ไม่ให้ reset ประเภทย่อยทิ้ง
+    if (isEdit) return;
+
     if (category === "ลาพักร้อน") setSubType("ลาพักร้อน");
     else setSubType("");
 
@@ -453,7 +597,7 @@ export default function LeaveSubmitPage() {
       delete next.category;
       return next;
     });
-  }, [category]);
+  }, [category, isEdit]);
 
   const timedInvalid = isEndBeforeStart(startDT, endDT);
 
@@ -753,6 +897,11 @@ export default function LeaveSubmitPage() {
   };
 
   const handleResetClick = async () => {
+    console.log("SUBMIT FIRED");
+    if (embedded && isEdit) {
+      props.onCancel?.();
+      return;
+    }
     const ok = await dialog.confirm("ต้องการล้างฟอร์มนี้ใช่ไหม?", {
       title: "ยืนยันการล้างฟอร์ม",
       variant: "danger",
@@ -766,6 +915,9 @@ export default function LeaveSubmitPage() {
 
   const validate = () => {
     const e: Record<string, string> = {};
+
+    const existingCount = isEdit ? (existingAttachments?.length || 0) : 0;
+    const totalFileCount = existingCount + (files?.length || 0);
 
     if (!category) e.category = "กรุณาเลือกประเภทการลา";
     if (!subType) e.subType = "กรุณาเลือกประเภทย่อย";
@@ -789,7 +941,7 @@ export default function LeaveSubmitPage() {
       }
       if (isBusinessLeave) {
         const hasReason = !!retroReason.trim();
-        const hasFiles = (files || []).length > 0;
+        const hasFiles = totalFileCount > 0;
         if (!hasReason && !hasFiles) e.retroReason = "ลากิจย้อนหลัง: ต้องระบุเหตุผล หรือแนบไฟล์หลักฐาน";
       }
     }
@@ -826,7 +978,7 @@ export default function LeaveSubmitPage() {
     }
 
     if (isSick && !isSickInDay && workdaysCount >= 3 && isRetroactive) {
-      if (files.length === 0) e.files = "ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองแพทย์จากโรงพยาบาลตอนยื่น";
+      if (totalFileCount === 0) e.files = "ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองแพทย์จากโรงพยาบาลตอนยื่น";
     }
 
     if (isBusinessLeave && workdaysCount > 0) {
@@ -852,7 +1004,7 @@ export default function LeaveSubmitPage() {
       if (diffDays < 30) e.startDT = "ลาคลอดต้องยื่นล่วงหน้าอย่างน้อย 30 วัน";
     }
 
-    if (isMaternity && (files || []).length === 0) {
+    if (isMaternity && totalFileCount === 0) {
       e.files = "ลาคลอด: กรุณาแนบเอกสารประกอบ (เช่น สมุดฝากครรภ์/ใบรับรองแพทย์)";
     }
 
@@ -860,9 +1012,10 @@ export default function LeaveSubmitPage() {
     return e;
   };
 
-  const handleSubmit = async (ev: FormEvent<HTMLFormElement>) => {
-    ev.preventDefault();
-
+  // =======================
+  // ✅ SAVE (ไม่ใช้ form submit เพื่อกันเด้งตอนกดปุ่มอื่น เช่น ลบไฟล์/เปิดไฟล์)
+  // =======================
+  const doSave = async () => {
     if (!user?.uid) {
       await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "sm" });
       return;
@@ -880,6 +1033,75 @@ export default function LeaveSubmitPage() {
     setUploadPct(0);
 
     try {
+      // =======================
+      // ✅ UPDATE (edit)
+      // =======================
+      if (isEdit) {
+        const patch: any = {
+          category: category as any,
+          subType: subType as any,
+          startAt: startDT,
+          endAt: endDT,
+          reason,
+          workdaysCount: workdaysCount || 0,
+          isRetroactive: !!isRetroactive,
+          retroReason: isRetroactive ? retroReason.trim() : null,
+          requireMedicalCert: !!needMedicalCert,
+          medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
+
+          // ✅ สถานะใบรับรองแพทย์ (พิจารณาทั้งไฟล์เดิม + ไฟล์ใหม่ที่เลือกเพิ่ม)
+          medicalCertProvided: (() => {
+            if (!needMedicalCert) return false;
+            const existingCount = existingAttachments?.length || 0;
+            const total = existingCount + (files?.length || 0);
+            return total > 0;
+          })(),
+
+          // ถ้าแนบ "ไฟล์ใหม่" ตอนแก้ไข ค่อยบันทึก submittedAt/source
+          // - ถ้าไม่มีไฟล์เลย (เดิม+ใหม่) ให้เคลียร์ค่า (null)
+          // - ถ้าไม่ได้แนบเพิ่ม ให้คงค่าเดิมไว้ (undefined)
+          medicalCertSubmittedAt: (() => {
+            if (!needMedicalCert) return null;
+            const existingCount = existingAttachments?.length || 0;
+            const total = existingCount + (files?.length || 0);
+            if (total === 0) return null;
+            if ((files?.length || 0) > 0) return new Date().toISOString();
+            return (undefined as any);
+          })(),
+
+          medicalCertSource: (() => {
+            if (!needMedicalCert) return null;
+            const existingCount = existingAttachments?.length || 0;
+            const total = existingCount + (files?.length || 0);
+            if (total === 0) return null;
+            if ((files?.length || 0) > 0) return "UPLOADED_WITH_REQUEST";
+            return (undefined as any);
+          })(),
+        };
+
+        await updateMyPendingLeaveRequest(effectiveEditId, user.uid, patch, files, (p) => setUploadPct(p));
+
+        await loadYearUsageAll();
+        await loadUsageAllByYear(toAdYear(summaryYearTH));
+
+        setErrors({});
+        setFiles([]);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setUploadPct(0);
+
+        await dialog.alert("บันทึกการแก้ไขเรียบร้อย", { title: "แก้ไขคำร้องสำเร็จ", variant: "success", size: "md" });
+
+        if (embedded) props.onDone?.();
+        else {
+          if (allowGoMyLeavesRef.current) navigate(MY_LEAVES_PATH);
+        }
+
+        return;
+      }
+
+      // =======================
+      // ✅ CREATE (new)
+      // =======================
       const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
       const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
         (user as any)?.lname,
@@ -928,18 +1150,31 @@ export default function LeaveSubmitPage() {
       setRetroReason("");
 
       const requestNo = created.requestNo ?? created.id ?? "-";
-
       await dialog.alert(`เลขคำร้อง: ${requestNo}`, { title: "ส่งคำร้องสำเร็จ", variant: "success", size: "md" });
 
       resetAll();
-      navigate(MY_LEAVES_PATH);
+      if (embedded) props.onDone?.();
+      else {
+        if (allowGoMyLeavesRef.current) navigate(MY_LEAVES_PATH);
+      }
     } catch (err: any) {
       console.error(err);
       await dialog.alert(err?.message || String(err), { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "lg" });
     } finally {
+      allowGoMyLeavesRef.current = false;
       setSubmitting(false);
     }
   };
+
+  // ✅ กัน form submit ทุกกรณี (ฟอร์มนี้ "ห้าม" submit)
+// เหตุผล: มีหลาย action ในหน้า (เช่น ลบไฟล์/เปิดดูไฟล์/confirm dialog) ที่อาจทำให้เกิด submit โดยไม่ตั้งใจ
+// เราจะให้ "บันทึก/ส่งคำร้อง" เรียก doSave() ผ่านปุ่มโดยตรงเท่านั้น
+const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+  // ✅ ห้าม submit ทุกกรณี (กัน submit หลุดจาก dialog / enter / browser)
+  return;
+};
 
   // =======================
   // ✅ ConditionsBox (คง logic เดิม แค่เปลี่ยน wrapper ให้เป็นการ์ดสไตล์เดียวกัน)
@@ -949,8 +1184,7 @@ export default function LeaveSubmitPage() {
 
     const year = new Date().getFullYear();
 
-    const wrapCls =
-      "rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900";
+    const wrapCls = "rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900";
     const headerCls = "font-extrabold text-gray-900 dark:text-gray-100";
     const listCls = "mt-2 grid gap-1 text-sm text-gray-700 dark:text-gray-200";
 
@@ -1172,7 +1406,16 @@ export default function LeaveSubmitPage() {
   // ===== File UI helpers =====
   function onPickFiles(list: FileList | null) {
     if (!list) return;
-    setFiles(Array.from(list));
+    const picked = Array.from(list);
+    setFiles((prev) => {
+      const map = new Map<string, File>();
+      for (const f of prev) map.set(`${f.name}|${f.size}|${f.lastModified}`, f);
+      for (const f of picked) map.set(`${f.name}|${f.size}|${f.lastModified}`, f);
+      return Array.from(map.values());
+    });
+
+    // ✅ รีเซ็ต input เพื่อให้เลือกไฟล์เดิมซ้ำได้ (บาง browser ไม่ยิง onChange ถ้าเลือกไฟล์เดิม)
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
   function clearFiles() {
     setFiles([]);
@@ -1181,24 +1424,26 @@ export default function LeaveSubmitPage() {
 
   return (
     <>
-      <PageMeta title="Leave Submit | Smart HR" description="leave submit page" />
-      <PageBreadcrumb pageTitle="ยื่นใบลา" />
-
+      {!embedded && <PageMeta title="Leave Submit | Smart HR" description="leave submit page" />}
       <div className="space-y-6">
         {/* Header row */}
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ยื่นใบลา</h1>
-            <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">กรอกข้อมูลให้ครบ แล้วกดส่งคำร้อง</div>
-          </div>
+        {!embedded && (
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">{isEdit ? "แก้ไขคำร้องการลา" : "ยื่นใบลา"}</h1>
+              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {isEdit ? "แก้ไขข้อมูล แล้วกดบันทึกการแก้ไข" : "กรอกข้อมูลให้ครบ แล้วกดส่งคำร้อง"}
+              </div>
+            </div>
 
-          <AppButton variant="outline" disabled={submitting} onClick={handleResetClick}>
-            ล้างฟอร์ม
-          </AppButton>
-        </div>
+            <AppButton variant="outline" disabled={submitting} onClick={handleResetClick}>
+              ล้างฟอร์ม
+            </AppButton>
+          </div>
+        )}
 
         {/* ✅ เงื่อนไขด้านบน */}
-        {ConditionsBox}
+        {!embedded && ConditionsBox}
 
         {/* Upload progress */}
         {submitting && files.length > 0 && (
@@ -1211,260 +1456,416 @@ export default function LeaveSubmitPage() {
         )}
 
         {/* ===== เลือกประเภทการลา ===== */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
-                เลือกประเภทการลา <span className="text-red-500">*</span>
-              </label>
-              <SelectBox<LeaveCategory>
-                label=""
-                placeholder="ประเภทการลา"
-                value={category}
-                options={categoryOptions}
-                onChange={(v) => setCategory((v as LeaveCategory) || "")}
-                disabled={submitting}
-              />
-              {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
-                เลือกประเภทย่อย <span className="text-red-500">*</span>
-              </label>
-              <SelectBox<LeaveSubType>
-                label=""
-                placeholder="ประเภทย่อย"
-                value={subType}
-                options={subTypeOptions}
-                onChange={(v) => setSubType((v as LeaveSubType) || "")}
-                disabled={!category || submitting}
-              />
-              {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
-            </div>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* ช่วงเวลา */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-            <div>
-              <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ช่วงเวลาการลา</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ระบุวัน-เวลาเริ่ม และวัน-เวลาสิ้นสุด</div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div>
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  วัน-เวลาเริ่มลา<span className="ml-1 text-red-500">*</span>
-                </div>
-                <input
-                  type="datetime-local"
-                  value={startDT}
-                  onChange={(e) => setStartDT(e.target.value)}
-                  disabled={submitting}
-                  className={`${inputTheme.control} mt-2`}
-                />
-                {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
-                {(errors.businessLimit ||
-                  errors.sickLimit ||
-                  errors.vacationLimit ||
-                  errors.maternityLimit ||
-                  errors.militaryLimit) && (
-                  <p className="mt-2 text-xs font-semibold text-red-600">
-                    {errors.businessLimit ||
-                      errors.sickLimit ||
-                      errors.vacationLimit ||
-                      errors.maternityLimit ||
-                      errors.militaryLimit}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  วัน-เวลาสิ้นสุดลา<span className="ml-1 text-red-500">*</span>
-                </div>
-                <input
-                  type="datetime-local"
-                  value={endDT}
-                  onChange={(e) => setEndDT(e.target.value)}
-                  disabled={submitting}
-                  className={[
-                    inputTheme.control,
-                    "mt-2",
-                    timedInvalid || violateBusinessHours ? "border-red-400 focus:border-red-500 focus:ring-red-500/20" : "",
-                  ].join(" ")}
-                />
-                {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
-              </div>
-            </div>
-
-            {isSickInDay && (
-              <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">* ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
-            )}
-          </div>
-
-          {/* ย้อนหลัง */}
-          {isRetroactive && (
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">หมายเหตุ/ชี้แจงการยื่นย้อนหลัง</div>
-              <textarea
-                value={retroReason}
-                onChange={(e) => setRetroReason(e.target.value)}
-                rows={4}
-                placeholder="อธิบายเหตุผลที่ยื่นย้อนหลัง (เช่น เข้ารพ./ไม่มีสัญญาณ/อยู่ระหว่างการรักษา ฯลฯ)"
-                disabled={submitting}
-                className={`${inputTheme.textarea} mt-2`}
-              />
-              {errors.retroReason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.retroReason}</p>}
-            </div>
-          )}
-
-          {/* เหตุผล + ไฟล์ */}
+        {!isEdit ? (
           <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <div>
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  เหตุผล / รายละเอียด{!isVacation && <span className="ml-1 text-red-500">*</span>}
-                </div>
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  rows={6}
-                  placeholder="พิมพ์เหตุผลการลา…"
+                <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  เลือกประเภทการลา <span className="text-red-500">*</span>
+                </label>
+                <SelectBox<LeaveCategory>
+                  label=""
+                  placeholder="ประเภทการลา"
+                  value={category}
+                  options={categoryOptions}
+                  onChange={(v) => setCategory((v as LeaveCategory) || "")}
                   disabled={submitting}
-                  className={`${inputTheme.textarea} mt-2`}
                 />
-                {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
+                {errors.category && <p className="mt-2 text-xs font-semibold text-red-600">{errors.category}</p>}
               </div>
 
               <div>
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  แนบไฟล์ (PDF/รูป){isMaternity && <span className="ml-1 text-red-500">*</span>}
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  disabled={submitting}
-                  accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
-                  onChange={(e) => onPickFiles(e.target.files)}
-                  className="hidden"
+                <label className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  เลือกประเภทย่อย <span className="text-red-500">*</span>
+                </label>
+                <SelectBox<LeaveSubType>
+                  label=""
+                  placeholder="ประเภทย่อย"
+                  value={subType}
+                  options={subTypeOptions}
+                  onChange={(v) => setSubType((v as LeaveSubType) || "")}
+                  disabled={!category || submitting}
                 />
-
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <AppButton variant="outline" disabled={submitting} onClick={() => fileInputRef.current?.click()}>
-                    เลือกไฟล์
-                  </AppButton>
-
-                  <AppButton variant="danger" size="sm" disabled={submitting || files.length === 0} onClick={clearFiles}>
-                    ลบทั้งหมด
-                  </AppButton>
-
-                  <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                    {files.length ? `เลือกแล้ว ${files.length} ไฟล์` : "ยังไม่ได้เลือกไฟล์"}
-                  </div>
-                </div>
-
-                {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
-
-                {isMaternity && (
-                  <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">* ลาคลอด: ต้องแนบเอกสารประกอบก่อนส่งคำร้อง</p>
-                )}
-
-                <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
-                  <div className="font-semibold">ไฟล์ที่เลือก</div>
-                  {files.length === 0 ? (
-                    <div className="mt-2 text-gray-500 dark:text-gray-400">ยังไม่ได้เลือกไฟล์</div>
-                  ) : (
-                    <ul className="mt-2 list-disc space-y-1 pl-5">
-                      {files.map((f) => (
-                        <li key={`${f.name}-${f.size}-${f.lastModified}`}>
-                          {f.name} <span className="text-gray-500">({Math.ceil(f.size / 1024)} KB)</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
-                <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">* ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend</div>
+                {errors.subType && <p className="mt-2 text-xs font-semibold text-red-600">{errors.subType}</p>}
               </div>
             </div>
           </div>
+        ) : (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div>
+                <div className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">ประเภทการลา</div>
+                <div className="mt-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-extrabold text-gray-900 dark:border-violet-900/40 dark:bg-violet-900/20 dark:text-gray-100">
+                  {category || "-"}
+                </div>
+              </div>
 
-          {/* Submit button (ขวาล่างเหมือนเดิม) */}
+              <div>
+                <div className="mb-1 block text-sm font-semibold text-gray-900 dark:text-gray-100">ประเภทย่อย</div>
+                <div className="mt-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-extrabold text-gray-900 dark:border-violet-900/40 dark:bg-violet-900/20 dark:text-gray-100">
+                  {subType || "-"}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 text-xs font-semibold text-gray-500 dark:text-gray-400">* โหมดแก้ไข: ไม่สามารถเปลี่ยนประเภท/ประเภทย่อยได้</div>
+          </div>
+        )}
+
+        {/* ✅ FORM: ครอบเฉพาะข้อมูลการลา (กัน submit หลุดจาก dialog ในส่วนไฟล์) */}
+          <form id="leaveForm" onSubmit={handleFormSubmit} className="space-y-6">
+            {/* ช่วงเวลา */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+              <div>
+                <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ช่วงเวลาการลา</div>
+                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ระบุวัน-เวลาเริ่ม และวัน-เวลาสิ้นสุด</div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <div>
+                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    วัน-เวลาเริ่มลา<span className="ml-1 text-red-500">*</span>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={startDT}
+                    onChange={(e) => setStartDT(e.target.value)}
+                    disabled={submitting}
+                    className={`${inputTheme.control} mt-2`}
+                  />
+                  {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
+                  {(errors.businessLimit ||
+                    errors.sickLimit ||
+                    errors.vacationLimit ||
+                    errors.maternityLimit ||
+                    errors.militaryLimit) && (
+                    <p className="mt-2 text-xs font-semibold text-red-600">
+                      {errors.businessLimit ||
+                        errors.sickLimit ||
+                        errors.vacationLimit ||
+                        errors.maternityLimit ||
+                        errors.militaryLimit}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    วัน-เวลาสิ้นสุดลา<span className="ml-1 text-red-500">*</span>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={endDT}
+                    onChange={(e) => setEndDT(e.target.value)}
+                    disabled={submitting}
+                    className={[
+                      inputTheme.control,
+                      "mt-2",
+                      timedInvalid || violateBusinessHours ? "border-red-400 focus:border-red-500 focus:ring-red-500/20" : "",
+                    ].join(" ")}
+                  />
+                  {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
+                </div>
+              </div>
+
+              {isSickInDay && (
+                <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
+                  * ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00
+                </div>
+              )}
+            </div>
+
+            {/* ย้อนหลัง */}
+            {isRetroactive && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">หมายเหตุ/ชี้แจงการยื่นย้อนหลัง</div>
+                <textarea
+                  value={retroReason}
+                  onChange={(e) => setRetroReason(e.target.value)}
+                  rows={4}
+                  placeholder="อธิบายเหตุผลที่ยื่นย้อนหลัง (เช่น เข้ารพ./ไม่มีสัญญาณ/อยู่ระหว่างการรักษา ฯลฯ)"
+                  disabled={submitting}
+                  className={`${inputTheme.textarea} mt-2`}
+                />
+                {errors.retroReason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.retroReason}</p>}
+              </div>
+            )}
+
+            {/* ✅ เหตุผล (อยู่ใน form) */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                เหตุผล / รายละเอียด{!isVacation && <span className="ml-1 text-red-500">*</span>}
+              </div>
+
+              <textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={6}
+                placeholder="พิมพ์เหตุผลการลา…"
+                disabled={submitting}
+                className={`${inputTheme.textarea} mt-2`}
+              />
+
+              {errors.reason && <p className="mt-2 text-xs font-semibold text-red-600">{errors.reason}</p>}
+            </div>
+          </form>
+
+          {/* ✅ แนบไฟล์ (ย้ายออกนอก form เพื่อกัน dialog/ปุ่ม submit หลุด) */}
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+              แนบไฟล์ (PDF/รูป){isMaternity && <span className="ml-1 text-red-500">*</span>}
+            </div>
+
+            {/* ✅ Edit: แสดง “ไฟล์ทั้งหมดในคำร้อง” (เปิดดู/ลบได้) */}
+            {isEdit && (
+              <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-800 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-extrabold">ไฟล์ในคำร้อง</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {existingAttachments.length ? `${existingAttachments.length} ไฟล์` : "ไม่มีไฟล์เดิม"}
+                  </div>
+                </div>
+
+                {existingAttachments.length === 0 ? (
+                  <div className="mt-2 text-gray-500 dark:text-gray-400">ยังไม่มีไฟล์แนบในคำร้องนี้</div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {[...existingAttachments]
+                      .map((x: any, idx) => ({ x, idx }))
+                      .reverse()
+                      .map(({ x, idx }) => {
+                        const key = attachmentKeySafe(x);
+                        const name = pickStr(
+                          x?.originalName,
+                          x?.name,
+                          x?.fileName,
+                          x?.filename,
+                          key || `ไฟล์แนบ ${idx + 1}`
+                        );
+                        const canDelete = !!effectiveEditId && !!key && !submitting;
+                        const deleting = deletingKey === key;
+                        const isLatest = idx === existingAttachments.length - 1;
+
+                        return (
+                          <div
+                            key={`${key || name}-${idx}`}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="truncate font-semibold">{name}</div>
+                                {isLatest && (
+                                  <span className="rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[11px] font-extrabold text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">
+                                    ล่าสุด
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-0.5 break-all text-xs text-gray-500 dark:text-gray-400">{key}</div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <AppButton
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={!key || submitting || deleting}
+                                onClick={async (e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  try {
+                                    if (!key) return;
+                                    const url = await getSignedUrl(key);
+                                    if (url) window.open(url, "_blank", "noopener,noreferrer");
+                                  } catch (err: any) {
+                                    await dialog.alert(err?.message || String(err), {
+                                      title: "เปิดไฟล์ไม่สำเร็จ",
+                                      variant: "danger",
+                                      size: "md",
+                                    });
+                                  }
+                                }}
+                              >
+                                เปิดดู
+                              </AppButton>
+
+                              <AppButton
+                                type="button"
+                                variant="danger"
+                                size="sm"
+                                disabled={!canDelete || deleting}
+                                loading={deleting}
+                                onClick={async (e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  try {
+                                    if (!effectiveEditId || !key) return;
+
+                                    const ok = await dialog.confirm(
+                                      "ต้องการลบไฟล์นี้ออกจากคำร้องใช่ไหม? (ลบจริงในระบบ)",
+                                      {
+                                        title: "ลบไฟล์แนบ",
+                                        confirmText: "ลบไฟล์",
+                                        cancelText: "ยกเลิก",
+                                        variant: "danger",
+                                        size: "md",
+                                      } as any
+                                    );
+
+                                    if (!ok) return;
+
+                                    setDeletingKey(key);
+                                    await deleteFilesFromLeaveRequest({ requestId: effectiveEditId, keys: [key] });
+                                    setExistingAttachments((prev) => prev.filter((p: any) => attachmentKeySafe(p) !== key));
+                                  } catch (err: any) {
+                                    await dialog.alert(err?.message || String(err), {
+                                      title: "ลบไฟล์ไม่สำเร็จ",
+                                      variant: "danger",
+                                      size: "md",
+                                    });
+                                  } finally {
+                                    setDeletingKey("");
+                                  }
+                                }}
+                              >
+                                ลบไฟล์
+                              </AppButton>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              disabled={submitting}
+              accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+              onChange={(e) => onPickFiles(e.target.files)}
+              className="hidden"
+            />
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <AppButton type="button" variant="outline" disabled={submitting} onClick={() => fileInputRef.current?.click()}>
+                เลือกไฟล์
+              </AppButton>
+
+              <AppButton type="button" variant="danger" size="sm" disabled={submitting || files.length === 0} onClick={clearFiles}>
+                ลบทั้งหมด
+              </AppButton>
+
+              <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                {files.length ? `เลือกแล้ว ${files.length} ไฟล์` : "ยังไม่ได้เลือกไฟล์"}
+              </div>
+            </div>
+
+            {errors.files && <p className="mt-2 text-xs font-semibold text-red-600">{errors.files}</p>}
+
+            {isMaternity && (
+              <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
+                * ลาคลอด: ต้องแนบเอกสารประกอบก่อนส่งคำร้อง
+              </p>
+            )}
+
+            <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
+              <div className="font-semibold">ไฟล์ที่เลือก</div>
+              {files.length === 0 ? (
+                <div className="mt-2 text-gray-500 dark:text-gray-400">ยังไม่ได้เลือกไฟล์</div>
+              ) : (
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {files.map((f) => (
+                    <li key={`${f.name}-${f.size}-${f.lastModified}`}>
+                      {f.name} <span className="text-gray-500">({Math.ceil(f.size / 1024)} KB)</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">* ไฟล์จะถูกอัปโหลดไป Supabase Storage ผ่าน Backend</div>
+          </div>
+
+          {/* ✅ Submit button: อยู่นอก form แต่ submit ได้ด้วย form="leaveForm" */}
           <div className="flex justify-end">
             <AppButton
-              type="submit"
+              type="button"
+              data-action="save"
               variant="primary"
               disabled={submitting}
               loading={submitting}
+              onClick={() => {
+                if (submitting) return;
+                console.log("SAVE CLICKED", new Date().toISOString());
+                allowGoMyLeavesRef.current = true;
+                void doSave();
+              }}
             >
-              {submitting ? "กำลังส่ง..." : "ส่งคำร้อง"}
+              {submitting ? "กำลังบันทึก..." : isEdit ? "บันทึกการแก้ไข" : "ส่งคำร้อง"}
             </AppButton>
           </div>
-          </form>
 
         {/* รวมสิทธิการลาทั้งหมด */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">รวมสิทธิการลาทั้งหมด</div>
-              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
+        {!embedded && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">รวมสิทธิการลาทั้งหมด</div>
+                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
+              </div>
+
+              <div className="min-w-[180px]">
+                <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เลือกปี (พ.ศ.)</div>
+                <select
+                  value={String(summaryYearTH)}
+                  onChange={(e) => setSummaryYearTH(Number(e.target.value))}
+                  className={`${inputTheme.control} mt-2`}
+                >
+                  {summaryYearOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <div className="min-w-[180px]">
-              <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">เลือกปี (พ.ศ.)</div>
-              <select
-                value={String(summaryYearTH)}
-                onChange={(e) => setSummaryYearTH(Number(e.target.value))}
-                className={`${inputTheme.control} mt-2`}
-              >
-                {summaryYearOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+            {summaryErr && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                * โหลดข้อมูลย้อนหลังไม่สำเร็จ: {summaryErr}
+              </div>
+            )}
+
+            <div className="mt-6 grid gap-4">
+              <EntitlementRow title="ลาป่วย (รวม)" total={LIMIT_SICK} used={summarySickUsed} loading={summaryLoading} />
+              <EntitlementRow title="ลากิจ" total={LIMIT_BUSINESS} used={summaryBizUsed} loading={summaryLoading} />
+              <EntitlementRow title="ลาพักร้อนประจำปี" total={LIMIT_VACATION} used={summaryVacationUsed} loading={summaryLoading} />
+              <EntitlementRow
+                title="ลาคลอด"
+                total={LIMIT_MATERNITY}
+                used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0}
+                loading={summaryLoading}
+              />
+              <EntitlementRow
+                title="ลาเพื่อทำหมัน"
+                total={LIMIT_STERILIZATION}
+                used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0}
+                loading={summaryLoading}
+              />
+              <EntitlementRow
+                title="ลาเพื่อรับราชการทหาร"
+                total={LIMIT_MILITARY}
+                used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0}
+                loading={summaryLoading}
+              />
+            </div>
+
+            <div className="mt-5 text-xs text-gray-500 dark:text-gray-400">
+              * หมายเหตุ: ไม่นับคำร้องที่ “ไม่อนุมัติ/REJECTED” และ “ยกเลิก/CANCELED”
             </div>
           </div>
-
-          {summaryErr && (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
-              * โหลดข้อมูลย้อนหลังไม่สำเร็จ: {summaryErr}
-            </div>
-          )}
-
-          <div className="mt-6 grid gap-4">
-            <EntitlementRow title="ลาป่วย (รวม)" total={LIMIT_SICK} used={summarySickUsed} loading={summaryLoading} />
-            <EntitlementRow title="ลากิจ" total={LIMIT_BUSINESS} used={summaryBizUsed} loading={summaryLoading} />
-            <EntitlementRow title="ลาพักร้อนประจำปี" total={LIMIT_VACATION} used={summaryVacationUsed} loading={summaryLoading} />
-            <EntitlementRow
-              title="ลาคลอด"
-              total={LIMIT_MATERNITY}
-              used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0}
-              loading={summaryLoading}
-            />
-            <EntitlementRow
-              title="ลาเพื่อทำหมัน"
-              total={LIMIT_STERILIZATION}
-              used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0}
-              loading={summaryLoading}
-            />
-            <EntitlementRow
-              title="ลาเพื่อรับราชการทหาร"
-              total={LIMIT_MILITARY}
-              used={summaryUsedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0}
-              loading={summaryLoading}
-            />
-          </div>
-
-          <div className="mt-5 text-xs text-gray-500 dark:text-gray-400">
-            * หมายเหตุ: ไม่นับคำร้องที่ “ไม่อนุมัติ/REJECTED” และ “ยกเลิก/CANCELED”
-          </div>
-        </div>
+        )}
       </div>
     </>
   );
