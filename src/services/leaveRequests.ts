@@ -164,6 +164,17 @@ async function postJson(path: string, body: any) {
   return data;
 }
 
+/** ✅ notify backend หลังสร้างคำร้อง (เพื่อยิง noti+sms) */
+async function notifySubmitSafe(leaveId: string) {
+  if (!leaveId) return;
+  try {
+    await postJson(`/leave-requests/${leaveId}/notify-submit`, {});
+  } catch (e) {
+    // ไม่ให้ submit พัง ถ้า backend มีปัญหาชั่วคราว
+    console.warn("notify-submit failed:", e);
+  }
+}
+
 export function getAttachmentKey(att: any): string | null {
   return String(att?.storagePath || att?.key || "").trim() || null;
 }
@@ -263,7 +274,7 @@ export async function getLeaveRequestById(id: string): Promise<LeaveRequestDoc |
   return { id: snap.id, ...(snap.data() as any) } as LeaveRequestDoc;
 }
 
-/** ✅ create: ตั้งค่า workflow 2 ชั้นตั้งแต่ต้น */
+/** ✅ create: ตั้งค่า workflow 2 ชั้นตั้งแต่ต้น + notify backend เพื่อยิง noti/sms */
 export async function createLeaveRequest(
   payload: Omit<LeaveRequestDoc, "id" | "requestNo" | "status" | "submittedAt" | "updatedAt">
 ) {
@@ -295,6 +306,9 @@ export async function createLeaveRequest(
     submittedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  // ✅ แจ้ง backend เพื่อส่ง SMS/Noti (HR ทุกคน + ผู้ยื่น)
+  await notifySubmitSafe(docRef.id);
 
   return { id: docRef.id, requestNo };
 }
@@ -368,35 +382,14 @@ export async function updateMyPendingLeaveRequest(
   await updateDoc(doc(db, "leave_requests", id), out);
 }
 
-/** ✅ cancel โดย “เจ้าของ” (ได้เฉพาะตอนยังรอ HR) */
-export async function cancelMyPendingLeaveRequest(id: string, by: Actor, reason: string) {
+/** ✅ cancel โดย “เจ้าของ” (ได้เฉพาะตอนยังรอ HR) -> ต้องเรียก backend เพื่อให้ส่ง SMS */
+export async function cancelMyPendingLeaveRequest(id: string, _by: Actor, reason: string) {
   if (!id) throw new Error("MISSING_ID");
-  if (!by?.uid) throw new Error("MISSING_ACTOR");
   const r = String(reason || "").trim();
   if (!r) throw new Error("MISSING_CANCEL_REASON");
 
-  await updateDoc(doc(db, "leave_requests", id), {
-    status: "CANCELED",
-    overallStatus: "CANCELED",
-
-    hrStatus: "CANCELED",
-    hrComment: r,
-    hrActionAt: serverTimestamp(),
-    hrActionBy: by,
-
-    managerStatus: "LOCKED",
-    managerComment: null,
-    managerActionAt: null,
-    managerActionBy: null,
-
-    canceledByRole: "USER",
-    canceledBy: by,
-    canceledReason: r,
-    canceledAt: serverTimestamp(),
-
-    decidedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
+  // ✅ ให้ backend เป็นคน patch + ส่ง SMS
+  await postJson(`/leave-requests/${id}/cancel`, { reason: r });
 }
 
 /** ✅ Queue สำหรับ Approver ตาม role */
@@ -454,131 +447,56 @@ export function listenApproverQueue(
   return () => {};
 }
 
-/** ✅ HR approve -> ส่งต่อให้ผู้บริหาร */
-export async function hrApproveLeaveRequest(id: string, by: Actor, comment?: string) {
-  await updateDoc(doc(db, "leave_requests", id), {
-    // workflow
-    hrStatus: "APPROVED",
-    hrComment: comment?.trim() || null,
-    hrActionAt: serverTimestamp(),
-    hrActionBy: by,
-
-    managerStatus: "PENDING",
-    overallStatus: "PENDING_MANAGER",
-
-    // legacy: ยังไม่ final
-    status: "PENDING",
-
-    updatedAt: serverTimestamp(),
+/** ✅ HR approve -> ส่งต่อให้ผู้บริหาร (เรียก backend เพื่อให้ SMS ส่งจริง) */
+export async function hrApproveLeaveRequest(id: string, _by: Actor, comment?: string) {
+  await postJson(`/leave-requests/${id}/hr-action`, {
+    action: "APPROVE",
+    comment: (comment || "").trim() || null,
   });
 }
 
-/** ✅ HR reject (ต้องมีเหตุผล) -> จบ */
-export async function hrRejectLeaveRequest(id: string, by: Actor, reason: string) {
+/** ✅ HR reject (ต้องมีเหตุผล) -> จบ (เรียก backend เพื่อให้ SMS ส่งจริง) */
+export async function hrRejectLeaveRequest(id: string, _by: Actor, reason: string) {
   const r = String(reason || "").trim();
   if (!r) throw new Error("MISSING_REJECT_REASON");
 
-  await updateDoc(doc(db, "leave_requests", id), {
-    hrStatus: "REJECTED",
-    hrComment: r,
-    hrActionAt: serverTimestamp(),
-    hrActionBy: by,
-
-    managerStatus: "LOCKED",
-    overallStatus: "REJECTED_BY_HR",
-
-    // legacy final
-    status: "REJECTED",
-    rejectReason: r,
-    rejectedBy: { uid: by.uid, email: by.email ?? null },
-    rejectedAt: serverTimestamp(),
-    decidedAt: serverTimestamp(),
-
-    updatedAt: serverTimestamp(),
+  await postJson(`/leave-requests/${id}/hr-action`, {
+    action: "REJECT",
+    comment: r,
   });
 }
 
-/** ✅ ผู้บริหาร approve -> final */
-export async function managerApproveLeaveRequest(id: string, by: Actor, comment?: string) {
-  await updateDoc(doc(db, "leave_requests", id), {
-    managerStatus: "APPROVED",
-    managerComment: comment?.trim() || null,
-    managerActionAt: serverTimestamp(),
-    managerActionBy: by,
-
-    overallStatus: "APPROVED",
-
-    // legacy final
-    status: "APPROVED",
-    approvedBy: { uid: by.uid, email: by.email ?? null },
-    approvedAt: serverTimestamp(),
-    decidedAt: serverTimestamp(),
-
-    updatedAt: serverTimestamp(),
+/** ✅ ผู้บริหาร approve -> final (เรียก backend เพื่อให้ SMS ส่งจริง) */
+export async function managerApproveLeaveRequest(id: string, _by: Actor, comment?: string) {
+  await postJson(`/leave-requests/${id}/manager-action`, {
+    action: "APPROVE",
+    comment: (comment || "").trim() || null,
   });
 }
 
-/** ✅ ผู้บริหาร reject -> final */
-export async function managerRejectLeaveRequest(id: string, by: Actor, reason: string) {
+/** ✅ ผู้บริหาร reject -> final (เรียก backend เพื่อให้ SMS ส่งจริง) */
+export async function managerRejectLeaveRequest(id: string, _by: Actor, reason: string) {
   const r = String(reason || "").trim();
   if (!r) throw new Error("MISSING_REJECT_REASON");
 
-  await updateDoc(doc(db, "leave_requests", id), {
-    managerStatus: "REJECTED",
-    managerComment: r,
-    managerActionAt: serverTimestamp(),
-    managerActionBy: by,
-
-    overallStatus: "REJECTED_BY_MANAGER",
-
-    // legacy final
-    status: "REJECTED",
-    rejectReason: r,
-    rejectedBy: { uid: by.uid, email: by.email ?? null },
-    rejectedAt: serverTimestamp(),
-    decidedAt: serverTimestamp(),
-
-    updatedAt: serverTimestamp(),
+  await postJson(`/leave-requests/${id}/manager-action`, {
+    action: "REJECT",
+    comment: r,
   });
 }
 
-/** ✅ cancel โดย HR/EXECUTIVE_MANAGER/ADMIN (ต้องมีเหตุผล) */
+/** ✅ cancel โดย HR/EXECUTIVE_MANAGER/ADMIN (เรียก backend เพื่อให้ SMS ส่งจริง) */
 export async function approverCancelLeaveRequest(
   id: string,
-  by: Actor,
-  byRole: "HR" | "EXECUTIVE_MANAGER" | "ADMIN",
+  _by: Actor,
+  _byRole: "HR" | "EXECUTIVE_MANAGER" | "ADMIN",
   reason: string
 ) {
   const r = String(reason || "").trim();
   if (!r) throw new Error("MISSING_CANCEL_REASON");
 
-  const patch: any = {
-    status: "CANCELED",
-    overallStatus: "CANCELED",
-
-    canceledByRole: byRole,
-    canceledBy: by,
-    canceledReason: r,
-    canceledAt: serverTimestamp(),
-
-    decidedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-
-  // สะท้อนลง step ที่เกี่ยวข้อง
-  if (byRole === "HR") {
-    patch.hrStatus = "CANCELED";
-    patch.hrComment = r;
-    patch.hrActionAt = serverTimestamp();
-    patch.hrActionBy = by;
-  } else {
-    patch.managerStatus = "CANCELED";
-    patch.managerComment = r;
-    patch.managerActionAt = serverTimestamp();
-    patch.managerActionBy = by;
-  }
-
-  await updateDoc(doc(db, "leave_requests", id), patch);
+  // backend จะ infer role จาก token เอง
+  await postJson(`/leave-requests/${id}/cancel`, { reason: r });
 }
 
 /** ✅ ของเดิม: listen ใบลาของฉัน */
