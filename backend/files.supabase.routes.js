@@ -19,7 +19,6 @@ function safeName(name = "file") {
 // ✅ แก้ชื่อไฟล์ไทยเพี้ยนจาก multer (มักมาเป็น latin1)
 function toUtf8Filename(name = "") {
   try {
-    // ถ้าเป็นไทยแล้วเพี้ยน จะกลับมาได้ด้วยวิธีนี้
     return Buffer.from(String(name), "latin1").toString("utf8");
   } catch {
     return String(name || "");
@@ -137,6 +136,43 @@ function isAllowedPrefixKey(key) {
   );
 }
 
+// ----------------- helpers (delete) -----------------
+function toStr(x) {
+  return typeof x === "string" ? x : "";
+}
+
+function readAttachments(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "object") return Object.values(raw);
+  return [];
+}
+
+function attachmentStoragePath(att) {
+  if (!att) return "";
+  return (
+    toStr(att.storagePath) ||
+    toStr(att.key) ||
+    toStr(att.path) ||
+    toStr(att.storage_path) ||
+    ""
+  );
+}
+
+function normalizeKey(inputKey) {
+  let k = toStr(inputKey).trim();
+  if (!k) return "";
+
+  // ถ้าเผลอส่งมาเป็น "<bucket>/<key>"
+  const bucket = process.env.SUPABASE_BUCKET || "smart-hr-files";
+  if (k.startsWith(bucket + "/")) k = k.slice(bucket.length + 1);
+
+  // ตัด / นำหน้า
+  k = k.replace(/^\/+/, "");
+  return k;
+}
+
+// ----------------- Upload -----------------
 /**
  * POST /files/upload
  * form-data:
@@ -174,10 +210,7 @@ router.post(
           return res.status(400).json({ ok: false, error: "FILE_TYPE_NOT_ALLOWED" });
         }
 
-        // ✅ fix: ชื่อไทยไม่เพี้ยน
         const originalUtf8 = toUtf8Filename(f.originalname || "file");
-
-        // ✅ key ใช้ชื่อที่ safe แล้ว (ASCII) เพื่อกันปัญหา path/encoding ใน storage
         const safeOriginal = safeName(originalUtf8 || "file");
         const key = `${prefix}/${uid}/${Date.now()}_${safeOriginal}`;
 
@@ -194,7 +227,6 @@ router.post(
           return res.status(500).json({ ok: false, error: `UPLOAD_FAILED: ${upErr.message}` });
         }
 
-        // ✅ name ส่งกลับเป็น UTF-8 จริง (เอาไว้โชว์บนเว็บ)
         out.push({
           name: originalUtf8,
           size: f.size,
@@ -267,6 +299,100 @@ router.get("/signed-url", requireAuth, async (req, res) => {
   } catch (e) {
     console.error("/files/signed-url error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "SIGNED_URL_FAILED" });
+  }
+});
+
+/**
+ * POST /files/delete
+ * body: { requestId, key | storagePath }
+ *
+ * ✅ ใช้สำหรับ “ลบไฟล์แนบในหน้าแก้ไขคำร้อง”
+ * - owner-check: ต้องเป็นเจ้าของ leave_requests/{requestId}.uid เท่านั้น
+ * - key-check: key ต้องอยู่ใน attachments จริง
+ * - ลบใน Supabase แล้วอัปเดต attachments ใน Firestore
+ */
+router.post("/delete", requireAuth, async (req, res) => {
+  try {
+    const uid = String(req.user?.uid || "");
+    if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+
+    const requestId = String(req.body?.requestId || "").trim();
+    const keyInput = req.body?.key ?? req.body?.storagePath ?? req.body?.path;
+    const key = normalizeKey(keyInput);
+
+    if (!requestId || !key) {
+      return res.status(400).json({
+        ok: false,
+        error: "BAD_REQUEST",
+        message: "requestId and key/storagePath are required",
+      });
+    }
+
+    if (isBadKey(key)) return res.status(400).json({ ok: false, error: "INVALID_KEY" });
+
+    // ✅ จำกัดให้ลบได้เฉพาะไฟล์แนบใบลา
+    if (!key.startsWith("leave_attachments/")) {
+      return res.status(403).json({ ok: false, error: "KEY_NOT_ALLOWED" });
+    }
+
+    const db = admin.firestore();
+    const ref = db.collection("leave_requests").doc(requestId);
+    const snap = await ref.get();
+
+    if (!snap.exists) return res.status(404).json({ ok: false, error: "LEAVE_NOT_FOUND" });
+
+    const doc = snap.data() || {};
+    const ownerUid = String(doc.uid || "");
+
+    if (!ownerUid || ownerUid !== uid) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_OWNER_ONLY" });
+    }
+
+    const attachments = readAttachments(doc.attachments);
+    const idx = attachments.findIndex((a) => normalizeKey(attachmentStoragePath(a)) === key);
+
+    if (idx < 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "KEY_NOT_IN_DOC",
+        message: "Key not found in leave request attachments",
+      });
+    }
+
+    const target = attachments[idx];
+
+    const bucket = process.env.SUPABASE_BUCKET || "smart-hr-files";
+    const supabase = getSupabase();
+
+    const { error } = await supabase.storage.from(bucket).remove([key]);
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        error: "SUPABASE_DELETE_FAILED",
+        message: error.message || String(error),
+      });
+    }
+
+    const remaining = attachments.filter((_, i) => i !== idx);
+
+    await ref.update({
+      attachments: remaining,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return res.json({
+      ok: true,
+      deleted: {
+        key,
+        name: target?.name || target?.filename || null,
+        size: target?.size || null,
+      },
+      remaining,
+      remainingCount: remaining.length,
+    });
+  } catch (e) {
+    console.error("/files/delete error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "DELETE_FAILED" });
   }
 });
 

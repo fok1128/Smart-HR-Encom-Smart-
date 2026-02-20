@@ -12,7 +12,9 @@ import {
   getAttachmentKey,
   getSignedUrlForKey,
   addLeaveAttachments,
+  cancelMyPendingLeaveRequest, // ✅ NEW
 } from "../services/leaveRequests";
+import LeaveSubmitPage from "./LeaveSubmitPage";
 
 function badgeClass(status: string) {
   const s = String(status || "").toUpperCase();
@@ -81,7 +83,6 @@ function fmtDateOnly(iso: string | null | undefined) {
   return d.toLocaleDateString("th-TH");
 }
 
-// parse date safely (string / Date / firebase timestamp / seconds obj)
 function toMillis(x: any): number | null {
   try {
     if (!x) return null;
@@ -107,7 +108,6 @@ function toMillis(x: any): number | null {
   }
 }
 
-// ✅ inputTheme fallback + บังคับธีมม่วงให้เหมือนหน้าอื่น
 function clsInput(extra?: string) {
   const base =
     (inputTheme as any)?.input ||
@@ -134,7 +134,6 @@ function clsSelect(extra?: string) {
   return [base, purple, extra].filter(Boolean).join(" ");
 }
 
-// ✅ fixed categories/subtypes (ตาม LeaveSubmitPage)
 const LEAVE_CATEGORIES = ["ลากิจ", "ลาป่วย", "ลาพักร้อน", "ลากรณีพิเศษ"] as const;
 
 const SUBTYPE_MAP: Record<(typeof LEAVE_CATEGORIES)[number], string[]> = {
@@ -147,24 +146,34 @@ const SUBTYPE_MAP: Record<(typeof LEAVE_CATEGORIES)[number], string[]> = {
 export default function MyLeaveRequestsPage() {
   const { user } = useAuth();
   const dialog = useDialogCenter();
-
-  /**
-   * ✅ สำคัญมาก: ห้ามส่ง object เข้า DialogCenter เด็ดขาด
-   * เพราะของเธอมีเคสเอา object ไป render แล้วจอดขาว
-   * => เราจะส่ง “string ล้วน” เท่านั้น และถ้าเรียกไม่ผ่านให้ fallback window.*
-   */
+  function openEditModal(editId: string) {
+      dialog.openModal({
+        title: "แก้ไขคำร้องการลา",
+        size: "xl",
+        closeOnBackdrop: false,
+        closeOnEsc: true,
+        content: (
+          <div className="max-h-[78vh] overflow-auto px-1">
+            <LeaveSubmitPage
+              embedded
+              editId={editId}
+              onDone={() => dialog.closeModal()}
+              onCancel={() => dialog.closeModal()}
+            />
+          </div>
+        ),
+      });
+    }
   const dlgAlert = (title: string, message: string) => {
     const d: any = dialog as any;
     const t = String(title ?? "");
     const m = String(message ?? "");
     try {
       if (typeof d?.alert === "function") {
-        // พยายามแบบ 2 args ก่อน
         try {
           d.alert(t, m);
           return;
         } catch {
-          // แล้วค่อย 1 arg
           d.alert(`${t}\n${m}`);
           return;
         }
@@ -196,19 +205,15 @@ export default function MyLeaveRequestsPage() {
     const t = String(title ?? "");
     const m = String(message ?? "");
 
-    // ถ้า DialogCenter confirm ใช้ได้ -> รับ string อย่างเดียว
     try {
       if (typeof d?.confirm === "function") {
-        // try 2 args
         try {
           const r = await d.confirm(t, m);
           if (typeof r === "boolean") return r;
-          // รองรับบาง implementation ที่คืนค่าเป็น object
           if (r && typeof r === "object") return !!(r.ok ?? r.confirmed ?? r.value ?? r.result);
           return !!r;
         } catch {}
 
-        // try 1 arg
         try {
           const r = await d.confirm(`${t}\n${m}`);
           if (typeof r === "boolean") return r;
@@ -225,13 +230,11 @@ export default function MyLeaveRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
 
-  // ✅ Filters: datetime-local (เลือกได้ถึงชั่วโมง/นาที)
-  const [fromDT, setFromDT] = useState<string>(""); // yyyy-MM-ddTHH:mm
-  const [toDT, setToDT] = useState<string>(""); // yyyy-MM-ddTHH:mm
+  const [fromDT, setFromDT] = useState<string>("");
+  const [toDT, setToDT] = useState<string>("");
   const [category, setCategory] = useState<string>("ALL");
   const [subType, setSubType] = useState<string>("ALL");
 
-  // modal แนบใบรับรอง
   const [openAttachId, setOpenAttachId] = useState<string | null>(null);
   const [attachFiles, setAttachFiles] = useState<File[]>([]);
   const [attachError, setAttachError] = useState<string>("");
@@ -263,7 +266,6 @@ export default function MyLeaveRequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  // helper: ใบลา
   const isProvided = (r: LeaveRequestDoc) => {
     const atts = Array.isArray((r as any).attachments) ? (r as any).attachments : [];
     return !!(r as any).medicalCertProvided || atts.length > 0;
@@ -285,6 +287,14 @@ export default function MyLeaveRequestsPage() {
     const provided = isProvided(r);
     if (!require || !hasDue || provided) return false;
     return isDuePassed((r as any).medicalCertDueAt);
+  };
+
+  // ✅ NEW: แก้ไข/ยกเลิกได้ เฉพาะตอนยังรอ HR (PENDING_HR) หรือของเก่าที่ยังไม่มี overallStatus
+  const canEditOrCancel = (r: any) => {
+    const status = String(r?.status || "").toUpperCase();
+    const overall = String(r?.overallStatus || "").toUpperCase();
+    const okOverall = !overall || overall === "PENDING_HR";
+    return status === "PENDING" && okOverall;
   };
 
   async function openAttachment(att: any) {
@@ -311,10 +321,8 @@ export default function MyLeaveRequestsPage() {
 
     if (!attachFiles.length) return fail("กรุณาเลือกไฟล์ใบรับรองแพทย์");
     if (attachFiles.length > MAX_FILES) return fail(`แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์`);
-    if (attachFiles.some((f) => f.size > MAX_MB * 1024 * 1024))
-      return fail(`ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`);
-    if (attachFiles.some((f) => f.type && !okTypes.has(f.type)))
-      return fail("อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)");
+    if (attachFiles.some((f) => f.size > MAX_MB * 1024 * 1024)) return fail(`ไฟล์ต้องไม่เกิน ${MAX_MB}MB ต่อไฟล์`);
+    if (attachFiles.some((f) => f.type && !okTypes.has(f.type))) return fail("อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)");
 
     setAttaching(true);
     setAttachPct(0);
@@ -335,7 +343,6 @@ export default function MyLeaveRequestsPage() {
     }
   }
 
-  // sort by submittedAt desc
   const sortedRows = useMemo(() => {
     const all = [...rows];
     all.sort((a, b) => {
@@ -346,7 +353,6 @@ export default function MyLeaveRequestsPage() {
     return all;
   }, [rows]);
 
-  // category options fixed 4 types
   const categoryOptions = useMemo(() => [...LEAVE_CATEGORIES], []);
   const subTypeOptions = useMemo(() => {
     if (category === "ALL") return [];
@@ -354,7 +360,6 @@ export default function MyLeaveRequestsPage() {
     return SUBTYPE_MAP[category as (typeof LEAVE_CATEGORIES)[number]] || [];
   }, [category]);
 
-  // filtered using datetime bounds
   const filteredRows = useMemo(() => {
     const fromMs = fromDT ? new Date(fromDT).getTime() : null;
     const toMs = toDT ? new Date(toDT).getTime() : null;
@@ -393,7 +398,6 @@ export default function MyLeaveRequestsPage() {
   const totalCount = sortedRows.length;
   const shownCount = filteredRows.length;
 
-  // keep subType valid when category changed
   useEffect(() => {
     if (subType === "ALL") return;
     if (category === "ALL") {
@@ -413,8 +417,52 @@ export default function MyLeaveRequestsPage() {
     setCategory("ALL");
     setSubType("ALL");
 
-    // ✅ popup หลังล้าง
     dlgSuccess("ล้างตัวกรองแล้ว", "รีเซ็ตค่าตัวกรองเรียบร้อย");
+  };
+
+  // ✅ NEW: ยกเลิกคำร้อง (owner)
+  const cancelRequest = async (r: any) => {
+    if (!user?.uid) return dlgAlert("ทำรายการไม่ได้", "ยังไม่เข้าสู่ระบบ");
+    if (!canEditOrCancel(r)) {
+      return dlgAlert("ยกเลิกไม่ได้", "คำร้องนี้ HR อาจดำเนินการแล้ว");
+    }
+
+    const ok = await dlgConfirm("ยกเลิกคำร้อง", "ต้องการยกเลิกคำร้องนี้ใช่ไหม?");
+    if (!ok) return;
+
+    const reason = await (dialog as any).prompt?.("กรุณากรอกเหตุผลในการยกเลิก", {
+      title: "เหตุผลยกเลิก",
+      confirmText: "ยืนยันยกเลิก",
+      cancelText: "ยกเลิก",
+      variant: "warning",
+      required: true,
+      minLen: 1,
+      maxLen: 300,
+      placeholder: "เช่น เปลี่ยนแผน / กรอกข้อมูลผิด ...",
+      label: "เหตุผล",
+      size: "md",
+    });
+
+    if (reason === null) return;
+    const rs = String(reason || "").trim();
+    if (!rs) return;
+
+    try {
+      const name = `${(user as any)?.fname || ""} ${(user as any)?.lname || ""}`.trim() || null;
+      await cancelMyPendingLeaveRequest(
+        r.id,
+        {
+          uid: user.uid,
+          email: user.email ?? null,
+          role: String((user as any)?.role || "USER"),
+          name,
+        },
+        rs
+      );
+      dlgSuccess("ยกเลิกสำเร็จ", "คำร้องถูกยกเลิกแล้ว");
+    } catch (e: any) {
+      dlgAlert("ยกเลิกไม่สำเร็จ", e?.message || String(e));
+    }
   };
 
   return (
@@ -423,7 +471,6 @@ export default function MyLeaveRequestsPage() {
       <PageBreadcrumb pageTitle="ใบลาของฉัน" />
 
       <div className="space-y-4">
-        {/* ✅ Container เดียว (กันกรอบซ้อน) */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
           {loading && <div className="text-sm text-gray-600 dark:text-white/70">กำลังโหลด...</div>}
 
@@ -439,15 +486,11 @@ export default function MyLeaveRequestsPage() {
             </div>
           )}
 
-          {/* ✅ Filter bar */}
           {!loading && !errorMsg && totalCount > 0 && (
             <div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
-                {/* จากวันที่ */}
                 <div className="xl:col-span-3">
-                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    จากวันที่
-                  </label>
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">จากวันที่</label>
                   <input
                     type="datetime-local"
                     value={fromDT}
@@ -456,11 +499,8 @@ export default function MyLeaveRequestsPage() {
                   />
                 </div>
 
-                {/* ถึงวันที่ */}
                 <div className="xl:col-span-3">
-                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    ถึงวันที่
-                  </label>
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">ถึงวันที่</label>
                   <input
                     type="datetime-local"
                     value={toDT}
@@ -469,11 +509,8 @@ export default function MyLeaveRequestsPage() {
                   />
                 </div>
 
-                {/* ประเภทการลา */}
                 <div className="xl:col-span-3">
-                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    ประเภทการลา
-                  </label>
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">ประเภทการลา</label>
                   <select
                     value={category}
                     onChange={(e) => {
@@ -491,11 +528,8 @@ export default function MyLeaveRequestsPage() {
                   </select>
                 </div>
 
-                {/* ประเภทย่อย */}
                 <div className="xl:col-span-3">
-                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    ประเภทย่อย
-                  </label>
+                  <label className="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">ประเภทย่อย</label>
                   <select
                     value={subType}
                     onChange={(e) => setSubType(e.target.value)}
@@ -511,13 +545,11 @@ export default function MyLeaveRequestsPage() {
                   </select>
                 </div>
 
-                {/* footer row */}
                 <div className="xl:col-span-12 mt-1 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm text-gray-600 dark:text-gray-300">
-                    กำลังแสดง{" "}
-                    <span className="font-semibold text-gray-900 dark:text-gray-100">{shownCount}</span> รายการ
-                    จากทั้งหมด{" "}
-                    <span className="font-semibold text-gray-900 dark:text-gray-100">{totalCount}</span> รายการ
+                    กำลังแสดง <span className="font-semibold text-gray-900 dark:text-gray-100">{shownCount}</span>{" "}
+                    รายการ จากทั้งหมด <span className="font-semibold text-gray-900 dark:text-gray-100">{totalCount}</span>{" "}
+                    รายการ
                   </div>
 
                   <AppButton variant="outline" onClick={clearFilters}>
@@ -537,7 +569,6 @@ export default function MyLeaveRequestsPage() {
           )}
         </div>
 
-        {/* ✅ Cards */}
         {!loading && !errorMsg && shownCount > 0 && (
           <div className="space-y-3">
             {filteredRows.map((r: any) => {
@@ -598,6 +629,19 @@ export default function MyLeaveRequestsPage() {
                         >
                           เปิดไฟล์แนบ
                         </AppButton>
+                      )}
+
+                      {/* ✅ NEW: ปุ่มแก้ไข/ยกเลิก (owner) */}
+                      {canEditOrCancel(r) && (
+                        <>
+                          <AppButton variant="outline" onClick={() => openEditModal(r.id)}>
+                          แก้ไขคำร้อง
+                          </AppButton>
+
+                          <AppButton variant="danger" onClick={() => cancelRequest(r)}>
+                            ยกเลิกคำร้อง
+                          </AppButton>
+                        </>
                       )}
 
                       {canAttachLater(r) && (

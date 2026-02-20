@@ -27,6 +27,7 @@ export default function AppButton({
   className,
   children,
   type = "button",
+  onClick,
   ...rest
 }: Props) {
   const isDisabled = disabled || loading;
@@ -44,7 +45,6 @@ export default function AppButton({
     lg: "h-11 px-5 text-base rounded-2xl",
   };
 
-  // ✅ ทำให้ “สีกรอบ” เท่ากับ input/table: border-violet-400/80
   const variants: Record<Variant, string> = {
     primary:
       "bg-violet-800 text-white border border-violet-800 " +
@@ -60,7 +60,6 @@ export default function AppButton({
       "hover:bg-violet-50/70 hover:border-violet-500 " +
       "dark:border-violet-500/30 dark:text-violet-200 dark:hover:bg-violet-500/10",
 
-    // ✅ แบบรูป: pill + เส้นม่วงมาตรฐาน (เท่ากับ input/table)
     outlinePill:
       "rounded-full bg-transparent border border-violet-400/80 text-violet-700 font-extrabold " +
       "hover:bg-violet-50/70 hover:border-violet-500 " +
@@ -82,10 +81,15 @@ export default function AppButton({
 
   return (
     <button
-      type={type}
+      {...rest} // ✅ วางก่อน เพื่อไม่ให้ทับ type / onClick ของเรา
+      type={type} // ✅ ล็อก type ที่เราตั้งไว้
       disabled={isDisabled}
       className={cn(base, sizes[size], variants[variant], fullWidth && "w-full", className)}
-      {...rest}
+      onClick={(e) => {
+        // ✅ ปุ่มทั่วไปไม่ควร submit form
+        if (type !== "submit") e.preventDefault();
+        onClick?.(e);
+      }}
     >
       {loading ? (
         <span className="inline-flex items-center gap-2">

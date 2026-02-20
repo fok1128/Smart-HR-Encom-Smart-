@@ -3,7 +3,7 @@ import React, { createContext, useCallback, useContext, useMemo, useRef, useStat
 import ModalShell from "./ModalShell";
 import { popupTheme, type PopupVariant } from "../ui/theme/popupTheme";
 
-type DialogType = "ALERT" | "CONFIRM" | "PROMPT";
+type DialogType = "ALERT" | "CONFIRM" | "PROMPT" | "CUSTOM";
 type DialogSize = "sm" | "md" | "lg" | "xl";
 
 function sizeToWidth(size?: DialogSize) {
@@ -12,8 +12,9 @@ function sizeToWidth(size?: DialogSize) {
       return "max-w-sm";
     case "md":
       return "max-w-md";
+    // ✅ xl ใช้กับฟอร์ม/ตารางใน modal ให้กว้างขึ้น (ไม่กระทบ alert/confirm ปกติ)
     case "xl":
-      return "max-w-xl";
+      return "max-w-6xl w-[96vw]";
     case "lg":
     default:
       return "max-w-lg";
@@ -30,6 +31,7 @@ type DialogState = {
   cancelText?: string;
   size?: DialogSize;
 
+  // PROMPT
   inputLabel?: string;
   inputPlaceholder?: string;
   inputValue?: string;
@@ -37,6 +39,13 @@ type DialogState = {
   inputMinLen?: number;
   inputMaxLen?: number;
   inputError?: string;
+
+  // CUSTOM (modal content)
+  customContent?: React.ReactNode;
+  customFooter?: React.ReactNode;
+  customCloseOnBackdrop?: boolean;
+  customCloseOnEsc?: boolean;
+  customOnClose?: (() => void) | null;
 };
 
 type AlertOpts = {
@@ -78,11 +87,27 @@ type PromptOpts = {
   maxLen?: number;
 };
 
+type OpenModalOpts = {
+  title?: string;
+  size?: DialogSize;
+  content: React.ReactNode;
+  footer?: React.ReactNode;
+  closeOnBackdrop?: boolean;
+  closeOnEsc?: boolean;
+  onClose?: () => void;
+};
+
 type DialogContextType = {
   alert: (message: string, opts?: AlertOpts) => Promise<void>;
   confirm: (message: string, opts?: ConfirmOpts) => Promise<boolean>;
   success: (message: string, opts?: SuccessOpts) => Promise<void>;
   prompt: (message: string, opts?: PromptOpts) => Promise<string | null>;
+
+  /** ✅ เปิด modal แบบกำหนดเนื้อหาเอง (ใช้ทำฟอร์มแก้ไข/หน้าซ้อนใน popup) */
+  openModal: (opts: OpenModalOpts) => void;
+
+  /** ✅ ปิด modal ที่เปิดด้วย openModal */
+  closeModal: () => void;
 };
 
 const DialogCenterContext = createContext<DialogContextType | undefined>(undefined);
@@ -105,11 +130,29 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
     inputMinLen: 0,
     inputMaxLen: 500,
     inputError: "",
+
+    customContent: undefined,
+    customFooter: undefined,
+    customCloseOnBackdrop: true,
+    customCloseOnEsc: true,
+    customOnClose: null,
   });
 
   const resolverRef = useRef<((v: any) => void) | null>(null);
 
-  const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
+  const close = useCallback(() => {
+    setState((s) => {
+      // ถ้าเป็น CUSTOM ให้เรียก onClose ก่อน
+      if (s.type === "CUSTOM" && s.customOnClose) {
+        try {
+          s.customOnClose();
+        } catch {
+          // ignore
+        }
+      }
+      return { ...s, open: false, customOnClose: null };
+    });
+  }, []);
 
   const finish = useCallback(
     (result: any) => {
@@ -189,9 +232,41 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
     });
   }, []);
 
+  const openModal = useCallback((opts: OpenModalOpts) => {
+    // modal แบบ custom ไม่ใช้ resolver
+    resolverRef.current = null;
+
+    setState((s) => ({
+      ...s,
+      open: true,
+      type: "CUSTOM",
+      title: opts.title || "",
+      message: "",
+      variant: "info",
+      confirmText: "",
+      cancelText: "",
+      size: opts.size || "xl",
+
+      customContent: opts.content,
+      customFooter: opts.footer,
+      customCloseOnBackdrop: opts.closeOnBackdrop ?? true,
+      customCloseOnEsc: opts.closeOnEsc ?? true,
+      customOnClose: opts.onClose || null,
+    }));
+  }, []);
+
+  const closeModal = useCallback(() => close(), [close]);
+
   const value = useMemo(
-    () => ({ alert: alertFn, confirm: confirmFn, success: successFn, prompt: promptFn }),
-    [alertFn, confirmFn, successFn, promptFn]
+    () => ({
+      alert: alertFn,
+      confirm: confirmFn,
+      success: successFn,
+      prompt: promptFn,
+      openModal,
+      closeModal,
+    }),
+    [alertFn, confirmFn, successFn, promptFn, openModal, closeModal]
   );
 
   const v: PopupVariant = state.variant || "info";
@@ -229,6 +304,10 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
   };
 
   const closeBehavior = () => {
+    if (state.type === "CUSTOM") {
+      close();
+      return;
+    }
     if (state.type === "CONFIRM") finish(false);
     else if (state.type === "PROMPT") finish(null);
     else finish(undefined);
@@ -246,108 +325,141 @@ export function DialogCenterProvider({ children }: { children: React.ReactNode }
         zIndexClassName={popupTheme.z.confirm}
         showTopBar={false}
         glow={true}
-        glowVariant="purpleStrong" // ✅ แสงม่วง “แรงกว่าเดิม”
+        glowVariant="purpleStrong"
         panelClassName="bg-white"
-        closeOnEsc={true}
-        closeOnBackdrop={true}
+        closeOnEsc={state.type === "CUSTOM" ? (state.customCloseOnEsc ?? true) : true}
+        closeOnBackdrop={state.type === "CUSTOM" ? (state.customCloseOnBackdrop ?? true) : true}
         canClose={() => true}
         onClose={closeBehavior}
         footer={
-          <div className="flex items-center justify-center gap-2">
-            {state.type !== "ALERT" && (
+          state.type === "CUSTOM" ? (
+            state.customFooter ?? null
+          ) : (
+            <div className="flex items-center justify-center gap-2">
+              {state.type !== "ALERT" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (state.type === "CONFIRM") finish(false);
+                    else if (state.type === "PROMPT") finish(null);
+                  }}
+                  className={[
+                    popupTheme.btnBase,
+                    "bg-white text-gray-900 ring-1 ring-gray-200 hover:bg-gray-50",
+                  ].join(" ")}
+                >
+                  {state.cancelText || "ยกเลิก"}
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
-                  if (state.type === "CONFIRM") finish(false);
-                  else if (state.type === "PROMPT") finish(null);
+                  if (state.type === "CONFIRM") finish(true);
+                  else if (state.type === "PROMPT") submitPrompt();
+                  else finish(undefined);
                 }}
+                disabled={state.type === "PROMPT" ? !canSubmitPrompt : false}
                 className={[
                   popupTheme.btnBase,
-                  "bg-white text-gray-900 ring-1 ring-gray-200 hover:bg-gray-50",
+                  popupTheme.btnConfirm,
+                  confirmBtnClass,
+                  state.type === "ALERT" ? "w-full justify-center" : "",
+                  state.type === "PROMPT" && !canSubmitPrompt ? "opacity-50 cursor-not-allowed" : "",
                 ].join(" ")}
               >
-                {state.cancelText || "ยกเลิก"}
+                {state.confirmText || "ตกลง"}
               </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                if (state.type === "CONFIRM") finish(true);
-                else if (state.type === "PROMPT") submitPrompt();
-                else finish(undefined);
-              }}
-              disabled={state.type === "PROMPT" ? !canSubmitPrompt : false}
-              className={[
-                popupTheme.btnBase,
-                popupTheme.btnConfirm,
-                confirmBtnClass,
-                state.type === "ALERT" ? "w-full justify-center" : "",
-                state.type === "PROMPT" && !canSubmitPrompt ? "opacity-50 cursor-not-allowed" : "",
-              ].join(" ")}
-            >
-              {state.confirmText || "ตกลง"}
-            </button>
-          </div>
+            </div>
+          )
         }
       >
-        <div className="relative px-5 pt-5 pb-2 bg-white">
-          <button
-            type="button"
-            onClick={() => finish(state.type === "CONFIRM" ? false : state.type === "PROMPT" ? null : undefined)}
-            className={[popupTheme.btnCloseIcon, "absolute right-4 top-4"].join(" ")}
-            aria-label="close"
-          >
-            ✕
-          </button>
+        {state.type === "CUSTOM" ? (
+          <div className="relative bg-white">
+            <button
+              type="button"
+              onClick={close}
+              className={[popupTheme.btnCloseIcon, "absolute right-4 top-4"].join(" ")}
+              aria-label="close"
+            >
+              ✕
+            </button>
 
-          <div className="flex flex-col items-center text-center">
-            <div className={[popupTheme.iconWrapBase, iconWrap, "h-12 w-12 rounded-full grid place-items-center"].join(" ")}>
-              <span className="text-2xl font-black leading-none">{icon}</span>
-            </div>
-
-            <div className="mt-3 text-lg font-extrabold text-gray-900">{state.title}</div>
-
-            {state.message ? (
-              <div className="mt-3 text-sm font-semibold text-gray-700 whitespace-pre-wrap break-words">
-                {state.message}
+            {state.title ? (
+              <div className="px-6 pt-6 pb-3">
+                <div className="text-lg font-extrabold text-gray-900">{state.title}</div>
               </div>
-            ) : null}
+            ) : (
+              <div className="pt-6" />
+            )}
 
-            {state.type === "PROMPT" ? (
-              <div className="mt-4 w-full text-left">
-                <div className="text-xs font-extrabold text-gray-700 mb-1">
-                  {state.inputLabel || "เหตุผล"}
+            <div className="px-4 pb-4">{state.customContent}</div>
+          </div>
+        ) : (
+          <div className="relative px-5 pt-5 pb-2 bg-white">
+            <button
+              type="button"
+              onClick={() => finish(state.type === "CONFIRM" ? false : state.type === "PROMPT" ? null : undefined)}
+              className={[popupTheme.btnCloseIcon, "absolute right-4 top-4"].join(" ")}
+              aria-label="close"
+            >
+              ✕
+            </button>
+
+            <div className="flex flex-col items-center text-center">
+              <div
+                className={[
+                  popupTheme.iconWrapBase,
+                  iconWrap,
+                  "h-12 w-12 rounded-full grid place-items-center",
+                ].join(" ")}
+              >
+                <span className="text-2xl font-black leading-none">{icon}</span>
+              </div>
+
+              <div className="mt-3 text-lg font-extrabold text-gray-900">{state.title}</div>
+
+              {state.message ? (
+                <div className="mt-3 text-sm font-semibold text-gray-700 whitespace-pre-wrap break-words">
+                  {state.message}
                 </div>
+              ) : null}
 
-                <textarea
-                  value={state.inputValue || ""}
-                  onChange={(e) =>
-                    setState((s) => ({
-                      ...s,
-                      inputValue: e.target.value,
-                      inputError: "",
-                    }))
-                  }
-                  placeholder={state.inputPlaceholder || ""}
-                  rows={4}
-                  maxLength={state.inputMaxLen ?? 500}
-                  className={[
-                    "w-full rounded-2xl border px-4 py-3 text-sm font-semibold outline-none",
-                    "bg-white text-gray-900 border-gray-200 focus:ring-2 focus:ring-violet-300",
-                  ].join(" ")}
-                />
+              {state.type === "PROMPT" ? (
+                <div className="mt-4 w-full text-left">
+                  <div className="text-xs font-extrabold text-gray-700 mb-1">
+                    {state.inputLabel || "เหตุผล"}
+                  </div>
 
-                <div className="mt-2 flex items-center justify-between">
-                  <div className="text-xs font-semibold text-red-600">{state.inputError || ""}</div>
-                  <div className="text-[11px] font-semibold text-gray-500">
-                    {(state.inputValue?.length ?? 0)}/{state.inputMaxLen ?? 500}
+                  <textarea
+                    value={state.inputValue || ""}
+                    onChange={(e) =>
+                      setState((s) => ({
+                        ...s,
+                        inputValue: e.target.value,
+                        inputError: "",
+                      }))
+                    }
+                    placeholder={state.inputPlaceholder || ""}
+                    rows={4}
+                    maxLength={state.inputMaxLen ?? 500}
+                    className={[
+                      "w-full rounded-2xl border px-4 py-3 text-sm font-semibold outline-none",
+                      "bg-white text-gray-900 border-gray-200 focus:ring-2 focus:ring-violet-300",
+                    ].join(" ")}
+                  />
+
+                  <div className="mt-2 flex items-center justify-between">
+                    <div className="text-xs font-semibold text-red-600">{state.inputError || ""}</div>
+                    <div className="text-[11px] font-semibold text-gray-500">
+                      {(state.inputValue?.length ?? 0)}/{state.inputMaxLen ?? 500}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
-        </div>
+        )}
       </ModalShell>
     </DialogCenterContext.Provider>
   );

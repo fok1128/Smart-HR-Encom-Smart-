@@ -57,7 +57,11 @@ type UnifiedRow =
   | (LeaveRequestDoc & {
       __kind: "LEAVE";
       __typeLabel: string;
+      // __status ใช้สำหรับ filter แบบ legacy (PENDING/APPROVED/REJECTED/CANCELED)
       __status: string;
+      // สถานะ 2 ขั้น (รองรับ schema ใหม่ + fallback schema เก่า)
+      __hrStatus: string;
+      __managerStatus: string;
       __submittedAt: any;
       __atts: AttachItem[];
     })
@@ -65,6 +69,8 @@ type UnifiedRow =
       __kind: "FIELD_WORK";
       __typeLabel: string;
       __status: string;
+      __hrStatus: string;
+      __managerStatus: string;
       __submittedAt: any;
       __atts: AttachItem[];
     });
@@ -77,19 +83,77 @@ function statusLabel(s: string) {
   return "รอดำเนินการ";
 }
 
-function statusBadgeClass(s: string) {
-  const u = String(s || "").toUpperCase();
+function normTime(s: any) {
+  return String(s || "").replace("T", " ");
+}
+
+function asUpper(x: any) {
+  return String(x ?? "").toUpperCase();
+}
+
+// แปลง overallStatus (workflow ใหม่) ให้เป็น filter แบบเดิม
+function overallToLegacyFilter(overallOrLegacy: string) {
+  const u = asUpper(overallOrLegacy);
+  if (u === "PENDING_HR" || u === "PENDING_MANAGER") return "PENDING";
+  if (u === "REJECTED_BY_HR" || u === "REJECTED_BY_MANAGER") return "REJECTED";
+  if (u === "APPROVED") return "APPROVED";
+  if (u === "CANCELED" || u === "CANCELLED") return "CANCELED";
+
+  // legacy already
+  if (u === "PENDING" || u === "APPROVED" || u === "REJECTED" || u === "CANCELED") return u;
+
+  return "PENDING";
+}
+
+function deriveLeaveHrStatus(r: any) {
+  if (r?.hrStatus) return asUpper(r.hrStatus);
+
+  // fallback schema เก่า
+  const legacy = asUpper(r?.status || "PENDING");
+  if (legacy === "APPROVED") return "APPROVED";
+  if (legacy === "REJECTED") return "REJECTED";
+  if (legacy === "CANCELED" || legacy === "CANCELLED") return "CANCELED";
+  return "PENDING";
+}
+
+function deriveLeaveManagerStatus(r: any) {
+  if (r?.managerStatus) return asUpper(r.managerStatus);
+
+  // fallback schema เก่า
+  const legacy = asUpper(r?.status || "PENDING");
+
+  // ใบเก่าที่จบแล้ว แสดง manager ให้สอดคล้องกับผลลัพธ์สุดท้าย
+  if (legacy === "APPROVED") return "APPROVED";
+  if (legacy === "CANCELED" || legacy === "CANCELLED") return "CANCELED";
+
+  // เราไม่รู้ว่า reject ชั้นไหน → ปลอดภัยสุดให้ล็อกไว้
+  if (legacy === "REJECTED") return "LOCKED";
+
+  // PENDING ใบเก่า → manager ยังไม่ถึงขั้น
+  return "LOCKED";
+}
+
+function stepLabel(s: string) {
+  const u = asUpper(s);
+  if (u === "LOCKED") return "ยังไม่ถึงขั้น";
+  if (u === "PENDING") return "รอดำเนินการ";
+  if (u === "APPROVED") return "อนุมัติ";
+  if (u === "REJECTED") return "ไม่อนุมัติ";
+  if (u === "CANCELED" || u === "CANCELLED") return "ยกเลิก";
+  return u || "-";
+}
+
+function stepBadgeClass(s: string) {
+  const u = asUpper(s);
   return u === "APPROVED"
     ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
     : u === "REJECTED"
     ? "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-    : u === "CANCELED"
+    : u === "CANCELED" || u === "CANCELLED"
     ? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200"
+    : u === "LOCKED"
+    ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
     : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
-}
-
-function normTime(s: any) {
-  return String(s || "").replace("T", " ");
 }
 
 export default function LeaveStatusPage() {
@@ -131,11 +195,18 @@ export default function LeaveStatusPage() {
       const atts: AttachItem[] = Array.isArray((r as any).attachments) ? ((r as any).attachments as any) : [];
       const submitted = (r as any).submittedAt || (r as any).updatedAt || null;
 
+      const overallRaw = asUpper((r as any).overallStatus || (r as any).status || "PENDING");
+      const filterStatus = overallToLegacyFilter(overallRaw);
+      const hr = deriveLeaveHrStatus(r as any);
+      const mgr = deriveLeaveManagerStatus(r as any);
+
       return {
         ...(r as any),
         __kind: "LEAVE",
         __typeLabel: `${(r as any).category} • ${(r as any).subType}`,
-        __status: String((r as any).status || "PENDING").toUpperCase(),
+        __status: filterStatus,
+        __hrStatus: hr,
+        __managerStatus: mgr,
         __submittedAt: submitted,
         __atts: atts,
       };
@@ -152,6 +223,8 @@ export default function LeaveStatusPage() {
         __kind: "FIELD_WORK",
         __typeLabel: `ออกปฏิบัติงานนอกสถานที่ • ${(f as any).place || "-"}`,
         __status: st,
+        __hrStatus: st, // field work ไม่มี flow 2 ชั้น ให้แสดงสถานะในช่อง HR
+        __managerStatus: "-", // ไม่ใช้
         __submittedAt: submitted,
         __atts: [], // field work ไม่มีไฟล์แนบ
       };
@@ -341,7 +414,9 @@ export default function LeaveStatusPage() {
 
       <div>
         <h1 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">ตรวจสอบสถานะคำร้อง</h1>
-        <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">เลขคำร้อง • ประเภท • ช่วงเวลา • สถานะ • ยื่นเมื่อ</div>
+          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            เลขคำร้อง • ประเภท • ช่วงเวลา • สถานะ (HR/ผู้บริหาร) • ยื่นเมื่อ
+          </div>
       </div>
 
       {/* Filters */}
@@ -414,7 +489,8 @@ export default function LeaveStatusPage() {
                 <th className={tableTheme.th}>เลขคำร้อง</th>
                 <th className={tableTheme.th}>ประเภท</th>
                 <th className={tableTheme.th}>ช่วงเวลา</th>
-                <th className={tableTheme.th}>สถานะ</th>
+                <th className={tableTheme.th}>HR</th>
+                <th className={tableTheme.th}>EXECUTIVE_MANAGER</th>
                 <th className={tableTheme.th}>ยื่นเมื่อ</th>
                 <th className={tableTheme.th}>ไฟล์แนบ</th>
               </tr>
@@ -423,14 +499,16 @@ export default function LeaveStatusPage() {
             <tbody className={tableTheme.tbody}>
               {filteredRows.length === 0 ? (
                 <tr className={tableTheme.trHover}>
-                  <td className={tableTheme.td} colSpan={6}>
+                  <td className={tableTheme.td} colSpan={7}>
                     <span className="text-gray-500">ไม่พบคำร้องตามตัวกรอง</span>
                   </td>
                 </tr>
               ) : (
                 filteredRows.map((r) => {
-                  const badge = statusBadgeClass(r.__status);
-                  const stText = statusLabel(r.__status);
+                  const hrBadge = stepBadgeClass((r as any).__hrStatus);
+                  const hrText = stepLabel((r as any).__hrStatus);
+                  const mgBadge = stepBadgeClass((r as any).__managerStatus);
+                  const mgText = stepLabel((r as any).__managerStatus);
 
                   return (
                     <tr key={`${r.__kind}-${(r as any).id}`} className={tableTheme.trHover}>
@@ -445,7 +523,11 @@ export default function LeaveStatusPage() {
                       </td>
 
                       <td className={tableTheme.td}>
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badge}`}>{stText}</span>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${hrBadge}`}>{hrText}</span>
+                      </td>
+
+                      <td className={tableTheme.td}>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${mgBadge}`}>{mgText}</span>
                       </td>
 
                       <td className={tableTheme.td}>{fmtSubmitted(r.__submittedAt)}</td>

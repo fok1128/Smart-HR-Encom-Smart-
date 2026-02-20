@@ -113,10 +113,7 @@ function normalizeAvatarFromDoc(doc = {}) {
     doc.avatar?.key
   );
 
-  // ถ้า avatarUrl เป็น URL จริง ใช้เป็น url
   const url = isHttpUrl(avatarUrlMaybe) ? avatarUrlMaybe : "";
-
-  // ถ้า avatarUrl ไม่ใช่ URL (บางคนเก็บเป็น path) ให้โยนไปเป็น path
   const path = avatarPathMaybe || (!isHttpUrl(avatarUrlMaybe) ? pickStr(avatarUrlMaybe) : "");
 
   return {
@@ -249,7 +246,7 @@ app.get("/me", requireAuth, async (req, res) => {
     if (!empSnap.exists) {
       return res.status(404).json({
         ok: false,
-        error: `Employee not found: employees/${employeeNo}`,
+        error: `Employee not found: employees/${employeeNo}`, // ✅ fix string
         employeeNo,
         projectId: admin.app().options.projectId || null,
       });
@@ -257,11 +254,9 @@ app.get("/me", requireAuth, async (req, res) => {
 
     const empData = empSnap.data() || {};
 
-    // ✅ normalize avatar จาก doc ทั้งสองฝั่ง
     const userAvatar = normalizeAvatarFromDoc(userData);
     const empAvatar = normalizeAvatarFromDoc(empData);
 
-    // ✅ ให้ employee ชนะ ถ้ามีค่า
     const avatarUrl = pickStr(empAvatar.avatarUrl, userAvatar.avatarUrl);
     const avatarPath = pickStr(empAvatar.avatarPath, userAvatar.avatarPath);
 
@@ -273,7 +268,6 @@ app.get("/me", requireAuth, async (req, res) => {
       role: roleFs,
       claimSync,
 
-      // ✅ top-level ใช้ง่ายสุดสำหรับ frontend/header
       avatarUrl: avatarUrl || undefined,
       avatarPath: avatarPath || undefined,
       storagePath: avatarPath || undefined,
@@ -283,7 +277,6 @@ app.get("/me", requireAuth, async (req, res) => {
         path: avatarPath || undefined,
       },
 
-      // ✅ keep original docs ด้วย แต่ใส่ normalized avatar ซ้ำให้ด้วย
       user: { id: userSnap.id, ...userData, ...userAvatar },
       employee: { id: empSnap.id, ...empData, ...empAvatar },
     });
@@ -318,6 +311,370 @@ app.post("/admin/set-role", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("/admin/set-role error:", err);
     return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// ----------------- ✅ LEAVE WORKFLOW (2-stage) -----------------
+const LEAVE_COL = "leave_requests";
+
+function nowTs() {
+  return admin.firestore.FieldValue.serverTimestamp();
+}
+
+function asUpper(x) {
+  return String(x || "").trim().toUpperCase();
+}
+
+function requireRole(req, allow) {
+  const r = normalizeRole(req.user?.role);
+  if (!allow.includes(r)) {
+    const e = new Error("FORBIDDEN_ROLE");
+    e.status = 403;
+    throw e;
+  }
+  return r;
+}
+
+async function getLeaveOrThrow(id) {
+  const ref = db.collection(LEAVE_COL).doc(String(id));
+  const snap = await ref.get();
+  if (!snap.exists) {
+    const e = new Error("LEAVE_NOT_FOUND");
+    e.status = 404;
+    throw e;
+  }
+  return { ref, data: snap.data() || {}, id: snap.id };
+}
+
+function deriveWorkflowFromLegacy(data) {
+  const status = asUpper(data.status);
+  const overall = asUpper(data.overallStatus);
+
+  if (overall) return data;
+
+  if (status === "APPROVED") {
+    return {
+      ...data,
+      overallStatus: "APPROVED",
+      hrStatus: data.hrStatus || "APPROVED",
+      managerStatus: data.managerStatus || "APPROVED",
+    };
+  }
+  if (status === "REJECTED") {
+    return {
+      ...data,
+      overallStatus: "REJECTED_BY_HR",
+      hrStatus: data.hrStatus || "REJECTED",
+      managerStatus: data.managerStatus || "LOCKED",
+    };
+  }
+  if (status === "CANCELED") {
+    return {
+      ...data,
+      overallStatus: "CANCELED",
+      hrStatus: data.hrStatus || "CANCELED",
+      managerStatus: data.managerStatus || "LOCKED",
+    };
+  }
+  return {
+    ...data,
+    overallStatus: "PENDING_HR",
+    hrStatus: data.hrStatus || "PENDING",
+    managerStatus: data.managerStatus || "LOCKED",
+  };
+}
+
+function canOwnerEditOrCancel(leave, uid) {
+  const wf = deriveWorkflowFromLegacy(leave);
+  return (
+    String(wf.uid || "") === String(uid || "") &&
+    asUpper(wf.overallStatus) === "PENDING_HR" &&
+    asUpper(wf.hrStatus) === "PENDING"
+  );
+}
+
+// TODO: ผูก SMS จริงทีหลัง
+async function sendSmsMaybe({ to, message }) {
+  return { ok: true, to, message };
+}
+
+function pickOwnerContact(leave) {
+  const phone = pickStr(leave.phone, leave.employee?.phone, leave.user?.phone);
+  return phone || "";
+}
+
+/**
+ * POST /leave-requests/:id/hr-action
+ * body: { action: "APPROVE"|"REJECT", comment?: string }
+ */
+app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
+  try {
+    const role = requireRole(req, ["ADMIN", "HR"]);
+    const id = req.params.id;
+
+    const action = asUpper(req.body?.action);
+    const comment = String(req.body?.comment || "").trim();
+
+    if (!["APPROVE", "REJECT"].includes(action)) {
+      return res.status(400).json({ ok: false, error: "INVALID_ACTION" });
+    }
+    if (action === "REJECT" && !comment) {
+      return res.status(400).json({ ok: false, error: "REASON_REQUIRED" });
+    }
+
+    const { ref, data } = await getLeaveOrThrow(id);
+    const wf = deriveWorkflowFromLegacy(data);
+
+    const overall = asUpper(wf.overallStatus);
+    if (overall === "APPROVED" || overall.startsWith("REJECTED") || overall === "CANCELED") {
+      return res.status(409).json({ ok: false, error: "ALREADY_DECIDED" });
+    }
+
+    if (asUpper(wf.overallStatus) !== "PENDING_HR" || asUpper(wf.hrStatus) !== "PENDING") {
+      return res.status(409).json({ ok: false, error: "NOT_IN_HR_PENDING" });
+    }
+
+    const actor = { uid: req.user.uid, email: req.user.email || null, role };
+
+    if (action === "APPROVE") {
+      const patch = {
+        overallStatus: "PENDING_MANAGER",
+        hrStatus: "APPROVED",
+        hrComment: comment || null,
+        hrActionAt: nowTs(),
+        hrActionBy: actor,
+
+        managerStatus: "PENDING",
+        managerComment: null,
+        managerActionAt: null,
+        managerActionBy: null,
+
+        status: "PENDING",
+        updatedAt: nowTs(),
+      };
+
+      await ref.set(patch, { merge: true });
+
+      const toEmp = pickOwnerContact(wf);
+      if (toEmp)
+        await sendSmsMaybe({
+          to: toEmp,
+          message: `คำร้อง ${wf.requestNo || id} HR อนุมัติแล้ว กำลังรอผู้บังคับบัญชา`,
+        });
+
+      return res.json({ ok: true, id, patch });
+    }
+
+    const patch = {
+      overallStatus: "REJECTED_BY_HR",
+      hrStatus: "REJECTED",
+      hrComment: comment,
+      hrActionAt: nowTs(),
+      hrActionBy: actor,
+
+      managerStatus: "LOCKED",
+      managerComment: null,
+      managerActionAt: null,
+      managerActionBy: null,
+
+      status: "REJECTED",
+      rejectReason: comment,
+      rejectedAt: nowTs(),
+      rejectedBy: pickStr(req.user.email, "HR"),
+      decidedAt: nowTs(),
+      decisionNote: comment || null,
+      updatedAt: nowTs(),
+    };
+
+    await ref.set(patch, { merge: true });
+
+    const toEmp = pickOwnerContact(wf);
+    if (toEmp)
+      await sendSmsMaybe({
+        to: toEmp,
+        message: `คำร้อง ${wf.requestNo || id} ไม่อนุมัติโดย HR เหตุผล: ${comment}`,
+      });
+
+    return res.json({ ok: true, id, patch });
+  } catch (err) {
+    console.error("/leave-requests/:id/hr-action error:", err);
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
+/**
+ * POST /leave-requests/:id/manager-action
+ * body: { action: "APPROVE"|"REJECT", comment?: string }
+ */
+app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => {
+  try {
+    const role = requireRole(req, ["ADMIN", "EXECUTIVE_MANAGER"]);
+    const id = req.params.id;
+
+    const action = asUpper(req.body?.action);
+    const comment = String(req.body?.comment || "").trim();
+
+    if (!["APPROVE", "REJECT"].includes(action)) {
+      return res.status(400).json({ ok: false, error: "INVALID_ACTION" });
+    }
+    if (action === "REJECT" && !comment) {
+      return res.status(400).json({ ok: false, error: "REASON_REQUIRED" });
+    }
+
+    const { ref, data } = await getLeaveOrThrow(id);
+    const wf = deriveWorkflowFromLegacy(data);
+
+    const overall = asUpper(wf.overallStatus);
+    if (overall === "APPROVED" || overall.startsWith("REJECTED") || overall === "CANCELED") {
+      return res.status(409).json({ ok: false, error: "ALREADY_DECIDED" });
+    }
+
+    if (asUpper(wf.overallStatus) !== "PENDING_MANAGER" || asUpper(wf.managerStatus) !== "PENDING") {
+      return res.status(409).json({ ok: false, error: "NOT_IN_MANAGER_PENDING" });
+    }
+    if (asUpper(wf.hrStatus) !== "APPROVED") {
+      return res.status(409).json({ ok: false, error: "WAIT_HR_APPROVE_FIRST" });
+    }
+
+    const actor = { uid: req.user.uid, email: req.user.email || null, role };
+
+    if (action === "APPROVE") {
+      const patch = {
+        overallStatus: "APPROVED",
+        managerStatus: "APPROVED",
+        managerComment: comment || null,
+        managerActionAt: nowTs(),
+        managerActionBy: actor,
+
+        status: "APPROVED",
+        approvedAt: nowTs(),
+        approvedBy: pickStr(req.user.email, "MANAGER"),
+        decidedAt: nowTs(),
+        decisionNote: comment || null,
+        updatedAt: nowTs(),
+      };
+
+      await ref.set(patch, { merge: true });
+
+      const toEmp = pickOwnerContact(wf);
+      if (toEmp)
+        await sendSmsMaybe({
+          to: toEmp,
+          message: `คำร้อง ${wf.requestNo || id} อนุมัติสำเร็จแล้ว`,
+        });
+
+      return res.json({ ok: true, id, patch });
+    }
+
+    const patch = {
+      overallStatus: "REJECTED_BY_MANAGER",
+      managerStatus: "REJECTED",
+      managerComment: comment,
+      managerActionAt: nowTs(),
+      managerActionBy: actor,
+
+      status: "REJECTED",
+      rejectReason: comment,
+      rejectedAt: nowTs(),
+      rejectedBy: pickStr(req.user.email, "MANAGER"),
+      decidedAt: nowTs(),
+      decisionNote: comment || null,
+      updatedAt: nowTs(),
+    };
+
+    await ref.set(patch, { merge: true });
+
+    const toEmp = pickOwnerContact(wf);
+    if (toEmp)
+      await sendSmsMaybe({
+        to: toEmp,
+        message: `คำร้อง ${wf.requestNo || id} ไม่อนุมัติโดยผู้บังคับบัญชา เหตุผล: ${comment}`,
+      });
+
+    return res.json({ ok: true, id, patch });
+  } catch (err) {
+    console.error("/leave-requests/:id/manager-action error:", err);
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
+/**
+ * POST /leave-requests/:id/cancel
+ * body: { reason: string }
+ */
+app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
+  try {
+    const role = normalizeRole(req.user?.role);
+    const id = req.params.id;
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason) return res.status(400).json({ ok: false, error: "REASON_REQUIRED" });
+
+    const { ref, data } = await getLeaveOrThrow(id);
+    const wf = deriveWorkflowFromLegacy(data);
+
+    const uid = String(req.user.uid || "");
+    const isOwner = String(wf.uid || "") === uid;
+
+    const isApproverRole = ["ADMIN", "HR", "EXECUTIVE_MANAGER"].includes(role);
+
+    if (isOwner && !isApproverRole) {
+      if (!canOwnerEditOrCancel(wf, uid)) {
+        return res.status(409).json({ ok: false, error: "OWNER_CANCEL_NOT_ALLOWED_NOW" });
+      }
+    }
+
+    if (!isOwner && !isApproverRole) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_CANCEL" });
+    }
+
+    const overall = asUpper(wf.overallStatus);
+    if (overall === "APPROVED" || overall.startsWith("REJECTED") || overall === "CANCELED") {
+      return res.status(409).json({ ok: false, error: "ALREADY_DECIDED" });
+    }
+
+    const canceledByRole = isOwner && !isApproverRole ? "OWNER" : role;
+    const actor = { uid: req.user.uid, email: req.user.email || null, role: canceledByRole };
+
+    const patch = {
+      overallStatus: "CANCELED",
+
+      canceledByRole,
+      canceledBy: actor,
+      canceledReason: reason,
+      canceledAt: nowTs(),
+
+      hrStatus: canceledByRole === "HR" ? "CANCELED" : wf.hrStatus || "PENDING",
+      hrComment: canceledByRole === "HR" ? reason : wf.hrComment || null,
+      hrActionAt: canceledByRole === "HR" ? nowTs() : wf.hrActionAt || null,
+      hrActionBy: canceledByRole === "HR" ? actor : wf.hrActionBy || null,
+
+      managerStatus: canceledByRole === "EXECUTIVE_MANAGER" ? "CANCELED" : wf.managerStatus || "LOCKED",
+      managerComment: canceledByRole === "EXECUTIVE_MANAGER" ? reason : wf.managerComment || null,
+      managerActionAt: canceledByRole === "EXECUTIVE_MANAGER" ? nowTs() : wf.managerActionAt || null,
+      managerActionBy: canceledByRole === "EXECUTIVE_MANAGER" ? actor : wf.managerActionBy || null,
+
+      status: "CANCELED",
+      decidedAt: nowTs(),
+      decisionNote: reason || null,
+      updatedAt: nowTs(),
+    };
+
+    await ref.set(patch, { merge: true });
+
+    const toEmp = pickOwnerContact(wf);
+    if (toEmp)
+      await sendSmsMaybe({
+        to: toEmp,
+        message: `คำร้อง ${wf.requestNo || id} ถูกยกเลิกโดย ${canceledByRole} เหตุผล: ${reason}`,
+      });
+
+    return res.json({ ok: true, id, patch });
+  } catch (err) {
+    console.error("/leave-requests/:id/cancel error:", err);
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: String(err?.message || err) });
   }
 });
 
