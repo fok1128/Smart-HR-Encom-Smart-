@@ -652,7 +652,7 @@ export default function Calendar() {
   }, [leaveEvents]);
 
   const selectedOcc = occMap.get(selectedISO) ?? [];
-  const selectedBars = barMap.get(selectedISO) ?? [];
+  
 
   const totalMinutesSelected = useMemo(() => {
     let sum = 0;
@@ -884,7 +884,7 @@ export default function Calendar() {
         >
           {showText ? (
             <div className="flex w-full flex-col">
-              <div className="truncate">{leaveTypeWithSub(ev)}</div>
+              <div className="truncate">{leaveLabel(ev)}</div>
               {leaveTimeRange(ev) ? (
                 <div className="truncate text-[9px] font-bold opacity-90">{leaveTimeRange(ev)}</div>
               ) : null}

@@ -8,9 +8,7 @@ import {
   createAnnouncementWithFiles,
   listenAnnouncements,
   deleteAnnouncement,
-  updateAnnouncement,
   setAnnouncementPinned,
-  uploadAnnouncementFiles,
   getAnnouncementSignedUrl,
   type Announcement,
   type AnnouncementAttachment,
@@ -517,19 +515,7 @@ export default function AnnouncementsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // edit inline
-  const [editId, setEditId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editBody, setEditBody] = useState("");
-  const [editPinned, setEditPinned] = useState(false);
 
-  const [editPickedFiles, setEditPickedFiles] = useState<File[]>([]);
-  const [editUploadPct, setEditUploadPct] = useState(0);
-
-  const [editLinks, setEditLinks] = useState<AnnouncementLink[]>([]);
-  const [editNewLinkUrl, setEditNewLinkUrl] = useState("");
-  const [editNewLinkLabel, setEditNewLinkLabel] = useState("");
-
-  const [savingEdit, setSavingEdit] = useState(false);
 
   const canPost = useMemo(() => title.trim() && body.trim(), [title, body]);
 
@@ -742,26 +728,7 @@ export default function AnnouncementsPage() {
     setNewLinkLabel("");
   }
 
-  function addLinkToEdit() {
-    const url = editNewLinkUrl.trim();
-    const label = editNewLinkLabel.trim();
-    if (!url) return;
-
-    if (!isValidUrl(url)) {
-      dcAlert("ลิงก์ไม่ถูกต้อง", "ต้องขึ้นต้นด้วย http/https");
-      return;
-    }
-
-    setEditLinks((prev) => {
-      const dedup = prev.some((x) => x.url === url);
-      if (dedup) return prev;
-      return [...prev, { url, label: label || undefined }];
-    });
-
-    setEditNewLinkUrl("");
-    setEditNewLinkLabel("");
-  }
-
+  
   async function onPost() {
     if (!user) {
       dcAlert("ยังไม่ได้เข้าสู่ระบบ");
@@ -806,78 +773,8 @@ export default function AnnouncementsPage() {
     }
   }
 
-  function openEdit(a: Announcement) {
-    if (!isAdmin) return;
-    setEditId(a.id);
-    setEditTitle(a.title || "");
-    setEditBody(a.body || "");
-    setEditPinned(!!a.pinned);
-    setEditPickedFiles([]);
-    setEditUploadPct(0);
-
-    setEditLinks(normalizeAnnouncementLinks(a));
-    setEditNewLinkUrl("");
-    setEditNewLinkLabel("");
-
-    setExpandedId(null);
-  }
-
-  function closeEdit() {
-    if (savingEdit) return;
-    setEditId(null);
-    setEditTitle("");
-    setEditBody("");
-    setEditPinned(false);
-    setEditPickedFiles([]);
-    setEditUploadPct(0);
-    setEditLinks([]);
-    setEditNewLinkUrl("");
-    setEditNewLinkLabel("");
-  }
-
-  async function onSaveEdit(original: Announcement) {
-    if (!isAdmin || !editId || !user) return;
-
-    if (!editTitle.trim() || !editBody.trim()) {
-      dcAlert("กรอกหัวเรื่องและเนื้อหาให้ครบ");
-      return;
-    }
-
-    setSavingEdit(true);
-    try {
-      let attachments: AnnouncementAttachment[] | null | undefined = undefined;
-
-      if (editPickedFiles.length) {
-        setEditUploadPct(1);
-        const up = await uploadAnnouncementFiles(user.uid, editPickedFiles, (p: number) => setEditUploadPct(p));
-        attachments = up;
-      } else {
-        attachments = normalizeAnnouncementAttachments(original);
-      }
-
-      await updateAnnouncement(
-        editId,
-        {
-          title: editTitle.trim(),
-          body: editBody.trim(),
-          pinned: editPinned,
-          attachments: attachments?.length ? attachments : null,
-          links: editLinks.length ? editLinks : null,
-          fileUrl: null,
-        } as any
-      );
-
-      dcAlert("แก้ไขประกาศแล้ว ✅");
-      closeEdit();
-    } catch (e: any) {
-      console.error("UPDATE ANNOUNCEMENT ERROR:", e);
-      dcAlert("แก้ไขไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
-    } finally {
-      setSavingEdit(false);
-      setEditUploadPct(0);
-    }
-  }
-
+  
+  
   async function onDelete(a: Announcement) {
     if (!isAdmin) return;
 
@@ -1110,7 +1007,11 @@ export default function AnnouncementsPage() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <AppButton type="button" variant="outlinePill" size="md" onClick={addLinkToCreate}>
+                  <AppButton
+                    type="button"
+                    onClick={addLinkToCreate}
+                    className="bg-violet-600 text-white hover:bg-violet-700"
+                  >
                     เพิ่มลิงก์
                   </AppButton>
 
@@ -1145,7 +1046,7 @@ export default function AnnouncementsPage() {
             const atts = normalizeAnnouncementAttachments(a);
             const lks = normalizeAnnouncementLinks(a);
             const isExpanded = expandedId === a.id;
-            const isEditing = editId === a.id;
+            const isEditing = false;
 
             const imgAtts = atts.filter((x) => isImageFile(x.name));
             const tiles = photoTilesOf(imgAtts);
@@ -1239,15 +1140,6 @@ export default function AnnouncementsPage() {
                             className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
                           >
                             รายละเอียด
-                          </button>
-                        ) : null}
-
-                        {!isEditing ? (
-                          <button
-                            onClick={() => openEdit(a)}
-                            className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700 dark:hover:bg-gray-800"
-                          >
-                            แก้ไข
                           </button>
                         ) : null}
 
