@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
+import { getAuth } from "firebase/auth"; // ✅ เอา token จาก Firebase โดยตรง
 import { useAuth } from "../context/AuthContext";
 
 const LIFF_ID = import.meta.env.VITE_LINE_LIFF_ID;
 const API_BASE = import.meta.env.VITE_API_BASE;
 
 export default function LineLinkPage() {
+  // ใช้ไว้เช็คว่าล็อกอินเว็บหรือยัง (แต่ไม่เรียก getIdToken จากตัวนี้)
   const { user } = useAuth();
+
   const [status, setStatus] = useState("กำลังเริ่มต้น...");
   const [lineUserId, setLineUserId] = useState("");
 
@@ -27,13 +30,15 @@ export default function LineLinkPage() {
         const profile = await liff.getProfile();
         setLineUserId(profile.userId);
 
-        if (!user) {
+        // ✅ ต้องล็อกอินเว็บ (Firebase) ก่อน
+        const fbUser = getAuth().currentUser;
+        if (!fbUser) {
           setStatus("กรุณาเข้าสู่ระบบเว็บก่อน แล้วค่อยเชื่อม LINE");
           return;
         }
 
         setStatus("กำลังผูกบัญชี LINE...");
-        const token = await user.getIdToken();
+        const token = await fbUser.getIdToken();
 
         const resp = await fetch(`${API_BASE}/line/link`, {
           method: "POST",
@@ -52,12 +57,15 @@ export default function LineLinkPage() {
         setStatus(`❌ ผูกไม่สำเร็จ: ${e?.message || e}`);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   return (
     <div className="mx-auto max-w-xl p-6">
       <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
-        <div className="text-lg font-bold text-gray-900 dark:text-gray-100">เชื่อมบัญชี LINE</div>
+        <div className="text-lg font-bold text-gray-900 dark:text-gray-100">
+          เชื่อมบัญชี LINE
+        </div>
         <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">{status}</div>
 
         {lineUserId && (
