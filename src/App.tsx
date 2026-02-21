@@ -25,47 +25,55 @@ import MyLeaveRequestsPage from "./pages/MyLeaveRequestsPage";
 // ✅ Field Work
 import FieldWorkSubmitPage from "./pages/FieldWorkSubmitPage";
 import FieldWorkHistoryPage from "./pages/FieldWorkHistoryPage"; // <<< ต้องมีไฟล์นี้จริง
+
+// ✅ LINE Link
+import LineLinkPage from "./pages/LineLinkPage";
+
 import { DialogCenterProvider } from "./components/common/DialogCenter";
+
 export default function App() {
   return (
     <ToastCenterProvider>
       <DialogCenterProvider>
-      <ScrollToTop />
-      <TitleLock />
+        <ScrollToTop />
+        <TitleLock />
 
-      <Routes>
-        <Route path="/signin" element={<SignIn />} />
-        <Route path="/signup" element={<Navigate to="/signin" replace />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
+        <Routes>
+          <Route path="/signin" element={<SignIn />} />
+          <Route path="/signup" element={<Navigate to="/signin" replace />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
-        <Route element={<ProtectedRoute />}>
-          <Route path="/" element={<AppLayout />}>
-            <Route index element={<Home />} />
-            <Route path="profile" element={<UserProfiles />} />
-            <Route path="calendar" element={<Calendar />} />
-            <Route path="blank" element={<Blank />} />
-            <Route path="form-elements" element={<FormElements />} />
-            <Route path="basic-tables" element={<BasicTables />} />
+          <Route element={<ProtectedRoute />}>
+            {/* ✅ LINE: ต้อง login เว็บก่อน เพื่อยิง /line/link พร้อม token */}
+            <Route path="/line-link" element={<LineLinkPage />} />
 
-            {/* ✅ Field Work */}
-            <Route path="field-work" element={<FieldWorkSubmitPage />} />
-            <Route path="field-work/history" element={<FieldWorkHistoryPage />} />
+            <Route path="/" element={<AppLayout />}>
+              <Route index element={<Home />} />
+              <Route path="profile" element={<UserProfiles />} />
+              <Route path="calendar" element={<Calendar />} />
+              <Route path="blank" element={<Blank />} />
+              <Route path="form-elements" element={<FormElements />} />
+              <Route path="basic-tables" element={<BasicTables />} />
 
-            {/* Leave */}
-            <Route path="leave/submit" element={<LeaveSubmitPage />} />
-            <Route path="leave/request" element={<LeaveSubmitPage />} />
-            <Route path="leave/status" element={<LeaveStatusPage />} />
-            <Route path="my-leaves" element={<MyLeaveRequestsPage />} />
+              {/* ✅ Field Work */}
+              <Route path="field-work" element={<FieldWorkSubmitPage />} />
+              <Route path="field-work/history" element={<FieldWorkHistoryPage />} />
 
-            <Route element={<RequireRole allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]} />}>
-              <Route path="leave/approve" element={<LeaveApprovePage />} />
-              <Route path="leave/approve-history" element={<LeaveApproveHistoryPage />} />
+              {/* Leave */}
+              <Route path="leave/submit" element={<LeaveSubmitPage />} />
+              <Route path="leave/request" element={<LeaveSubmitPage />} />
+              <Route path="leave/status" element={<LeaveStatusPage />} />
+              <Route path="my-leaves" element={<MyLeaveRequestsPage />} />
+
+              <Route element={<RequireRole allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]} />}>
+                <Route path="leave/approve" element={<LeaveApprovePage />} />
+                <Route path="leave/approve-history" element={<LeaveApproveHistoryPage />} />
+              </Route>
             </Route>
           </Route>
-        </Route>
 
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </DialogCenterProvider>
     </ToastCenterProvider>
   );

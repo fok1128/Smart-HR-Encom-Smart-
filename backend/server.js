@@ -73,6 +73,84 @@ function initFirebaseAdmin() {
 initFirebaseAdmin();
 const db = admin.firestore();
 
+// ----------------- ✅ LINE Messaging API -----------------
+const line = require("@line/bot-sdk");
+
+const lineClient = process.env.LINE_CHANNEL_ACCESS_TOKEN
+  ? new line.Client({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN })
+  : null;
+
+async function linePush(to, text) {
+  if (!lineClient) return { ok: false, error: "NO_LINE_TOKEN" };
+  if (!to) return { ok: false, error: "NO_TO" };
+  try {
+    await lineClient.pushMessage(String(to), { type: "text", text: String(text || "") });
+    return { ok: true };
+  } catch (err) {
+    console.error("[LINE-PUSH-ERROR]", err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+async function lineMulticast(toList, text) {
+  if (!lineClient) return { ok: false, error: "NO_LINE_TOKEN" };
+  const list = Array.from(new Set((toList || []).filter(Boolean).map(String)));
+  if (!list.length) return { ok: false, error: "EMPTY_LIST" };
+
+  // LINE multicast จำกัดจำนวนผู้รับต่อครั้ง (โดยทั่วไป 500)
+  const CHUNK = 500;
+  try {
+    for (let i = 0; i < list.length; i += CHUNK) {
+      const chunk = list.slice(i, i + CHUNK);
+      await lineClient.multicast(chunk, { type: "text", text: String(text || "") });
+    }
+    return { ok: true, count: list.length };
+  } catch (err) {
+    console.error("[LINE-MULTICAST-ERROR]", err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+async function getLineUserIdByUid(uid) {
+  const id = String(uid || "").trim();
+  if (!id) return "";
+  const snap = await db.collection("users").doc(id).get();
+  if (!snap.exists) return "";
+  const u = snap.data() || {};
+  return String(u.lineUserId || "").trim();
+}
+
+async function getLineUserIdsByUids(uids = []) {
+  const uniq = Array.from(new Set((uids || []).filter(Boolean).map(String)));
+  const out = [];
+  for (const uid of uniq) {
+    const lineUserId = await getLineUserIdByUid(uid);
+    if (lineUserId) out.push(lineUserId);
+  }
+  return out;
+}
+
+async function sendLineToUids(uids = [], text = "") {
+  const toList = await getLineUserIdsByUids(uids);
+  if (!toList.length) return { ok: false, error: "NO_LINKED_USERS" };
+  return await lineMulticast(toList, text);
+}
+
+async function sendLineToRole(roleUpper, text = "") {
+  const role = String(roleUpper || "").trim().toUpperCase();
+  if (!role) return { ok: false, error: "MISSING_ROLE" };
+
+  const snap = await db.collection("users").where("role", "==", role).get();
+  const toList = [];
+  snap.forEach((d) => {
+    const u = d.data() || {};
+    const lineUserId = String(u.lineUserId || "").trim();
+    if (lineUserId) toList.push(lineUserId);
+  });
+  if (!toList.length) return { ok: false, error: "NO_LINKED_ROLE_USERS" };
+  return await lineMulticast(toList, text);
+}
+
 // ----------------- ✅ HELPERS -----------------
 function normalizeRole(r) {
   const role = String(r || "USER").trim().toUpperCase();
@@ -314,6 +392,36 @@ app.post("/admin/set-role", requireAuth, async (req, res) => {
   }
 });
 
+// ----------------- ✅ LINE LINK (LIFF) -----------------
+// POST /line/link  body: { lineUserId }
+app.post("/line/link", requireAuth, async (req, res) => {
+  try {
+    const uid = String(req.user?.uid || "").trim();
+    const lineUserId = String(req.body?.lineUserId || "").trim();
+
+    if (!uid) return res.status(401).json({ ok: false, error: "MISSING_UID" });
+    if (!lineUserId || !lineUserId.startsWith("U")) {
+      return res.status(400).json({ ok: false, error: "INVALID_LINE_USER_ID" });
+    }
+
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        {
+          lineUserId,
+          lineLinkedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("/line/link error:", err);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
 // ----------------- ✅ LEAVE WORKFLOW (2-stage) -----------------
 const LEAVE_COL = "leave_requests";
 
@@ -393,7 +501,7 @@ function canOwnerEditOrCancel(leave, uid) {
   );
 }
 
-// ----------------- ✅ NOTIFICATIONS + SMS (DETAIL) -----------------
+// ----------------- ✅ NOTIFICATIONS + LINE (DETAIL) -----------------
 const NOTI_COL = "notifications";
 
 function fmtDateTimeThaiLike(x) {
@@ -499,15 +607,7 @@ async function pickActorNameAsync(req) {
   return pickStr(req.user?.name, req.user?.displayName, req.user?.email, "SYSTEM");
 }
 
-function pickOwnerPhoneFromData(wf, empDoc) {
-  // ลำดับ: leave_requests.phone -> employees.phone -> employees.phones[0]
-  const p1 = pickStr(wf.phone);
-  const p2 = pickStr(empDoc?.phone);
-  const p3 = Array.isArray(empDoc?.phones) ? pickStr(empDoc.phones[0]) : "";
-  return p1 || p2 || p3 || "";
-}
-
-function buildSmsText({ stage, decision, wf, actorRole, actorName, reason }) {
+function buildLineText({ stage, decision, wf, actorRole, actorName, reason }) {
   const reqNo = wf.requestNo || wf.id || "-";
   const cat = wf.category || "-";
   const sub = wf.subType || "-";
@@ -529,169 +629,6 @@ function buildSmsText({ stage, decision, wf, actorRole, actorName, reason }) {
 
   const dc = decision === "REJECTED" ? "ไม่อนุมัติ" : "ยกเลิก";
   return `[LEAVE] ${actorRole} ${dc} (จบคำร้อง)\nเลข:${reqNo}\nประเภท:${cat}•${sub}\nยื่น:${submitted}\nลา:${dateRange} เวลา:${timeRange}\nเหตุผล:${rs || "-"}\nผู้ดำเนินการ:${who}`;
-}
-
-async function pickOwnerContact(wf) {
-  const empNo = wf.employeeNo || (wf.user && wf.user.employeeNo);
-  const empDoc = await getEmployeeDocByNo(empNo);
-  return pickOwnerPhoneFromData(wf, empDoc);
-}
-
-// ----------------- ✅ PHONE + SMS HELPERS -----------------
-function normalizeThaiPhone(p) {
-  const s = String(p || "").replace(/[^0-9+]/g, "");
-  if (!s) return "";
-  if (s.startsWith("+66")) return s;
-  if (s.startsWith("0") && s.length >= 9) return "+66" + s.slice(1);
-  if (s.startsWith("66")) return "+66" + s.slice(2);
-  return s;
-}
-
-async function getEmployeeNoByUid(uid) {
-  const id = String(uid || "").trim();
-  if (!id) return "";
-  const us = await db.collection("users").doc(id).get();
-  if (!us.exists) return "";
-  return String(us.data()?.employeeNo || "").trim();
-}
-
-async function getPhoneByEmployeeNo(employeeNo) {
-  const no = String(employeeNo || "").trim();
-  if (!no) return "";
-  const empDoc = await getEmployeeDocByNo(no);
-  if (!empDoc) return "";
-  const p = pickStr(empDoc.phone, Array.isArray(empDoc.phones) ? empDoc.phones[0] : "");
-  return normalizeThaiPhone(p);
-}
-
-async function getPhoneByUid(uid) {
-  const empNo = await getEmployeeNoByUid(uid);
-  return await getPhoneByEmployeeNo(empNo);
-}
-
-// -------- ✅ fetch fallback (ไม่ต้องรู้ node version) --------
-let _fetchCached = null;
-async function getFetch() {
-  if (typeof global.fetch === "function") return global.fetch;
-  if (_fetchCached) return _fetchCached;
-
-  // fallback: node-fetch (ถ้าไม่มีจะ error ชัดใน log)
-  const mod = await import("node-fetch");
-  _fetchCached = mod.default;
-  return _fetchCached;
-}
-
-// -------- ✅ SMS Provider: ThaiBulkSMS (ส่งจริง/หรือ LOG-ONLY) --------
-async function sendThaiBulkSms({ to, message }) {
-  const msisdn = normalizeThaiPhone(to);
-  if (!msisdn || !message) return { ok: false, error: "MISSING_TO_OR_MESSAGE" };
-
-  const API_KEY = process.env.THAIBULK_API_KEY || "";
-  const API_SECRET = process.env.THAIBULK_API_SECRET || "";
-  const SENDER = process.env.THAIBULK_SENDER || "";
-
-  // ยังไม่ตั้ง ENV -> log-only กันระบบพัง
-  if (!API_KEY || !API_SECRET) {
-    console.log("[SMS-LOG-ONLY] to:", msisdn, "\n" + message);
-    return { ok: true, mode: "LOG_ONLY" };
-  }
-
-  const fetchFn = await getFetch();
-  const auth = Buffer.from(`${API_KEY}:${API_SECRET}`).toString("base64");
-
-  const body = new URLSearchParams({
-    msisdn,
-    message,
-    ...(SENDER ? { sender: SENDER } : {}),
-    force: "standard",
-  }).toString();
-
-  try {
-    const res = await fetchFn("https://api-v2.thaibulksms.com/sms", {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    });
-
-    const text = await res.text();
-    let data = null;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { raw: text };
-    }
-
-    if (!res.ok) {
-      console.error("[SMS-ERROR]", msisdn, res.status, data);
-      return { ok: false, status: res.status, data };
-    }
-
-    console.log("[SMS-SENT]", msisdn, data);
-    return { ok: true, data };
-  } catch (err) {
-    console.error("[SMS-ERROR]", msisdn, err?.message || err);
-    return { ok: false, error: err?.message || String(err) };
-  }
-}
-
-// ✅ ตัวกลางที่โค้ดอื่นเรียก
-async function sendSmsMaybe({ to, message }) {
-  return await sendThaiBulkSms({ to, message });
-}
-
-// ✅ ส่ง SMS ไปตาม role (ดึงเบอร์จาก users -> employees)
-async function getPhonesByRole(role) {
-  const R = asUpper(role);
-  const out = new Set();
-
-  const usersSnap = await db.collection("users").where("role", "==", R).get();
-
-  for (const doc of usersSnap.docs) {
-    const u = doc.data() || {};
-
-    const direct = pickStr(u.phone, ...(Array.isArray(u.phones) ? u.phones : []));
-    if (direct) out.add(direct);
-
-    const employeeNo = pickStr(u.employeeNo, u.employee_id, u.empNo);
-    if (!employeeNo) continue;
-
-    const empSnap = await db.collection("employees").doc(String(employeeNo)).get();
-    if (!empSnap.exists) continue;
-
-    const emp = empSnap.data() || {};
-    const empPhone = pickStr(emp.phone, ...(Array.isArray(emp.phones) ? emp.phones : []));
-    if (empPhone) out.add(empPhone);
-  }
-
-  return Array.from(out).map(normalizeThaiPhone).filter(Boolean);
-}
-
-async function sendSmsToRole(role, message) {
-  const phones = await getPhonesByRole(role);
-  const results = [];
-
-  for (const p of phones) {
-    results.push(await sendSmsMaybe({ to: p, message }));
-  }
-
-  return { ok: true, role: asUpper(role), count: phones.length, results };
-}
-
-// ✅ ส่ง SMS ไปตาม uid list (แก้ notify-submit 500)
-async function sendSmsToUids(uids = [], message = "") {
-  const results = [];
-  for (const uid of uids) {
-    const phone = await getPhoneByUid(uid);
-    if (!phone) {
-      results.push({ ok: false, uid, error: "NO_PHONE" });
-      continue;
-    }
-    results.push(await sendSmsMaybe({ to: phone, message }));
-  }
-  return { ok: true, count: results.length, results };
 }
 
 /**
@@ -730,30 +667,28 @@ app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
       )
     );
 
-    // ✅ ชื่อ/เบอร์ผู้ยื่น "ยึดจาก employees/{employeeNo}" เป็นหลัก
+    // ✅ ชื่อผู้ยื่น "ยึดจาก employees/{employeeNo}" เป็นหลัก
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
-    const senderPhone = pickOwnerPhoneFromData(wf, empDoc) || "-";
 
-    // ✅ SMS: แจ้ง HR ทุกคน
-    const smsToHr =
+    // ✅ LINE: แจ้ง HR ทุกคน
+    const msgToHr =
       `[LEAVE] มีคำร้องลาใหม่\n` +
       `เลข:${wf.requestNo || id}\n` +
       `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-      `เบอร์:${senderPhone}\n` +
       `ประเภท:${wf.category || "-"}•${wf.subType || "-"}\n` +
       `ลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\n` +
       `เข้าไปตรวจสอบในระบบ`;
-    await sendSmsToRole("HR", smsToHr);
+    await sendLineToRole("HR", msgToHr);
 
-    // ✅ SMS: ส่งกลับเจ้าของคำร้อง
-    const smsToOwner =
+    // ✅ LINE: ส่งกลับเจ้าของคำร้อง
+    const msgToOwner =
       `[LEAVE] ส่งคำร้องลาแล้ว\n` +
       `เลข:${wf.requestNo || id}\n` +
       `ประเภท:${wf.category || "-"}•${wf.subType || "-"}\n` +
       `ลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\n` +
       `สถานะ: รอ HR ตรวจสอบ`;
-    await sendSmsToUids([wf.uid], smsToOwner);
+    await sendLineToUids([wf.uid], msgToOwner);
 
     return res.json({ ok: true, id, notified: hrs.length });
   } catch (err) {
@@ -841,39 +776,36 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
         )
       );
 
-      // ✅ SMS ถึงพนักงาน (ชื่อผู้อนุมัติ = employees)
-      const toEmp = await pickOwnerContact(wf);
-      if (toEmp) {
-        const sms = buildSmsText({
-          stage: "HR",
-          decision: "APPROVED",
-          wf: { ...wf, id },
-          actorRole: "HR",
-          actorName,
-          reason: comment || null,
-        });
-        await sendSmsMaybe({ to: toEmp, message: sms });
-      }
+      // ✅ LINE ถึงพนักงาน (ชื่อผู้อนุมัติ = employees)
+      const msgToEmp = buildLineText({
+        stage: "HR",
+        decision: "APPROVED",
+        wf: { ...wf, id },
+        actorRole: "HR",
+        actorName,
+        reason: comment || null,
+      });
+      await sendLineToUids([wf.uid], msgToEmp);
 
       // ✅ แจ้ง EXEC
       const empDoc = await getEmployeeDocByNo(wf.employeeNo);
       const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
-      const smsToExec =
+      const msgToExec =
         `[LEAVE] รออนุมัติขั้นสุดท้าย\n` +
         `เลข:${wf.requestNo || id}\n` +
         `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
         `ประเภท:${wf.category || "-"}•${wf.subType || "-"}\n` +
         `ลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\n` +
         `โปรดอนุมัติในระบบ`;
-      await sendSmsToRole("EXECUTIVE_MANAGER", smsToExec);
+      await sendLineToRole("EXECUTIVE_MANAGER", msgToExec);
 
       // ✅ log ให้ HR
-      const smsHrLog =
+      const msgHrLog =
         `[LEAVE] HR อนุมัติแล้ว (ส่งต่อผู้บริหาร)\n` +
         `เลข:${wf.requestNo || id}\n` +
         `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
         `ผู้อนุมัติ:${actorName}`;
-      await sendSmsToRole("HR", smsHrLog);
+      await sendLineToRole("HR", msgHrLog);
 
       return res.json({ ok: true, id, patch, notifiedExec: execs.length });
     }
@@ -912,28 +844,25 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
       meta: { overallStatus: "REJECTED_BY_HR", reason: comment },
     });
 
-    const toEmp = await pickOwnerContact(wf);
-    if (toEmp) {
-      const sms = buildSmsText({
-        stage: "HR",
-        decision: "REJECTED",
-        wf: { ...wf, id },
-        actorRole: "HR",
-        actorName,
-        reason: comment,
-      });
-      await sendSmsMaybe({ to: toEmp, message: sms });
-    }
+    const msgToEmp = buildLineText({
+      stage: "HR",
+      decision: "REJECTED",
+      wf: { ...wf, id },
+      actorRole: "HR",
+      actorName,
+      reason: comment,
+    });
+    await sendLineToUids([wf.uid], msgToEmp);
 
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
-    const smsHrLog =
+    const msgHrLog =
       `[LEAVE] HR ไม่อนุมัติ (จบคำร้อง)\n` +
       `เลข:${wf.requestNo || id}\n` +
       `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
       `ผู้ดำเนินการ:${actorName}\n` +
       `เหตุผล:${comment || "-"}`;
-    await sendSmsToRole("HR", smsHrLog);
+    await sendLineToRole("HR", msgHrLog);
 
     return res.json({ ok: true, id, patch });
   } catch (err) {
@@ -1008,36 +937,33 @@ app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => 
         meta: { overallStatus: "APPROVED" },
       });
 
-      const toEmp = await pickOwnerContact(wf);
-      if (toEmp) {
-        const sms = buildSmsText({
-          stage: "EXEC",
-          decision: "APPROVED",
-          wf: { ...wf, id },
-          actorRole: "EXEC",
-          actorName,
-          reason: comment || null,
-        });
-        await sendSmsMaybe({ to: toEmp, message: sms });
-      }
+      const msgToEmp = buildLineText({
+        stage: "EXEC",
+        decision: "APPROVED",
+        wf: { ...wf, id },
+        actorRole: "EXEC",
+        actorName,
+        reason: comment || null,
+      });
+      await sendLineToUids([wf.uid], msgToEmp);
 
       const empDoc = await getEmployeeDocByNo(wf.employeeNo);
       const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
 
-      const smsExecLog =
+      const msgExecLog =
         `[LEAVE] ผู้บริหารอนุมัติแล้ว ✅\n` +
         `เลข:${wf.requestNo || id}\n` +
         `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
         `ผู้อนุมัติ:${actorName}`;
-      await sendSmsToRole("EXECUTIVE_MANAGER", smsExecLog);
+      await sendLineToRole("EXECUTIVE_MANAGER", msgExecLog);
 
-      const smsHrFinal =
+      const msgHrFinal =
         `[LEAVE] คำร้องสมบูรณ์แล้ว ✅\n` +
         `เลข:${wf.requestNo || id}\n` +
         `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
         `ผลลัพธ์: APPROVED\n` +
         `ผู้อนุมัติ:${actorName}`;
-      await sendSmsToRole("HR", smsHrFinal);
+      await sendLineToRole("HR", msgHrFinal);
 
       return res.json({ ok: true, id, patch });
     }
@@ -1071,36 +997,33 @@ app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => 
       meta: { overallStatus: "REJECTED_BY_MANAGER", reason: comment },
     });
 
-    const toEmp = await pickOwnerContact(wf);
-    if (toEmp) {
-      const sms = buildSmsText({
-        stage: "EXEC",
-        decision: "REJECTED",
-        wf: { ...wf, id },
-        actorRole: "EXEC",
-        actorName,
-        reason: comment,
-      });
-      await sendSmsMaybe({ to: toEmp, message: sms });
-    }
+    const msgToEmp = buildLineText({
+      stage: "EXEC",
+      decision: "REJECTED",
+      wf: { ...wf, id },
+      actorRole: "EXEC",
+      actorName,
+      reason: comment,
+    });
+    await sendLineToUids([wf.uid], msgToEmp);
 
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
 
-    const smsExecLog =
+    const msgExecLog =
       `[LEAVE] ผู้บริหารไม่อนุมัติ (จบคำร้อง)\n` +
       `เลข:${wf.requestNo || id}\n` +
       `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
       `ผู้ดำเนินการ:${actorName}\n` +
       `เหตุผล:${comment || "-"}`;
-    await sendSmsToRole("EXECUTIVE_MANAGER", smsExecLog);
+    await sendLineToRole("EXECUTIVE_MANAGER", msgExecLog);
 
-    const smsHrFinal =
+    const msgHrFinal =
       `[LEAVE] คำร้องถูกปฏิเสธโดยผู้บริหาร\n` +
       `เลข:${wf.requestNo || id}\n` +
       `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
       `ผู้ดำเนินการ:${actorName}`;
-    await sendSmsToRole("HR", smsHrFinal);
+    await sendLineToRole("HR", msgHrFinal);
 
     return res.json({ ok: true, id, patch });
   } catch (err) {
@@ -1185,44 +1108,40 @@ app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
       meta: { overallStatus: "CANCELED", canceledByRole, reason },
     });
 
-    const toEmp = await pickOwnerContact(wf);
-    if (toEmp) {
-      const actorRole =
-        canceledByRole === "EXECUTIVE_MANAGER"
-          ? "EXEC"
-          : canceledByRole === "HR"
-          ? "HR"
-          : canceledByRole === "ADMIN"
-          ? "ADMIN"
-          : "OWNER";
+    const actorRole =
+      canceledByRole === "EXECUTIVE_MANAGER"
+        ? "EXEC"
+        : canceledByRole === "HR"
+        ? "HR"
+        : canceledByRole === "ADMIN"
+        ? "ADMIN"
+        : "OWNER";
 
-      const sms = buildSmsText({
-        stage: actorRole === "EXEC" ? "EXEC" : "HR",
-        decision: "CANCELLED",
-        wf: { ...wf, id },
-        actorRole,
-        actorName,
-        reason,
-      });
-
-      await sendSmsMaybe({ to: toEmp, message: sms });
-    }
+    const msgToEmp = buildLineText({
+      stage: actorRole === "EXEC" ? "EXEC" : "HR",
+      decision: "CANCELED",
+      wf: { ...wf, id },
+      actorRole,
+      actorName,
+      reason,
+    });
+    await sendLineToUids([wf.uid], msgToEmp);
 
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
 
-    const smsCancelLog =
+    const msgCancelLog =
       `[LEAVE] ยกเลิกคำร้อง (CANCELED)\n` +
       `เลข:${wf.requestNo || id}\n` +
       `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
       `ผู้ยกเลิก:${canceledByRole}(${actorName})\n` +
       `เหตุผล:${reason || "-"}`;
 
-    await sendSmsToRole("HR", smsCancelLog);
+    await sendLineToRole("HR", msgCancelLog);
 
     // ถ้าเคสเคยไปถึงขั้นผู้บริหารแล้ว ค่อยแจ้ง EXEC ด้วย (กัน spam)
     if (asUpper(wf.overallStatus) === "PENDING_MANAGER" || asUpper(wf.managerStatus) === "PENDING") {
-      await sendSmsToRole("EXECUTIVE_MANAGER", smsCancelLog);
+      await sendLineToRole("EXECUTIVE_MANAGER", msgCancelLog);
     }
 
     // (optional) ถ้า owner cancel ระหว่าง pending HR/EXEC -> แจ้งคนอนุมัติให้รู้ด้วย (in-app)
