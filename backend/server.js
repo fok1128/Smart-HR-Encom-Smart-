@@ -338,6 +338,9 @@ app.get("/me", requireAuth, async (req, res) => {
     const avatarUrl = pickStr(empAvatar.avatarUrl, userAvatar.avatarUrl);
     const avatarPath = pickStr(empAvatar.avatarPath, userAvatar.avatarPath);
 
+    // ✅ เพิ่ม: สถานะเชื่อม LINE
+    const lineUserId = userData.lineUserId || null;
+
     return res.json({
       ok: true,
       projectId: admin.app().options.projectId || null,
@@ -345,6 +348,9 @@ app.get("/me", requireAuth, async (req, res) => {
       email: req.user.email || null,
       role: roleFs,
       claimSync,
+
+      // ✅ เพิ่มให้ frontend เช็คได้ทันที
+      lineUserId: lineUserId || undefined,
 
       avatarUrl: avatarUrl || undefined,
       avatarPath: avatarPath || undefined,

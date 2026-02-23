@@ -24,7 +24,7 @@ import MyLeaveRequestsPage from "./pages/MyLeaveRequestsPage";
 
 // ✅ Field Work
 import FieldWorkSubmitPage from "./pages/FieldWorkSubmitPage";
-import FieldWorkHistoryPage from "./pages/FieldWorkHistoryPage"; // <<< ต้องมีไฟล์นี้จริง
+import FieldWorkHistoryPage from "./pages/FieldWorkHistoryPage";
 
 // ✅ LINE Link
 import LineLinkPage from "./pages/LineLinkPage";
@@ -43,10 +43,11 @@ export default function App() {
           <Route path="/signup" element={<Navigate to="/signin" replace />} />
           <Route path="/reset-password" element={<ResetPassword />} />
 
-          <Route element={<ProtectedRoute />}>
-            {/* ✅ LINE: ต้อง login เว็บก่อน เพื่อยิง /line/link พร้อม token */}
-            <Route path="/line-link" element={<LineLinkPage />} />
+          {/* ✅ LINE: ให้เข้าหน้านี้ได้แม้ session เว็บหลุด (เสถียรขึ้นใน LINE in-app browser)
+              แล้วไปเช็ค/พาไปล็อกอินภายในหน้า LineLinkPage เอง */}
+          <Route path="/line-link" element={<LineLinkPage />} />
 
+          <Route element={<ProtectedRoute />}>
             <Route path="/" element={<AppLayout />}>
               <Route index element={<Home />} />
               <Route path="profile" element={<UserProfiles />} />

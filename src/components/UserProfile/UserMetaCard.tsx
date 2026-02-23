@@ -12,6 +12,9 @@ import Label from "../form/Label";
 import { getSignedUrl, uploadFile } from "../../services/files";
 import { useDialogCenter } from "../common/DialogCenter";
 
+// ✅ เพิ่มปุ่ม LINE
+import LineLinkButton from "../common/LineLinkButton";
+
 type Profile = {
   email: string;
   employeeNo: string;
@@ -205,12 +208,17 @@ export default function UserMetaCard({ profile }: { profile: Profile }) {
             </div>
           </div>
 
-          <button
-            onClick={handleOpen}
-            className="flex w-full items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] dark:hover:text-gray-200 lg:inline-flex lg:w-auto"
-          >
-            Edit
-          </button>
+          {/* ✅ ขวาบน: ปุ่ม LINE + Edit อยู่บรรทัดเดียวกัน */}
+          <div className="flex w-full items-center justify-center gap-3 lg:w-auto lg:justify-end">
+            <LineLinkButton />
+
+            <button
+              onClick={handleOpen}
+              className="flex items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] dark:hover:text-gray-200"
+            >
+              Edit
+            </button>
+          </div>
         </div>
       </div>
 
@@ -226,7 +234,6 @@ export default function UserMetaCard({ profile }: { profile: Profile }) {
         closeOnBackdrop={!saving}
         canClose={() => !saving}
         glow={true}
-        // ✅ ห้ามใส่ after/before glow แล้ว
         panelClassName="bg-white"
       >
         <div className="bg-white">

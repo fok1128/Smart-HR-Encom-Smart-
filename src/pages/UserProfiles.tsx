@@ -12,7 +12,6 @@ export default function UserProfile() {
       <PageMeta title="Profile | Smart HR" description="User profile page" />
       <PageBreadcrumb pageTitle="Profile" />
 
-      {/* ✅ เอากรอบนอก + หัวข้อ Profile ซ้ำออก */}
       <div className="space-y-6">
         {fetching && (
           <div className="text-sm text-gray-600 dark:text-white/70">

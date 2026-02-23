@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
@@ -10,6 +10,7 @@ import { signOut } from "firebase/auth";
 
 type LocationState = {
   from?: { pathname?: string };
+  prev?: string;
 };
 
 function mapAuthError(err: unknown) {
@@ -24,7 +25,8 @@ function mapAuthError(err: unknown) {
     return "Email หรือ Password ไม่ถูกต้อง";
   }
   if (code === "auth/user-not-found") return "ไม่พบบัญชีผู้ใช้นี้";
-  if (code === "auth/too-many-requests") return "ลองใหม่อีกครั้งภายหลัง (พยายามล็อกอินหลายครั้งเกินไป)";
+  if (code === "auth/too-many-requests")
+    return "ลองใหม่อีกครั้งภายหลัง (พยายามล็อกอินหลายครั้งเกินไป)";
 
   if (msg.includes("auth/invalid-credential") || msg.includes("auth/wrong-password")) {
     return "Email หรือ Password ไม่ถูกต้อง";
@@ -42,6 +44,14 @@ function mapAuthError(err: unknown) {
   return msg;
 }
 
+function safeRedirectTarget(from?: string) {
+  // กันหลุดไปหน้าที่ไม่ควร
+  const blocked = new Set(["/signin", "/signup", "/reset-password"]);
+  if (!from) return "/";
+  if (blocked.has(from)) return "/";
+  return from;
+}
+
 export default function SignInForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -56,9 +66,19 @@ export default function SignInForm() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const redirectTo = useMemo(() => {
+    const state = (location.state as LocationState | null) ?? null;
+    return safeRedirectTarget(state?.from?.pathname);
+  }, [location.state]);
+
+  // ✅ ถ้าผู้ใช้ "ล็อกอินอยู่แล้ว" แล้วหลงเข้ามาหน้า signin
+  // ให้กลับไป redirectTo (เช่น /line-link) ไม่ใช่บังคับ "/"
   useEffect(() => {
-    if (!authLoading && user) navigate("/", { replace: true });
-  }, [user, authLoading, navigate]);
+    if (authLoading) return;
+    if (!user) return;
+
+    navigate(redirectTo, { replace: true });
+  }, [user, authLoading, navigate, redirectTo]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -96,18 +116,12 @@ export default function SignInForm() {
       // ✅ เทียบแบบ normalize (กันเคสตัวพิมพ์เล็ก/ใหญ่)
       const cuEmail = (cu.email ?? "").toLowerCase();
       if (cuEmail && cuEmail !== emailNorm) {
-        // แปลว่า auth state ไม่ตรงจริง ๆ → เคลียร์แล้วให้ลองใหม่
         await signOut(auth);
         throw new Error("FIREBASE_EMAIL_MISMATCH");
       }
 
-      const state = location.state as LocationState | null;
-      const from = state?.from?.pathname;
-
-      const target =
-        from && from !== "/signin" && from !== "/signup" && from !== "/reset-password" ? from : "/";
-
-      navigate(target, { replace: true });
+      // ✅ กลับไปหน้าที่ตั้งใจ เช่น /line-link
+      navigate(redirectTo, { replace: true });
     } catch (err: unknown) {
       console.error("[SignIn] error:", err);
       setError(mapAuthError(err));
@@ -177,7 +191,11 @@ export default function SignInForm() {
                 className="absolute -translate-y-1/2 right-4 top-1/2 text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-white"
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
-                {showPassword ? <EyeIcon className="w-5 h-5 xl:w-6 xl:h-6" /> : <EyeCloseIcon className="w-5 h-5 xl:w-6 xl:h-6" />}
+                {showPassword ? (
+                  <EyeIcon className="w-5 h-5 xl:w-6 xl:h-6" />
+                ) : (
+                  <EyeCloseIcon className="w-5 h-5 xl:w-6 xl:h-6" />
+                )}
               </button>
             </div>
           </div>

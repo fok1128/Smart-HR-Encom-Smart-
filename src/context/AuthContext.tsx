@@ -70,7 +70,9 @@ type MeResponseRaw = {
   projectId?: string;
   claimSync?: ClaimSync;
 
-  // ✅ backend ใหม่ส่ง top-level มาแล้วด้วย
+  // ✅ backend /me ส่งมา
+  lineUserId?: string | null;
+
   avatarUrl?: string;
   avatarPath?: string;
   storagePath?: string;
@@ -82,7 +84,6 @@ export type MeResponse = MeResponseRaw & {
   lname?: string;
   position?: string;
 
-  // ✅ ให้ header ใช้ง่าย
   avatarUrl?: string;
   avatarPath?: string;
   storagePath?: string;
@@ -91,24 +92,23 @@ export type MeResponse = MeResponseRaw & {
   employeeNo?: string;
   phone?: string;
 
-  // ✅ เพิ่ม flag เพื่อรู้ว่า role/profile พร้อมแล้วหรือยัง
   _lite?: boolean;
 };
 
 type AuthContextType = {
   user: MeResponse | null;
 
-  /**
-   * ✅ loading = แค่ "กำลัง bootstrap firebase auth" หรือ "กำลัง login/logout"
-   * (ไม่ใช่รอ /me)
-   */
+  /** loading = bootstrap firebase auth / login/logout (ไม่รอ /me) */
   loading: boolean;
 
-  /** ✅ roleReady = ได้ /me แล้ว (role จริงพร้อม) */
+  /** roleReady = ได้ /me แล้ว (ข้อมูลจริงพร้อม รวมถึง lineUserId) */
   roleReady: boolean;
 
   login: (email: string, password: string, remember: boolean) => Promise<MeResponse>;
   logout: () => Promise<void>;
+
+  /** ✅ เรียก refresh /me แบบ manual (ใช้หลังเชื่อม LINE สำเร็จ) */
+  refreshMe: () => Promise<MeResponse | null>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -191,12 +191,11 @@ function normalizeMe(raw: MeResponseRaw): MeResponse {
   const employeeNo = pickStr(raw.employee?.employeeNo, raw.user?.employeeNo);
   const phone = pickStr(raw.employee?.phone, raw.user?.phone);
 
-  // ถ้า avatarUrl ไม่ใช่ URL จริง ให้ถือว่าเป็น path
   const finalUrl = isHttpUrl(avatarUrl) ? avatarUrl : "";
   const finalPath = avatarPath || (!isHttpUrl(avatarUrl) ? pickStr(avatarUrl) : "");
 
   return {
-    ...raw,
+    ...raw, // ✅ lineUserId จะติดมาด้วย
     fname,
     lname,
     position,
@@ -244,21 +243,16 @@ async function fetchMeWithClaimsRefresh(fbUser: FirebaseUser): Promise<MeRespons
   return me1;
 }
 
-/** ✅ warmup เฉพาะ prod และ "ห้าม block" */
 async function warmUpBackendProdOnly() {
   if (!import.meta.env.PROD) return;
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 6000);
-    // fire-and-forget (ไม่ await ใน caller)
     await fetch(`${API_BASE}/health`, { signal: ctl.signal });
     clearTimeout(t);
-  } catch {
-    // no-op
-  }
+  } catch {}
 }
 
-/** ✅ สร้าง user แบบ lite เพื่อเข้าเว็บไว (role ยังไม่พร้อม) */
 function buildLiteUser(fbUser: FirebaseUser): MeResponse {
   const email = fbUser.email ?? null;
   const display = pickStr(fbUser.displayName);
@@ -266,7 +260,7 @@ function buildLiteUser(fbUser: FirebaseUser): MeResponse {
     ok: true,
     uid: fbUser.uid,
     email,
-    role: "LOADING", // สำคัญ: role ยังไม่พร้อม
+    role: "LOADING",
     user: {
       email,
       displayName: display || undefined,
@@ -277,6 +271,9 @@ function buildLiteUser(fbUser: FirebaseUser): MeResponse {
     employee: null,
     projectId: undefined,
     claimSync: { ok: true, changed: false, role: "LOADING" },
+
+    // ✅ lineUserId ยังไม่รู้ใน lite
+    lineUserId: undefined,
 
     avatarUrl: undefined,
     avatarPath: undefined,
@@ -298,11 +295,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [roleReady, setRoleReady] = useState(false);
 
-  // กัน fetch /me ซ้อน/ทับกัน
   const meSeqRef = useRef(0);
   const meInflightRef = useRef<Promise<MeResponse> | null>(null);
 
-  // ใช้ให้ login() resolve เร็ว (ไม่รอ /me)
   const pendingLoginRef = useRef<{
     resolve: (me: MeResponse) => void;
     reject: (e: unknown) => void;
@@ -326,7 +321,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    // ✅ warmup แบบไม่ block
     void warmUpBackendProdOnly();
   }, []);
 
@@ -334,7 +328,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const mySeq = ++meSeqRef.current;
 
     try {
-      // กันยิงซ้อน: ถ้ามี inflight อยู่ ให้ใช้ตัวเดิม
       if (!meInflightRef.current) {
         meInflightRef.current = fetchMeWithClaimsRefresh(fbUser).finally(() => {
           meInflightRef.current = null;
@@ -342,25 +335,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const me = await meInflightRef.current;
 
-      // ถ้ามีรอบใหม่กว่าแล้ว ให้ทิ้งผลลัพธ์นี้
       if (mySeq !== meSeqRef.current) return;
 
       setUser(me);
       setRoleReady(true);
-      // debug
-      // console.log("[AuthContext me.avatarPath]", me?.avatarPath, me?.storagePath, me?.avatar);
     } catch (e) {
-      // ถ้า /me พัง อย่าทำให้ทั้งแอปหลุด ให้คง lite ไว้ก่อน
       console.error("Hydrate /me error:", e);
-      // role ยังไม่ ready
       setRoleReady(false);
+    }
+  };
+
+  // ✅ refreshMe แบบ manual (ใช้หลังเชื่อม LINE)
+  const refreshMe = async (): Promise<MeResponse | null> => {
+    const fb = auth.currentUser;
+    if (!fb) return null;
+    try {
+      const me = await fetchMeWithClaimsRefresh(fb);
+      setUser(me);
+      setRoleReady(true);
+      return me;
+    } catch (e) {
+      console.error("refreshMe error:", e);
+      return null;
     }
   };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (fbUser) => {
-      // loading นี้หมายถึงแค่ "รู้สถานะ firebase auth แล้วหรือยัง"
-      // พอรู้แล้วให้ false ทันที (ไม่รอ /me)
       try {
         if (!fbUser) {
           setUser(null);
@@ -370,15 +371,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // ✅ 1) เข้าเว็บไว: set lite user ก่อน
         const lite = buildLiteUser(fbUser);
         setUser(lite);
         setRoleReady(false);
 
-        // ✅ login() ให้ resolve ตอนนี้เลย (ไม่รอ /me)
         resolvePendingLogin(lite);
 
-        // ✅ 2) /me ค่อยตามหลังแบบ background
         void hydrateMeInBackground(fbUser);
 
         setLoading(false);
@@ -394,68 +392,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
-  useEffect(() => {
-    const onUpdated = async () => {
-      const fbUser = auth.currentUser;
-      if (!fbUser) return;
-
-      // ไม่ต้อง setLoading(true) ให้ UI หน่วง
-      // แค่ re-hydrate /me แบบ background
-      void hydrateMeInBackground(fbUser);
-    };
-
-    window.addEventListener("profile-updated", onUpdated);
-    return () => window.removeEventListener("profile-updated", onUpdated);
-  }, []);
-
-  const login: AuthContextType["login"] = async (email, password, remember) => {
-    // loading = เฉพาะตอนกด login จริง ๆ (เพื่อ disable ปุ่ม/ฟอร์ม)
+  const login = async (email: string, password: string, remember: boolean) => {
     setLoading(true);
 
-    if (pendingLoginRef.current) {
+    await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+
+    // login firebase
+    await signInWithEmailAndPassword(auth, email, password);
+
+    // return lite เร็ว ๆ (จะ hydrate /me ตามหลัง)
+    const fb = auth.currentUser;
+    if (!fb) {
       setLoading(false);
-      throw new Error("LOGIN_IN_PROGRESS");
+      throw new Error("FIREBASE_NOT_SIGNED_IN");
     }
 
-    try {
-      await setPersistence(
-        auth,
-        remember ? browserLocalPersistence : browserSessionPersistence
-      );
+    const lite = buildLiteUser(fb);
 
-      // ✅ รอแค่ auth state change (lite) ไม่รอ /me
-      const waitLite = new Promise<MeResponse>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pendingLoginRef.current = null;
-          reject(new Error("LOGIN_TIMEOUT_WAITING_AUTH"));
-        }, 12000);
-        pendingLoginRef.current = { resolve, reject, timer };
-      });
+    // ให้ login() resolve เร็ว (ไม่รอ /me)
+    const p = new Promise<MeResponse>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingLoginRef.current = null;
+        resolve(lite);
+      }, 1200);
+      pendingLoginRef.current = { resolve, reject, timer };
+    });
 
-      await signInWithEmailAndPassword(auth, email, password);
-
-      // พอ onAuthStateChanged ยิง จะ resolve ตรงนั้น
-      return await waitLite;
-    } finally {
-      setLoading(false);
-    }
+    setLoading(false);
+    return p;
   };
 
-  const logout: AuthContextType["logout"] = async () => {
+  const logout = async () => {
     setLoading(true);
     try {
-      rejectPendingLogin(new Error("LOGOUT_DURING_LOGIN"));
       await signOut(auth);
       setUser(null);
       setRoleReady(false);
-      // onAuthStateChanged จะตามมาจัดการซ้ำอีกทีด้วย
     } finally {
       setLoading(false);
     }
   };
 
-  const value = useMemo(
-    () => ({ user, loading, roleReady, login, logout }),
+  const value = useMemo<AuthContextType>(
+    () => ({ user, loading, roleReady, login, logout, refreshMe }),
     [user, loading, roleReady]
   );
 
