@@ -510,6 +510,222 @@ function canOwnerEditOrCancel(leave, uid) {
 // ----------------- ✅ NOTIFICATIONS + LINE (DETAIL) -----------------
 const NOTI_COL = "notifications";
 
+// ✅ BASE URL (โดเมนเว็บของคุณ)
+const BASE_URL = (process.env.APP_BASE_URL || "https://smart-hr-encom-smart.onrender.com").replace(/\/+$/, "");
+
+function buildLeaveLink(page, requestNo) {
+  const code = encodeURIComponent(String(requestNo || "").trim());
+  const q = code ? `?code=${code}` : "";
+  return `${BASE_URL}${page}${q}`;
+}
+
+// ✅ แสดงเวลาแบบ dd/mm/yyyy HH:MM
+function fmtDateTimeThaiDDMM(x) {
+  try {
+    const d = x?.toDate ? x.toDate() : x ? new Date(x) : null;
+    if (!d || isNaN(d.getTime())) return "-";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = String(d.getFullYear());
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+  } catch {
+    return "-";
+  }
+}
+
+// ✅ กันส่งซ้ำ (notifyState)
+function nsGet(wf, key) {
+  return wf?.notifyState?.[key] ?? null;
+}
+async function nsSet(ref, key) {
+  const patch = {};
+  patch[`notifyState.${key}`] = nowTs();
+  patch.updatedAt = nowTs();
+  await ref.set(patch, { merge: true });
+}
+
+// ✅ Template ข้อความ LINE ตามโผยล่าสุด (Emoji + เบอร์ + ลิงก์)
+function buildLineLeaveMessage(type, wf) {
+  const reqNo = wf.requestNo || wf.id || "-";
+  const phone = wf.phone ? String(wf.phone) : "-";
+
+  const empName = wf.__employeeName || "-";
+  const empNo = wf.employeeNo || "-";
+
+  const cat = wf.category || "-";
+  const sub = wf.subType || "-";
+
+  const submittedAt = fmtDateTimeThaiDDMM(wf.submittedAt);
+  const dateRange = fmtDateRangeFromLeave(wf);
+  const timeRange = fmtTimeRangeFromLeave(wf);
+
+  const note = String(wf.reason || "").trim(); // หมายเหตุผู้ยื่น
+  const actor = wf.__actorLabel || "";
+  const decisionReason = String(wf.__decisionReason || "").trim();
+
+  if (type === "SUBMITTED_TO_HR") {
+    return (
+      `[LEAVE] 📩 ส่งคำร้องลาใหม่
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ผู้ยื่น: ${empName} (${empNo})
+` +
+      `เบอร์: ${phone}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ยื่น: ${submittedAt}
+` +
+      `ลา: ${dateRange} ${timeRange}
+` +
+      `สถานะ: ⏳ รอ HR ตรวจสอบ
+
+` +
+      `ดูในเว็บ: ${buildLeaveLink("/leave/approve", reqNo)}`
+    );
+  }
+
+  if (type === "SUBMITTED_TO_OWNER") {
+    return (
+      `[LEAVE] 📩 ส่งคำร้องลาแล้ว
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ยื่น: ${submittedAt}
+` +
+      `ลา: ${dateRange} ${timeRange}
+` +
+      `สถานะ: ⏳ รอ HR ตรวจสอบ
+
+` +
+      `ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+    );
+  }
+
+  if (type === "HR_APPROVED_TO_OWNER") {
+    return (
+      `[LEAVE] ✅ HR อนุมัติแล้ว
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ผู้ยื่น: ${empName} (${empNo})
+` +
+      `เบอร์: ${phone}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ลา: ${dateRange} ${timeRange}
+` +
+      `สถานะ: ⏳ รอ EXECUTIVE_MANAGER อนุมัติ
+` +
+      (actor ? `ผู้ดำเนินการ: ${actor}
+` : "") +
+      (note ? `หมายเหตุ: ${note}
+` : "") +
+      `
+ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+    );
+  }
+
+  if (type === "NEED_EXEC") {
+    return (
+      `[LEAVE] ⏳ รออนุมัติขั้นสุดท้าย
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ผู้ยื่น: ${empName} (${empNo})
+` +
+      `เบอร์: ${phone}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ลา: ${dateRange} ${timeRange}
+
+` +
+      `ดูในเว็บ: ${buildLeaveLink("/leave/approve", reqNo)}`
+    );
+  }
+
+  if (type === "REJECTED_FINAL") {
+    return (
+      `[LEAVE] ❌ ไม่อนุมัติ (จบคำร้อง)
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ผู้ยื่น: ${empName} (${empNo})
+` +
+      `เบอร์: ${phone}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ลา: ${dateRange} ${timeRange}
+` +
+      `เหตุผล: ${decisionReason || "-"}
+` +
+      (actor ? `ผู้ดำเนินการ: ${actor}
+` : "") +
+      `
+ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+    );
+  }
+
+  if (type === "CANCELED_FINAL") {
+    return (
+      `[LEAVE] 🛑 ยกเลิกคำร้อง (จบคำร้อง)
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ผู้ยื่น: ${empName} (${empNo})
+` +
+      `เบอร์: ${phone}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ลา: ${dateRange} ${timeRange}
+` +
+      `เหตุผล: ${decisionReason || "-"}
+` +
+      (actor ? `ผู้ดำเนินการ: ${actor}
+` : "") +
+      `
+ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+    );
+  }
+
+  if (type === "EXEC_APPROVED_FINAL") {
+    return (
+      `[LEAVE] 🎉 อนุมัติครบแล้ว (สมบูรณ์)
+` +
+      `เลขคำร้อง: ${reqNo}
+` +
+      `ผู้ยื่น: ${empName} (${empNo})
+` +
+      `เบอร์: ${phone}
+` +
+      `ประเภท: ${cat} • ${sub}
+` +
+      `ลา: ${dateRange} ${timeRange}
+` +
+      `สถานะ: ✅ APPROVED
+` +
+      (actor ? `ผู้อนุมัติ: ${actor}
+` : "") +
+      `
+ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+    );
+  }
+
+  return `[LEAVE] แจ้งเตือน
+เลขคำร้อง: ${reqNo}
+ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`;
+}
+
+
 function fmtDateTimeThaiLike(x) {
   try {
     const d = x?.toDate ? x.toDate() : x ? new Date(x) : null;
@@ -645,7 +861,7 @@ app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
   try {
     const id = req.params.id;
 
-    const { data } = await getLeaveOrThrow(id);
+    const { ref, data } = await getLeaveOrThrow(id);
     const wf = deriveWorkflowFromLegacy(data);
 
     // เฉพาะเจ้าของคำร้องเท่านั้นที่เรียกได้
@@ -673,28 +889,25 @@ app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
       )
     );
 
+    // ✅ กันส่งซ้ำ (notifyState.submittedAt)
+    if (nsGet(wf, "submittedAt")) {
+      return res.json({ ok: true, id, notified: 0, skipped: "ALREADY_SUBMITTED_NOTIFIED" });
+    }
+
     // ✅ ชื่อผู้ยื่น "ยึดจาก employees/{employeeNo}" เป็นหลัก
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
 
-    // ✅ LINE: แจ้ง HR ทุกคน
-    const msgToHr =
-      `[LEAVE] มีคำร้องลาใหม่\n` +
-      `เลข:${wf.requestNo || id}\n` +
-      `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-      `ประเภท:${wf.category || "-"}•${wf.subType || "-"}\n` +
-      `ลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\n` +
-      `เข้าไปตรวจสอบในระบบ`;
-    await sendLineToRole("HR", msgToHr);
+    const wfForMsg = { ...wf, id, __employeeName: senderName };
+
+    // ✅ LINE: แจ้ง HR ทุกคน (มีเบอร์ + ลิงก์)
+    await sendLineToRole("HR", buildLineLeaveMessage("SUBMITTED_TO_HR", wfForMsg));
 
     // ✅ LINE: ส่งกลับเจ้าของคำร้อง
-    const msgToOwner =
-      `[LEAVE] ส่งคำร้องลาแล้ว\n` +
-      `เลข:${wf.requestNo || id}\n` +
-      `ประเภท:${wf.category || "-"}•${wf.subType || "-"}\n` +
-      `ลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\n` +
-      `สถานะ: รอ HR ตรวจสอบ`;
-    await sendLineToUids([wf.uid], msgToOwner);
+    await sendLineToUids([wf.uid], buildLineLeaveMessage("SUBMITTED_TO_OWNER", wfForMsg));
+
+    // ✅ set notifyState หลังส่งสำเร็จ
+    await nsSet(ref, "submittedAt");
 
     return res.json({ ok: true, id, notified: hrs.length });
   } catch (err) {
@@ -782,36 +995,30 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
         )
       );
 
-      // ✅ LINE ถึงพนักงาน (ชื่อผู้อนุมัติ = employees)
-      const msgToEmp = buildLineText({
-        stage: "HR",
-        decision: "APPROVED",
-        wf: { ...wf, id },
-        actorRole: "HR",
-        actorName,
-        reason: comment || null,
-      });
-      await sendLineToUids([wf.uid], msgToEmp);
+      // ✅ กันส่งซ้ำ HR_APPROVED (notifyState.hrApprovedAt)
+      if (!nsGet(wf, "hrApprovedAt")) {
+        const empDoc = await getEmployeeDocByNo(wf.employeeNo);
+        const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+        const actorLabel = `HR(${actorName || "-"})`;
 
-      // ✅ แจ้ง EXEC
-      const empDoc = await getEmployeeDocByNo(wf.employeeNo);
-      const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
-      const msgToExec =
-        `[LEAVE] รออนุมัติขั้นสุดท้าย\n` +
-        `เลข:${wf.requestNo || id}\n` +
-        `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-        `ประเภท:${wf.category || "-"}•${wf.subType || "-"}\n` +
-        `ลา:${fmtDateRangeFromLeave(wf)} เวลา:${fmtTimeRangeFromLeave(wf)}\n` +
-        `โปรดอนุมัติในระบบ`;
-      await sendLineToRole("EXECUTIVE_MANAGER", msgToExec);
+        const wfForMsg = { ...wf, id, __employeeName: senderName, __actorLabel: actorLabel };
 
-      // ✅ log ให้ HR
-      const msgHrLog =
-        `[LEAVE] HR อนุมัติแล้ว (ส่งต่อผู้บริหาร)\n` +
-        `เลข:${wf.requestNo || id}\n` +
-        `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-        `ผู้อนุมัติ:${actorName}`;
-      await sendLineToRole("HR", msgHrLog);
+        // ส่งไปพนักงาน
+        await sendLineToUids([wf.uid], buildLineLeaveMessage("HR_APPROVED_TO_OWNER", wfForMsg));
+
+        // ส่งไป EXEC ให้กดอนุมัติขั้นสุดท้าย
+        await sendLineToRole("EXECUTIVE_MANAGER", buildLineLeaveMessage("NEED_EXEC", wfForMsg));
+
+        // log ให้ HR
+        await sendLineToRole(
+          "HR",
+          `[LEAVE] ✅ HR อนุมัติแล้ว (ส่งต่อผู้บริหาร)
+เลขคำร้อง: ${wf.requestNo || id}
+ผู้อนุมัติ: ${actorName || "-"}`
+        );
+
+        await nsSet(ref, "hrApprovedAt");
+      }
 
       return res.json({ ok: true, id, patch, notifiedExec: execs.length });
     }
@@ -850,25 +1057,32 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
       meta: { overallStatus: "REJECTED_BY_HR", reason: comment },
     });
 
-    const msgToEmp = buildLineText({
-      stage: "HR",
-      decision: "REJECTED",
-      wf: { ...wf, id },
-      actorRole: "HR",
-      actorName,
-      reason: comment,
-    });
-    await sendLineToUids([wf.uid], msgToEmp);
+    // ✅ กันส่งซ้ำ HR_REJECTED (notifyState.hrRejectedAt)
+    if (!nsGet(wf, "hrRejectedAt")) {
+      const empDoc = await getEmployeeDocByNo(wf.employeeNo);
+      const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+      const actorLabel = `HR(${actorName || "-"})`;
 
-    const empDoc = await getEmployeeDocByNo(wf.employeeNo);
-    const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
-    const msgHrLog =
-      `[LEAVE] HR ไม่อนุมัติ (จบคำร้อง)\n` +
-      `เลข:${wf.requestNo || id}\n` +
-      `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-      `ผู้ดำเนินการ:${actorName}\n` +
-      `เหตุผล:${comment || "-"}`;
-    await sendLineToRole("HR", msgHrLog);
+      const wfForMsg = {
+        ...wf,
+        id,
+        __employeeName: senderName,
+        __actorLabel: actorLabel,
+        __decisionReason: comment,
+      };
+
+      await sendLineToUids([wf.uid], buildLineLeaveMessage("REJECTED_FINAL", wfForMsg));
+
+      await sendLineToRole(
+        "HR",
+        `[LEAVE] ❌ HR ไม่อนุมัติ (จบคำร้อง)
+เลขคำร้อง: ${wf.requestNo || id}
+ผู้ดำเนินการ: ${actorName || "-"}
+เหตุผล: ${comment || "-"}`
+      );
+
+      await nsSet(ref, "hrRejectedAt");
+    }
 
     return res.json({ ok: true, id, patch });
   } catch (err) {
@@ -943,33 +1157,38 @@ app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => 
         meta: { overallStatus: "APPROVED" },
       });
 
-      const msgToEmp = buildLineText({
-        stage: "EXEC",
-        decision: "APPROVED",
-        wf: { ...wf, id },
-        actorRole: "EXEC",
-        actorName,
-        reason: comment || null,
-      });
-      await sendLineToUids([wf.uid], msgToEmp);
+      // ✅ กันส่งซ้ำ EXEC_APPROVED (notifyState.execApprovedAt)
+      if (!nsGet(wf, "execApprovedAt")) {
+        const empDoc = await getEmployeeDocByNo(wf.employeeNo);
+        const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+        const actorLabel = `EXECUTIVE_MANAGER(${actorName || "-"})`;
 
-      const empDoc = await getEmployeeDocByNo(wf.employeeNo);
-      const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+        const wfForMsg = { ...wf, id, __employeeName: senderName, __actorLabel: actorLabel };
 
-      const msgExecLog =
-        `[LEAVE] ผู้บริหารอนุมัติแล้ว ✅\n` +
-        `เลข:${wf.requestNo || id}\n` +
-        `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-        `ผู้อนุมัติ:${actorName}`;
-      await sendLineToRole("EXECUTIVE_MANAGER", msgExecLog);
+        // แจ้งพนักงาน (สมบูรณ์)
+        await sendLineToUids([wf.uid], buildLineLeaveMessage("EXEC_APPROVED_FINAL", wfForMsg));
 
-      const msgHrFinal =
-        `[LEAVE] คำร้องสมบูรณ์แล้ว ✅\n` +
-        `เลข:${wf.requestNo || id}\n` +
-        `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-        `ผลลัพธ์: APPROVED\n` +
-        `ผู้อนุมัติ:${actorName}`;
-      await sendLineToRole("HR", msgHrFinal);
+        // log ให้ EXEC
+        await sendLineToRole(
+          "EXECUTIVE_MANAGER",
+          `[LEAVE] 🎉 อนุมัติแล้ว (สมบูรณ์)
+เลขคำร้อง: ${wf.requestNo || id}
+พนักงาน: ${senderName} (${wf.employeeNo || "-"})
+ผู้อนุมัติ: ${actorName || "-"}`
+        );
+
+        // แจ้ง HR
+        await sendLineToRole(
+          "HR",
+          `[LEAVE] 🎉 คำร้องสมบูรณ์แล้ว
+เลขคำร้อง: ${wf.requestNo || id}
+พนักงาน: ${senderName} (${wf.employeeNo || "-"})
+ผลลัพธ์: APPROVED
+ผู้อนุมัติ: ${actorName || "-"}`
+        );
+
+        await nsSet(ref, "execApprovedAt");
+      }
 
       return res.json({ ok: true, id, patch });
     }
@@ -1003,33 +1222,42 @@ app.post("/leave-requests/:id/manager-action", requireAuth, async (req, res) => 
       meta: { overallStatus: "REJECTED_BY_MANAGER", reason: comment },
     });
 
-    const msgToEmp = buildLineText({
-      stage: "EXEC",
-      decision: "REJECTED",
-      wf: { ...wf, id },
-      actorRole: "EXEC",
-      actorName,
-      reason: comment,
-    });
-    await sendLineToUids([wf.uid], msgToEmp);
+    // ✅ กันส่งซ้ำ EXEC_REJECTED (notifyState.execRejectedAt)
+    if (!nsGet(wf, "execRejectedAt")) {
+      const empDoc = await getEmployeeDocByNo(wf.employeeNo);
+      const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+      const actorLabel = `EXECUTIVE_MANAGER(${actorName || "-"})`;
 
-    const empDoc = await getEmployeeDocByNo(wf.employeeNo);
-    const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+      const wfForMsg = {
+        ...wf,
+        id,
+        __employeeName: senderName,
+        __actorLabel: actorLabel,
+        __decisionReason: comment,
+      };
 
-    const msgExecLog =
-      `[LEAVE] ผู้บริหารไม่อนุมัติ (จบคำร้อง)\n` +
-      `เลข:${wf.requestNo || id}\n` +
-      `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-      `ผู้ดำเนินการ:${actorName}\n` +
-      `เหตุผล:${comment || "-"}`;
-    await sendLineToRole("EXECUTIVE_MANAGER", msgExecLog);
+      await sendLineToUids([wf.uid], buildLineLeaveMessage("REJECTED_FINAL", wfForMsg));
 
-    const msgHrFinal =
-      `[LEAVE] คำร้องถูกปฏิเสธโดยผู้บริหาร\n` +
-      `เลข:${wf.requestNo || id}\n` +
-      `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-      `ผู้ดำเนินการ:${actorName}`;
-    await sendLineToRole("HR", msgHrFinal);
+      await sendLineToRole(
+        "EXECUTIVE_MANAGER",
+        `[LEAVE] ❌ ไม่อนุมัติ (จบคำร้อง)
+เลขคำร้อง: ${wf.requestNo || id}
+พนักงาน: ${senderName} (${wf.employeeNo || "-"})
+ผู้ดำเนินการ: ${actorName || "-"}
+เหตุผล: ${comment || "-"}`
+      );
+
+      await sendLineToRole(
+        "HR",
+        `[LEAVE] ❌ ผู้บริหารไม่อนุมัติ (จบคำร้อง)
+เลขคำร้อง: ${wf.requestNo || id}
+พนักงาน: ${senderName} (${wf.employeeNo || "-"})
+ผู้ดำเนินการ: ${actorName || "-"}
+เหตุผล: ${comment || "-"}`
+      );
+
+      await nsSet(ref, "execRejectedAt");
+    }
 
     return res.json({ ok: true, id, patch });
   } catch (err) {
@@ -1123,27 +1351,33 @@ app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
         ? "ADMIN"
         : "OWNER";
 
-    const msgToEmp = buildLineText({
-      stage: actorRole === "EXEC" ? "EXEC" : "HR",
-      decision: "CANCELED",
-      wf: { ...wf, id },
-      actorRole,
-      actorName,
-      reason,
-    });
-    await sendLineToUids([wf.uid], msgToEmp);
+    // ✅ กันส่งซ้ำ CANCELED (notifyState.cancelledAt)
+    if (!nsGet(wf, "cancelledAt")) {
+      const empDoc = await getEmployeeDocByNo(wf.employeeNo);
+      const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
 
-    const empDoc = await getEmployeeDocByNo(wf.employeeNo);
-    const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+      const actorLabel = `${canceledByRole}(${actorName || "-"})`;
+      const wfForMsg = {
+        ...wf,
+        id,
+        __employeeName: senderName,
+        __actorLabel: actorLabel,
+        __decisionReason: reason,
+      };
 
-    const msgCancelLog =
-      `[LEAVE] ยกเลิกคำร้อง (CANCELED)\n` +
-      `เลข:${wf.requestNo || id}\n` +
-      `พนักงาน:${senderName} (${wf.employeeNo || "-"})\n` +
-      `ผู้ยกเลิก:${canceledByRole}(${actorName})\n` +
-      `เหตุผล:${reason || "-"}`;
+      // ส่งถึงผู้ยื่น
+      await sendLineToUids([wf.uid], buildLineLeaveMessage("CANCELED_FINAL", wfForMsg));
 
-    await sendLineToRole("HR", msgCancelLog);
+      // แจ้ง HR
+      await sendLineToRole("HR", buildLineLeaveMessage("CANCELED_FINAL", wfForMsg));
+
+      // ถ้าเคสเคยไปถึงขั้นผู้บริหารแล้ว ค่อยแจ้ง EXEC ด้วย (กัน spam)
+      if (asUpper(wf.overallStatus) === "PENDING_MANAGER" || asUpper(wf.managerStatus) === "PENDING") {
+        await sendLineToRole("EXECUTIVE_MANAGER", buildLineLeaveMessage("CANCELED_FINAL", wfForMsg));
+      }
+
+      await nsSet(ref, "cancelledAt");
+    }
 
     // ถ้าเคสเคยไปถึงขั้นผู้บริหารแล้ว ค่อยแจ้ง EXEC ด้วย (กัน spam)
     if (asUpper(wf.overallStatus) === "PENDING_MANAGER" || asUpper(wf.managerStatus) === "PENDING") {
