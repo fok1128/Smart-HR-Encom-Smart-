@@ -511,12 +511,12 @@ function canOwnerEditOrCancel(leave, uid) {
 const NOTI_COL = "notifications";
 
 // ✅ BASE URL (โดเมนเว็บของคุณ)
+// (เก็บไว้ได้ เผื่ออนาคตอยากกลับไปต่อ path)
 const BASE_URL = (process.env.APP_BASE_URL || "https://smart-hr-encom-smart.onrender.com").replace(/\/+$/, "");
 
-function buildLeaveLink(page, requestNo) {
-  const code = encodeURIComponent(String(requestNo || "").trim());
-  const q = code ? `?code=${code}` : "";
-  return `${BASE_URL}${page}${q}`;
+// ✅ ✅ แก้ตรงนี้: ให้ลิงก์ใน LINE เป็น base URL เท่านั้นทุกเคส
+function buildLeaveLink() {
+  return "https://smart-hr-encom-smart.onrender.com/";
 }
 
 // ✅ แสดงเวลาแบบ dd/mm/yyyy HH:MM
@@ -567,164 +567,101 @@ function buildLineLeaveMessage(type, wf) {
 
   if (type === "SUBMITTED_TO_HR") {
     return (
-      `[LEAVE] 📩 ส่งคำร้องลาใหม่
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ผู้ยื่น: ${empName} (${empNo})
-` +
-      `เบอร์: ${phone}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ยื่น: ${submittedAt}
-` +
-      `ลา: ${dateRange} ${timeRange}
-` +
-      `สถานะ: ⏳ รอ HR ตรวจสอบ
-
-` +
-      `ดูในเว็บ: ${buildLeaveLink("/leave/approve", reqNo)}`
+      `[LEAVE] 📩 ส่งคำร้องลาใหม่\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ผู้ยื่น: ${empName} (${empNo})\n` +
+      `เบอร์: ${phone}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ยื่น: ${submittedAt}\n` +
+      `ลา: ${dateRange} ${timeRange}\n` +
+      `สถานะ: ⏳ รอ HR ตรวจสอบ\n\n` +
+      `ดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
   if (type === "SUBMITTED_TO_OWNER") {
     return (
-      `[LEAVE] 📩 ส่งคำร้องลาแล้ว
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ยื่น: ${submittedAt}
-` +
-      `ลา: ${dateRange} ${timeRange}
-` +
-      `สถานะ: ⏳ รอ HR ตรวจสอบ
-
-` +
-      `ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+      `[LEAVE] 📩 ส่งคำร้องลาแล้ว\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ยื่น: ${submittedAt}\n` +
+      `ลา: ${dateRange} ${timeRange}\n` +
+      `สถานะ: ⏳ รอ HR ตรวจสอบ\n\n` +
+      `ดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
   if (type === "HR_APPROVED_TO_OWNER") {
     return (
-      `[LEAVE] ✅ HR อนุมัติแล้ว
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ผู้ยื่น: ${empName} (${empNo})
-` +
-      `เบอร์: ${phone}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ลา: ${dateRange} ${timeRange}
-` +
-      `สถานะ: ⏳ รอ EXECUTIVE_MANAGER อนุมัติ
-` +
-      (actor ? `ผู้ดำเนินการ: ${actor}
-` : "") +
-      (note ? `หมายเหตุ: ${note}
-` : "") +
-      `
-ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+      `[LEAVE] ✅ HR อนุมัติแล้ว\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ผู้ยื่น: ${empName} (${empNo})\n` +
+      `เบอร์: ${phone}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ลา: ${dateRange} ${timeRange}\n` +
+      `สถานะ: ⏳ รอ EXECUTIVE_MANAGER อนุมัติ\n` +
+      (actor ? `ผู้ดำเนินการ: ${actor}\n` : "") +
+      (note ? `หมายเหตุ: ${note}\n` : "") +
+      `\nดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
   if (type === "NEED_EXEC") {
     return (
-      `[LEAVE] ⏳ รออนุมัติขั้นสุดท้าย
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ผู้ยื่น: ${empName} (${empNo})
-` +
-      `เบอร์: ${phone}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ลา: ${dateRange} ${timeRange}
-
-` +
-      `ดูในเว็บ: ${buildLeaveLink("/leave/approve", reqNo)}`
+      `[LEAVE] ⏳ รออนุมัติขั้นสุดท้าย\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ผู้ยื่น: ${empName} (${empNo})\n` +
+      `เบอร์: ${phone}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ลา: ${dateRange} ${timeRange}\n\n` +
+      `ดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
   if (type === "REJECTED_FINAL") {
     return (
-      `[LEAVE] ❌ ไม่อนุมัติ (จบคำร้อง)
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ผู้ยื่น: ${empName} (${empNo})
-` +
-      `เบอร์: ${phone}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ลา: ${dateRange} ${timeRange}
-` +
-      `เหตุผล: ${decisionReason || "-"}
-` +
-      (actor ? `ผู้ดำเนินการ: ${actor}
-` : "") +
-      `
-ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+      `[LEAVE] ❌ ไม่อนุมัติ (จบคำร้อง)\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ผู้ยื่น: ${empName} (${empNo})\n` +
+      `เบอร์: ${phone}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ลา: ${dateRange} ${timeRange}\n` +
+      `เหตุผล: ${decisionReason || "-"}\n` +
+      (actor ? `ผู้ดำเนินการ: ${actor}\n` : "") +
+      `\nดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
   if (type === "CANCELED_FINAL") {
     return (
-      `[LEAVE] 🛑 ยกเลิกคำร้อง (จบคำร้อง)
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ผู้ยื่น: ${empName} (${empNo})
-` +
-      `เบอร์: ${phone}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ลา: ${dateRange} ${timeRange}
-` +
-      `เหตุผล: ${decisionReason || "-"}
-` +
-      (actor ? `ผู้ดำเนินการ: ${actor}
-` : "") +
-      `
-ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+      `[LEAVE] 🛑 ยกเลิกคำร้อง (จบคำร้อง)\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ผู้ยื่น: ${empName} (${empNo})\n` +
+      `เบอร์: ${phone}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ลา: ${dateRange} ${timeRange}\n` +
+      `เหตุผล: ${decisionReason || "-"}\n` +
+      (actor ? `ผู้ดำเนินการ: ${actor}\n` : "") +
+      `\nดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
   if (type === "EXEC_APPROVED_FINAL") {
     return (
-      `[LEAVE] 🎉 อนุมัติครบแล้ว (สมบูรณ์)
-` +
-      `เลขคำร้อง: ${reqNo}
-` +
-      `ผู้ยื่น: ${empName} (${empNo})
-` +
-      `เบอร์: ${phone}
-` +
-      `ประเภท: ${cat} • ${sub}
-` +
-      `ลา: ${dateRange} ${timeRange}
-` +
-      `สถานะ: ✅ APPROVED
-` +
-      (actor ? `ผู้อนุมัติ: ${actor}
-` : "") +
-      `
-ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`
+      `[LEAVE] 🎉 อนุมัติครบแล้ว (สมบูรณ์)\n` +
+      `เลขคำร้อง: ${reqNo}\n` +
+      `ผู้ยื่น: ${empName} (${empNo})\n` +
+      `เบอร์: ${phone}\n` +
+      `ประเภท: ${cat} • ${sub}\n` +
+      `ลา: ${dateRange} ${timeRange}\n` +
+      `สถานะ: ✅ APPROVED\n` +
+      (actor ? `ผู้อนุมัติ: ${actor}\n` : "") +
+      `\nดูในเว็บ: ${buildLeaveLink()}`
     );
   }
 
-  return `[LEAVE] แจ้งเตือน
-เลขคำร้อง: ${reqNo}
-ดูในเว็บ: ${buildLeaveLink("/leave/status", reqNo)}`;
+  return `[LEAVE] แจ้งเตือน\nเลขคำร้อง: ${reqNo}\nดูในเว็บ: ${buildLeaveLink()}`;
 }
-
 
 function fmtDateTimeThaiLike(x) {
   try {
