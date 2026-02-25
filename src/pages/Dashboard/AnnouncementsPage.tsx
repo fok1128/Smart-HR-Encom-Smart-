@@ -468,7 +468,8 @@ function Lightbox({
 export default function AnnouncementsPage() {
   const { user } = useAuth();
   const dialog = useDialogCenter();
-  const isAdmin = user?.role === "ADMIN";
+  const role = String(user?.role || "").toUpperCase();
+  const canManageAnnouncements = role === "ADMIN" || role === "HR";
 
   // ✅ DialogCenter adapter
   const dcAlert = (title: string, message?: string) => {
@@ -776,7 +777,7 @@ export default function AnnouncementsPage() {
   
   
   async function onDelete(a: Announcement) {
-    if (!isAdmin) return;
+    if (!canManageAnnouncements) return;
 
     const ok = await dcConfirm({
       title: "ยืนยันการลบประกาศ",
@@ -798,7 +799,7 @@ export default function AnnouncementsPage() {
   }
 
   async function togglePin(a: Announcement) {
-    if (!isAdmin) return;
+    if (!canManageAnnouncements) return;
     try {
       await setAnnouncementPinned(a.id, !a.pinned);
       dcAlert(!a.pinned ? "ปักหมุดแล้ว 📌" : "ยกเลิกปักหมุดแล้ว");
@@ -868,7 +869,7 @@ export default function AnnouncementsPage() {
 
       <div className="max-w-5xl space-y-6">
         {/* Create */}
-        {isAdmin && (
+        {canManageAnnouncements && (
           <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:ring-gray-800">
             <div className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">สร้างประกาศใหม่</div>
 
@@ -1125,7 +1126,7 @@ export default function AnnouncementsPage() {
                   <div className="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
                     <div>{a.createdBy?.email || "Admin"}</div>
 
-                    {isAdmin && (
+                    {canManageAnnouncements && (
                       <div className="mt-2 flex justify-end gap-2">
                         <button
                           onClick={() => togglePin(a)}

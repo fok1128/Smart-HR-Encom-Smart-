@@ -192,6 +192,12 @@ router.post(
       if (!uid) return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
 
       const prefix = normalizeFolderToPrefix(req.body?.folder);
+
+      // ✅ จำกัดสิทธิ์การอัปโหลดไฟล์ประกาศ: ADMIN / HR เท่านั้น
+      const role = await getMyRole(uid);
+      if (prefix === "announcement" && !["ADMIN", "HR"].includes(role)) {
+        return res.status(403).json({ ok: false, error: "FORBIDDEN_ROLE" });
+      }
       if (!prefix) return res.status(400).json({ ok: false, error: "FOLDER_NOT_ALLOWED" });
 
       const pickedSingle = req.files?.file?.[0] ? [req.files.file[0]] : [];

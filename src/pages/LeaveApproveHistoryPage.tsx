@@ -149,6 +149,118 @@ function statusBadge(stTH: string) {
   );
 }
 
+// ----------------- ✅ Decision reasons (HR / EXECUTIVE_MANAGER) -----------------
+type DecisionReason = {
+  role: string;
+  action: string;
+  reason: string;
+  decidedAt?: any;
+};
+
+function normalizeAction(raw: any) {
+  const s = String(raw || "").trim().toUpperCase();
+  if (s === "APPROVED" || s === "APPROVE") return "APPROVED";
+  if (s === "REJECTED" || s === "REJECT" || s === "DENIED") return "REJECTED";
+  if (s === "CANCELED" || s === "CANCELLED" || s === "CANCEL") return "CANCELED";
+  if (s === "PENDING") return "PENDING";
+  return s;
+}
+
+function actionLabelTH(raw: any) {
+  const a = normalizeAction(raw);
+  if (a === "APPROVED") return "อนุมัติ";
+  if (a === "REJECTED") return "ไม่อนุมัติ";
+  if (a === "CANCELED") return "ยกเลิก";
+  if (a === "PENDING") return "รอดำเนินการ";
+  return String(raw || "").trim() || "-";
+}
+
+function roleLabelTH(raw: any) {
+  const r = String(raw || "").trim().toUpperCase();
+  if (r === "EXECUTIVE_MANAGER" || r === "EXECUTIVE" || r === "EM") return "EXECUTIVE_MANAGER";
+  if (r === "MANAGER") return "MANAGER";
+  if (r === "HR") return "HR";
+  if (r === "ADMIN") return "ADMIN";
+  return r || "-";
+}
+
+function pickReasonFromObj(x: any) {
+  return pickStr(
+    x?.reason,
+    x?.note,
+    x?.comment,
+    x?.remarks,
+    x?.detail,
+    x?.message,
+    x?.rejectReason,
+    x?.cancelReason,
+    x?.canceledReason,
+    x?.cancelledReason
+  );
+}
+
+function getDecisionReasons(r: any): DecisionReason[] {
+  const out: DecisionReason[] = [];
+
+  // A) array history (best)
+  const arrays = [r?.decisionHistory, r?.approvalHistory, r?.approvals, r?.decisions, r?.history];
+  for (const arr of arrays) {
+    if (!Array.isArray(arr)) continue;
+    for (const it of arr) {
+      const reason = pickReasonFromObj(it);
+      if (!reason) continue;
+
+      const role = roleLabelTH(it?.role || it?.byRole || it?.approverRole);
+      const action = normalizeAction(it?.action || it?.status || it?.decision || it?.result);
+      out.push({ role, action, reason, decidedAt: it?.decidedAt || it?.at || it?.timestamp });
+    }
+  }
+
+  // B) common nested objects
+  const hrObj = r?.hrDecision || r?.hrApproval || r?.hr || r?.HR;
+  const emObj =
+    r?.executiveDecision ||
+    r?.executiveManagerDecision ||
+    r?.execDecision ||
+    r?.emDecision ||
+    r?.executive_managerDecision ||
+    r?.EXECUTIVE_MANAGER;
+
+  const hrReason = pickReasonFromObj(hrObj);
+  if (hrReason) {
+    out.push({
+      role: "HR",
+      action: normalizeAction(hrObj?.action || hrObj?.status || hrObj?.decision || r?.hrStatus),
+      reason: hrReason,
+      decidedAt: hrObj?.decidedAt || hrObj?.at,
+    });
+  }
+
+  const emReason = pickReasonFromObj(emObj);
+  if (emReason) {
+    out.push({
+      role: "EXECUTIVE_MANAGER",
+      action: normalizeAction(emObj?.action || emObj?.status || emObj?.decision || r?.emStatus),
+      reason: emReason,
+      decidedAt: emObj?.decidedAt || emObj?.at,
+    });
+  }
+
+  // C) fallback single fields (avoid showing employee reason: r.reason)
+  const fallback = pickStr(r?.rejectReason, r?.rejectedReason, r?.cancelReason, r?.canceledReason, r?.cancelledReason);
+  if (fallback) {
+    out.push({ role: "APPROVER", action: normalizeAction(r?.status), reason: fallback, decidedAt: r?.decidedAt });
+  }
+
+  // de-dup
+  const uniq = new Map<string, DecisionReason>();
+  for (const x of out) {
+    const k = `${x.role}__${x.action}__${x.reason}`;
+    if (!uniq.has(k)) uniq.set(k, x);
+  }
+  return Array.from(uniq.values());
+}
+
 // datetime-local -> ms (local)
 function dtToMs(dtLocal: string) {
   const s = String(dtLocal || "").trim();
@@ -201,6 +313,54 @@ export default function LeaveApproveHistoryPage() {
   const canView = APPROVER_ROLES.includes(role);
   const canDelete = DELETE_ROLES.includes(role);
   const canExport = EXPORT_ROLES.includes(role);
+
+  const openDecisionReasons = (r: any) => {
+    const reasons = getDecisionReasons(r);
+    if (!reasons.length) return;
+
+    const d: any = dialog as any;
+    const openModal = d?.openModal;
+    const title = "เหตุผล/หมายเหตุจากผู้อนุมัติ";
+
+    // Prefer modal (readable), fallback to alert
+    if (typeof openModal === "function") {
+      openModal({
+        title,
+        size: "md",
+        content: (
+          <div className="space-y-3">
+            {reasons.map((x, idx) => (
+              <div
+                key={`${x.role}-${x.action}-${idx}`}
+                className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">
+                    {roleLabelTH(x.role)}: {actionLabelTH(x.action)}
+                  </div>
+                  <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    {x.decidedAt ? fmtDate(x.decidedAt) : ""}
+                  </div>
+                </div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">{x.reason}</div>
+              </div>
+            ))}
+          </div>
+        ),
+      });
+      return;
+    }
+
+    const msg = reasons
+      .map((x) => {
+        const head = `${roleLabelTH(x.role)}: ${actionLabelTH(x.action)}${x.decidedAt ? ` (${fmtDate(x.decidedAt)})` : ""}`;
+        return `${head}\n${x.reason}`;
+      })
+      .join("\n\n----------------\n\n");
+
+    if (typeof alert === "function") return alert(msg, { title });
+    window.alert(`${title}\n\n${msg}`);
+  };
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<LeaveRow[]>([]);
@@ -789,6 +949,9 @@ export default function LeaveApproveHistoryPage() {
             const stTH = statusLabelTH(r.status);
             const checked = selectedIds.has(r.id);
 
+            const decisionReasons = getDecisionReasons(r);
+            const hasDecisionReasons = decisionReasons.length > 0;
+
             const email = pickStr(r?.createdByEmail, r?.email);
             const phone = phoneOf(r);
 
@@ -870,7 +1033,21 @@ export default function LeaveApproveHistoryPage() {
                         )}
                       </div>
 
-                      <div className="mt-3">{statusBadge(stTH)}</div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {statusBadge(stTH)}
+                        {hasDecisionReasons && (
+                          <AppButton
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-full px-3 text-xs font-extrabold"
+                            onClick={() => openDecisionReasons(r)}
+                            title="ดูเหตุผล/หมายเหตุจากผู้อนุมัติ"
+                          >
+                            ดูเหตุผล
+                          </AppButton>
+                        )}
+                      </div>
                     </div>
                   </div>
 
