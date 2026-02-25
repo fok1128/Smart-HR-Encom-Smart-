@@ -21,12 +21,12 @@ import {
 type NavItem = {
   name: string;
   icon: ReactNode;
-  path: string;
+  path?: string;          // ✅ ถ้าเป็นเมนูไปหน้า จะมี path
+  action?: () => void;    // ✅ ถ้าเป็นเมนู action เช่น logout จะมี action
 };
 
 const LOGO_SRC = "/images/logo/company-logo3.jpg";
 
-// สีบริษัท
 const BRAND_PURPLE = "#6B1F78";
 const ACCENT_YELLOW = "#D6BE13";
 const ACCENT_GREEN = "#2D5C0E";
@@ -70,18 +70,15 @@ const AppSidebar = () => {
       color: "currentColor" as const,
     };
 
-    // ✅ เรียงใหม่ให้ใช้งานลื่น (ไม่ทำเป็นหมวด แต่ลำดับดีขึ้น)
     const base: NavItem[] = [
       { icon: <House {...iconProps} />, name: "ประกาศ / หน้าแรก", path: "/" },
       { icon: <UserCircle {...iconProps} />, name: "Profile", path: "/profile" },
       { icon: <CalendarBlank {...iconProps} />, name: "ปฏิทินวันลา", path: "/calendar" },
 
-      // ลา (การกระทำก่อน แล้วค่อยประวัติ/สถานะ)
       { icon: <FilePlus {...iconProps} />, name: "ยื่นใบลา", path: "/leave/submit" },
       { icon: <SealCheck {...iconProps} />, name: "ตรวจสอบสถานะคำขอ", path: "/leave/status" },
       { icon: <FileText {...iconProps} />, name: "ใบลาของฉัน", path: "/my-leaves" },
 
-      // ออกปฏิบัติงาน
       { icon: <Briefcase {...iconProps} />, name: "แจ้งปฏิบัติงานนอกสถานที่", path: "/field-work" },
       { icon: <ClockCounterClockwiseIcon {...iconProps} />, name: "ประวัติออกปฏิบัติงาน", path: "/field-work/history" },
     ];
@@ -93,10 +90,16 @@ const AppSidebar = () => {
       );
     }
 
-    return base;
-  }, [canApprove]);
+    // ✅ Logout อยู่ในเมนูเลย (action item)
+    base.push({
+      icon: <SignOut {...iconProps} />,
+      name: "Logout",
+      action: handleLogout,
+    });
 
-  // ===== Premium menu styles =====
+    return base;
+  }, [canApprove, handleLogout]);
+
   const itemBase =
     "group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-all duration-200 select-none";
   const itemAlign = isCollapsed ? "justify-center" : "justify-start";
@@ -107,26 +110,22 @@ const AppSidebar = () => {
   const itemActive =
     "bg-gradient-to-r from-[#6B1F78]/16 via-[#6B1F78]/10 to-transparent text-[#6B1F78] ring-1 ring-[#6B1F78]/20 shadow-[0_10px_22px_rgba(107,31,120,0.10)] dark:bg-white/10 dark:text-white";
 
-  const iconBox =
-    "grid place-items-center rounded-xl w-11 h-11 transition-all duration-200";
-
-  // ✅ ไอคอน “เขียว” ตามธีมบริษัท (inactive + hover)
+  const iconBox = "grid place-items-center rounded-xl w-11 h-11 transition-all duration-200";
   const iconInactive =
     "bg-transparent text-[#2D5C0E] group-hover:text-[#2D5C0E] dark:text-[#2D5C0E]/90";
-
-  // ✅ ตอน active ให้ badge ยังหรู แต่ไอคอนเขียว (ขอเขียวตามที่ต้องการ)
   const iconActive =
     "bg-white text-[#2D5C0E] ring-1 ring-[#6B1F78]/15 shadow-[0_10px_18px_rgba(17,24,39,0.10)] dark:bg-white/15 dark:text-[#D6BE13]";
 
   return (
     <aside
       className={cn(
-        "fixed top-0 left-0 z-50 h-screen",
+        "fixed left-0 z-50",
+        "top-16 lg:top-0",
+        "h-[calc(100vh-4rem)] lg:h-screen",
         "bg-white dark:bg-gray-900",
         "border-r border-gray-200 dark:border-gray-800",
         "transition-all duration-300 ease-in-out",
         "lg:translate-x-0",
-        "mt-16 lg:mt-0",
         "flex flex-col",
         isExpanded || isMobileOpen ? "w-[290px]" : isHovered ? "w-[290px]" : "w-[90px]",
         isMobileOpen ? "translate-x-0" : "-translate-x-full"
@@ -134,29 +133,29 @@ const AppSidebar = () => {
       onMouseEnter={() => !isExpanded && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* ===== Brand (premium) ===== */}
+      {/* Brand */}
       <div className="px-4 pt-8 pb-6 shrink-0">
         <Link to="/" className="flex w-full justify-center">
           <div className="flex flex-col items-center">
             <div
-            className={cn(
-              "grid place-items-center",
-              "rounded-full",
-              "ring-1 ring-gray-200/80 dark:ring-gray-700/70",
-              "shadow-[0_12px_30px_rgba(17,24,39,0.12)]",
-              isCollapsed ? "h-16 w-16" : "h-24 w-24"
-            )}
-            style={{
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(249,250,251,0.98) 100%)",
-            }}
-          >
-            <img
-              src={LOGO_SRC}
-              alt="Company Logo"
-              className={cn("object-contain", isCollapsed ? "h-12 w-12" : "h-18 w-18")}
-            />
-          </div>
+              className={cn(
+                "grid place-items-center",
+                "rounded-full",
+                "ring-1 ring-gray-200/80 dark:ring-gray-700/70",
+                "shadow-[0_12px_30px_rgba(17,24,39,0.12)]",
+                isCollapsed ? "h-16 w-16" : "h-24 w-24"
+              )}
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(249,250,251,0.98) 100%)",
+              }}
+            >
+              <img
+                src={LOGO_SRC}
+                alt="Company Logo"
+                className={cn("object-contain", isCollapsed ? "h-12 w-12" : "h-18 w-18")}
+              />
+            </div>
 
             {!isCollapsed && (
               <div
@@ -184,67 +183,53 @@ const AppSidebar = () => {
         <div className="mt-6 border-t border-gray-200/70 dark:border-gray-800/70" />
       </div>
 
-      {/* Menu (scroll) */}
+      {/* Menu */}
       <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-3 pb-4">
         <nav className="pt-1">
           <ul className="flex flex-col gap-2">
             {navItems.map((nav) => {
-              const active = isActive(nav.path);
+              const isLink = !!nav.path;
+              const active = isLink ? isActive(nav.path!) : false;
+
+              const content = (
+                <>
+                  {!isCollapsed && (
+                    <span className={cn("h-7 w-1 rounded-full transition", active ? "bg-[#6B1F78]" : "bg-transparent")} />
+                  )}
+
+                  <span className={cn(iconBox, active ? iconActive : iconInactive)}>
+                    <span className="text-current">{nav.icon}</span>
+                  </span>
+
+                  {!isCollapsed && (
+                    <span className="text-sm font-semibold tracking-[0.1px]">{nav.name}</span>
+                  )}
+                </>
+              );
+
               return (
                 <li key={nav.name}>
-                  <Link
-                    to={nav.path}
-                    className={cn(itemBase, itemAlign, active ? itemActive : itemInactive)}
-                  >
-                    {!isCollapsed && (
-                      <span
-                        className={cn(
-                          "h-7 w-1 rounded-full transition",
-                          active ? "bg-[#6B1F78]" : "bg-transparent"
-                        )}
-                      />
-                    )}
-
-                    <span className={cn(iconBox, active ? iconActive : iconInactive)}>
-                      <span className="text-current">{nav.icon}</span>
-                    </span>
-
-                    {!isCollapsed && (
-                      <span className="text-sm font-semibold tracking-[0.1px]">
-                        {nav.name}
-                      </span>
-                    )}
-                  </Link>
+                  {isLink ? (
+                    <Link
+                      to={nav.path!}
+                      className={cn(itemBase, itemAlign, active ? itemActive : itemInactive)}
+                    >
+                      {content}
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={nav.action}
+                      className={cn(itemBase, itemAlign, "w-full", itemInactive)}
+                    >
+                      {content}
+                    </button>
+                  )}
                 </li>
               );
             })}
           </ul>
         </nav>
-      </div>
-
-      {/* Logout */}
-      <div className="shrink-0 px-3 pb-6 pt-2">
-        <button
-          type="button"
-          onClick={handleLogout}
-          className={cn(
-            itemBase,
-            itemAlign,
-            "w-full",
-            "text-slate-700 hover:bg-[#6B1F78]/7 hover:ring-1 hover:ring-[#6B1F78]/15",
-            "dark:text-slate-200 dark:hover:bg-white/10"
-          )}
-        >
-          {!isCollapsed && <span className="h-7 w-1 rounded-full bg-transparent" />}
-
-          <span className={cn(iconBox, iconInactive)}>
-            <span className="text-current">
-              <SignOut size={22} weight="duotone" color="currentColor" />
-            </span>
-          </span>
-
-          {!isCollapsed && <span className="text-sm font-semibold">Logout</span>}
-        </button>
       </div>
     </aside>
   );

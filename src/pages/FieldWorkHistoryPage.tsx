@@ -527,46 +527,37 @@ export default function FieldWorkHistoryPage() {
         </div>
       </Modal>
 
-      {/* ✅ Shell/Card: คุมธีมให้เหมือนหน้าอื่น */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 lg:p-6 transition">
-        {/* HEADER */}
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-              ประวัติแจ้งปฏิบัติงานนอกสถานที่
-            </h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              แสดงทั้งหมดของบัญชีนี้ (เลือกช่วงวันที่เพื่อกรองเอง) {canDelete ? "+ (สิทธิ) ลบรายการ" : ""}
-            </p>
-          </div>
+      
+      {/* ✅ ปุ่มสลับมุมมอง (เฉพาะ EXECUTIVE_MANAGER / ADMIN): วางนอกกรอบเพื่อไม่ให้รกข้างใน */}
+      {canSeeAll && (
+        <div className="mb-3 flex justify-end gap-2">
+          <AppButton
+            type="button"
+            onClick={() => setScope("mine")}
+            variant="outlinePill"
+            size="md"
+            className={cn("h-9 px-4 text-sm", scope === "mine" ? "bg-violet-50/70 dark:bg-violet-500/15" : "")}
+          >
+            ดูของตัวเอง
+          </AppButton>
 
-          {canSeeAll && (
-            <div className="flex items-center gap-3">
-              <AppButton
-                type="button"
-                onClick={() => setScope("mine")}
-                variant="outlinePill"
-                size="md"
-                className={cn("px-5", scope === "mine" ? "bg-violet-50/70 dark:bg-violet-500/15" : "")}
-              >
-                ดูของตัวเอง
-              </AppButton>
-
-              <AppButton
-                type="button"
-                onClick={() => setScope("all")}
-                variant="outlinePill"
-                size="md"
-                className={cn("px-5", scope === "all" ? "bg-violet-50/70 dark:bg-violet-500/15" : "")}
-              >
-                ดูของทุกคน
-              </AppButton>
-            </div>
-          )}
+          <AppButton
+            type="button"
+            onClick={() => setScope("all")}
+            variant="outlinePill"
+            size="md"
+            className={cn("h-9 px-4 text-sm", scope === "all" ? "bg-violet-50/70 dark:bg-violet-500/15" : "")}
+          >
+            ดูของทุกคน
+          </AppButton>
         </div>
+      )}
+
+      {/* ✅ Shell/Card: คุมธีมให้เหมือนหน้าอื่น */}
+      <div className="relative rounded-2xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 lg:p-5 transition">
 
         {/* ✅ FILTER BAR (แนวเดียวกับรูป): แถวบน = ค้นหา + dropdown, แถวล่าง = date range + ปุ่ม */}
-        <div className="mt-6 space-y-4">
+        <div className="mt-0 space-y-3">
           {/* Row 1 */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             <div className="lg:col-span-8">
@@ -580,7 +571,10 @@ export default function FieldWorkHistoryPage() {
             </div>
 
             <div className="lg:col-span-4">
-              <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ตัวกรอง</label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-sm font-extrabold text-gray-900 dark:text-gray-100">ตัวกรอง</label>
+</div>
+
               <div className="mt-2">
                 <ThemedSelect value={attachFilter} onChange={(e) => setAttachFilter(e.target.value as any)}>
                   <option value="ทั้งหมด">ทั้งหมด</option>

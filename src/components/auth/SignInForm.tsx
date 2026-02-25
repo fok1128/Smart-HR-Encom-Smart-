@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { EyeCloseIcon, EyeIcon } from "../../icons";
 import Label from "../form/Label";
@@ -7,7 +7,7 @@ import Checkbox from "../form/input/Checkbox";
 import { useAuth } from "../../context/AuthContext";
 import { auth } from "../../firebase";
 import { signOut } from "firebase/auth";
-
+import { Eye, EyeOff } from "lucide-react";
 type LocationState = {
   from?: { pathname?: string };
   prev?: string;
@@ -45,7 +45,6 @@ function mapAuthError(err: unknown) {
 }
 
 function safeRedirectTarget(from?: string) {
-  // กันหลุดไปหน้าที่ไม่ควร
   const blocked = new Set(["/signin", "/signup", "/reset-password"]);
   if (!from) return "/";
   if (blocked.has(from)) return "/";
@@ -71,22 +70,26 @@ export default function SignInForm() {
     return safeRedirectTarget(state?.from?.pathname);
   }, [location.state]);
 
-  // ✅ ถ้าผู้ใช้ "ล็อกอินอยู่แล้ว" แล้วหลงเข้ามาหน้า signin
-  // ให้กลับไป redirectTo (เช่น /line-link) ไม่ใช่บังคับ "/"
   useEffect(() => {
     if (authLoading) return;
     if (!user) return;
-
     navigate(redirectTo, { replace: true });
   }, [user, authLoading, navigate, redirectTo]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  // ✅ รองรับ Checkbox ที่ส่งได้หลายแบบ (boolean/event)
+  const handleRememberChange = (v: any) => {
+    if (typeof v === "boolean") return setRemember(v);
+    if (v && typeof v === "object" && "target" in v) return setRemember(!!(v as any).target?.checked);
+    setRemember((x) => !x);
+  };
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
 
     const emailTrim = email.trim();
-    const emailNorm = emailTrim.toLowerCase(); // ✅ normalize
-    const passRaw = password; // ❌ อย่า trim password
+    const emailNorm = emailTrim.toLowerCase();
+    const passRaw = password; // อย่า trim password
 
     if (!emailTrim || !passRaw) {
       setError("กรุณากรอก Email และ Password ให้ครบ");
@@ -96,31 +99,22 @@ export default function SignInForm() {
     try {
       setLoading(true);
 
-      console.log("[SignIn] submit", { email: emailNorm, hasPwd: passRaw.length > 0 });
-      console.log("[SignIn] BEFORE login currentUser =", auth.currentUser?.email ?? "(none)");
-
-      // ✅ ถ้ามี session ค้างอยู่เป็นคนละเมล -> เคลียร์ก่อน (กัน mismatch แปลก ๆ)
       const before = auth.currentUser?.email?.toLowerCase();
       if (before && before !== emailNorm) {
-        console.log("[SignIn] signOut old session:", before);
         await signOut(auth);
       }
 
       await login(emailNorm, passRaw, remember);
 
       const cu = auth.currentUser;
-      console.log("[SignIn] AFTER login currentUser =", cu?.email ?? "(none)");
-
       if (!cu) throw new Error("FIREBASE_NOT_SIGNED_IN");
 
-      // ✅ เทียบแบบ normalize (กันเคสตัวพิมพ์เล็ก/ใหญ่)
       const cuEmail = (cu.email ?? "").toLowerCase();
       if (cuEmail && cuEmail !== emailNorm) {
         await signOut(auth);
         throw new Error("FIREBASE_EMAIL_MISMATCH");
       }
 
-      // ✅ กลับไปหน้าที่ตั้งใจ เช่น /line-link
       navigate(redirectTo, { replace: true });
     } catch (err: unknown) {
       console.error("[SignIn] error:", err);
@@ -170,34 +164,42 @@ export default function SignInForm() {
           </div>
 
           <div>
-            <div className="text-base xl:text-lg 2xl:text-xl">
-              <Label>
-                Password <span className="text-red-500">*</span>
-              </Label>
-            </div>
+  <div>
+  <div className="text-base xl:text-lg 2xl:text-xl">
+    <Label>
+      Password <span className="text-red-500">*</span>
+    </Label>
+  </div>
 
-            <div className="relative mt-2">
-              <Input
-                type={showPassword ? "text" : "password"}
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-                className={inputBlackBorder}
-              />
+  {/* ✅ ใช้ Input เดิมเหมือน Email เพื่อให้หน้าตา/ขนาดกลับเหมือนเดิม */}
+  <div className="relative mt-2">
+    <Input
+      type={showPassword ? "text" : "password"}
+      placeholder="Enter your password"
+      value={password}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+      className={inputBlackBorder + " pr-12"} // ✅ กันพื้นที่ให้ปุ่มตา
+    />
 
-              <button
-                type="button"
-                onClick={() => setShowPassword((s) => !s)}
-                className="absolute -translate-y-1/2 right-4 top-1/2 text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-white"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? (
-                  <EyeIcon className="w-5 h-5 xl:w-6 xl:h-6" />
-                ) : (
-                  <EyeCloseIcon className="w-5 h-5 xl:w-6 xl:h-6" />
-                )}
-              </button>
-            </div>
+    <button
+      type="button"
+      onClick={() => setShowPassword((s) => !s)}
+      className={[
+        "absolute right-3 top-1/2 -translate-y-1/2",
+        "z-20",
+        "grid place-items-center",
+        "h-9 w-9 rounded-lg", // ✅ ขนาดปุ่มชัด ไม่บวม ไม่ยุบ
+        "text-gray-700 hover:text-black dark:text-gray-200 dark:hover:text-white",
+        "hover:bg-black/5 dark:hover:bg-white/10",
+        "focus:outline-none focus:ring-2 focus:ring-[#6B1F78]/30",
+      ].join(" ")}
+      aria-label={showPassword ? "Hide password" : "Show password"}
+      title={showPassword ? "Hide password" : "Show password"}
+    >
+      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+    </button>
+  </div>
+</div>
           </div>
 
           <div className="flex items-center">
@@ -205,7 +207,7 @@ export default function SignInForm() {
               <Checkbox
                 id="keep-logged-in"
                 checked={remember}
-                onChange={() => setRemember((v) => !v)}
+                onChange={handleRememberChange}
                 className="border border-gray-900 dark:border-gray-200 focus:ring-0"
               />
               Keep me logged in
