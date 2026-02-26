@@ -247,10 +247,6 @@ type StageInfo = {
   blocked?: boolean; // ยังไม่ถึงขั้น
 };
 
-function isFinalDecisionStatus(st: any) {
-  const s = normalizeAction(st);
-  return s === "APPROVED" || s === "REJECTED" || s === "CANCELED";
-}
 
 function isRejectOrCancel(st: any) {
   const s = normalizeAction(st);
@@ -503,43 +499,6 @@ export default function MyLeaveRequestsPage() {
     } catch {}
     window.alert(`${t}\n${m}`);
   };
-
-  const openDecisionReasons = (r: any) => {
-    const reasons = getDecisionReasons(r);
-    if (!reasons.length) return;
-
-    const d: any = dialog as any;
-    const title = "เหตุผล/หมายเหตุจากผู้อนุมัติ";
-
-    if (typeof d?.openModal === "function") {
-      d.openModal({
-        title,
-        size: "md",
-        content: (
-          <div className="space-y-3">
-            {reasons.map((x: any, idx: number) => (
-              <div
-                key={`${x.role}-${x.action}-${idx}`}
-                className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
-              >
-                <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">
-                  {roleLabelTH(x.role)}: {actionLabelTH(x.action)}
-                </div>
-                <div className="mt-2 whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">{x.reason}</div>
-              </div>
-            ))}
-          </div>
-        ),
-      });
-      return;
-    }
-
-    const msg = reasons
-      .map((x) => `${roleLabelTH(x.role)}: ${actionLabelTH(x.action)}\n${x.reason}`)
-      .join("\n\n----------------\n\n");
-    dlgAlert(title, msg);
-  };
-
   const dlgSuccess = (title: string, message: string) => {
     const d: any = dialog as any;
     const t = String(title ?? "");
@@ -935,10 +894,6 @@ export default function MyLeaveRequestsPage() {
               const startAt = r.startAt;
               const endAt = r.endAt;
               const status = r.status;
-
-              const decisionReasons = getDecisionReasons(r);
-              const hasDecisionReasons = decisionReasons.length > 0;
-
               const attachments = Array.isArray(r.attachments) ? r.attachments : [];
               const legacyFiles = Array.isArray(r.files) ? r.files : [];
               const allFiles = [...attachments, ...legacyFiles];
