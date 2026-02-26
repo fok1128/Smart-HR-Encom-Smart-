@@ -198,10 +198,21 @@ export default function FieldWorkHistoryPage() {
   const dialog = useDialogCenter();
 
   const myUid = String(user?.uid || "").trim();
-  const role = String(user?.role || "").toUpperCase();
 
-  const canSeeAll = role === "ADMIN" || role === "EXECUTIVE_MANAGER";
-  const canDelete = role === "ADMIN" || role === "EXECUTIVE_MANAGER";
+// ✅ role: เผื่อ AuthContext เก็บ role คนละที่ (กัน role ว่าง)
+const role = String(
+  user?.role ??
+    user?.profile?.role ??
+    user?.claims?.role ??
+    user?.customClaims?.role ??
+    ""
+).trim().toUpperCase();
+
+// ✅ HR ต้องเห็น “ของทุกคน” ด้วย
+const canSeeAll = role === "ADMIN" || role === "EXECUTIVE_MANAGER" || role === "HR";
+
+// ✅ ลบ: คงเดิม (ให้เฉพาะ ADMIN/EXECUTIVE_MANAGER ลบได้)
+const canDelete = role === "ADMIN" || role === "EXECUTIVE_MANAGER";
 
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [rows, setRows] = useState<FieldWorkRequestDoc[]>([]);
@@ -230,8 +241,11 @@ export default function FieldWorkHistoryPage() {
   const isAllDefault = isDateDefault && !q.trim() && attachFilter === "ทั้งหมด";
 
   useEffect(() => {
-    if (canSeeAll) setScope("all");
-  }, [canSeeAll]);
+  // ✅ ไม่ต้อง force เป็น all เสมอ ให้ผู้ใช้เลือกเอง
+  // ถ้าอยาก default เป็น mine ตลอด ก็ไม่ต้องทำอะไร
+  // ถ้าอยาก default เป็น all เฉพาะ ADMIN/EXECUTIVE_MANAGER ก็ทำแบบนี้:
+  if (role === "ADMIN" || role === "EXECUTIVE_MANAGER") setScope("all");
+}, [role]);
 
   useEffect(() => {
     if (!myUid) {
