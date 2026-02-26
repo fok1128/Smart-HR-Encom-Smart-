@@ -41,6 +41,71 @@ function pickStr(...vals: any[]) {
   return "";
 }
 
+
+function actorName(x: any) {
+  if (!x) return "";
+  if (typeof x === "string") return x.trim();
+
+  if (typeof x === "object") {
+    const full = [x.fname, x.lname].filter(Boolean).join(" ").trim();
+    return (
+      full ||
+      String(x.displayName || "").trim() ||
+      String(x.name || "").trim() ||
+      String(x.email || "").trim() ||
+      String(x.uid || "").trim() ||
+      ""
+    );
+  }
+
+  return String(x).trim();
+}
+
+function pickActor(...vals: any[]) {
+  for (const v of vals) {
+    const n = actorName(v);
+    if (n) return n;
+  }
+  return "";
+}
+
+
+function getUserNote(r: any) {
+  const v =
+    r?.note ??
+    r?.reason ??
+    r?.remark ??
+    r?.remarks ??
+    r?.comment ??
+    r?.message ??
+    r?.detail ??
+    r?.description ??
+    r?.userNote ??
+    r?.employeeNote ??
+    "";
+  const s = String(v ?? "").trim();
+  return s;
+}
+
+function attachmentLabel(a: any, idx: number) {
+  if (!a) return `ไฟล์ #${idx + 1}`;
+  if (typeof a === "string") {
+    const last = a.split("/").pop() || a;
+    return last;
+  }
+  const name =
+    a.originalName ??
+    a.fileName ??
+    a.filename ??
+    a.name ??
+    a.displayName ??
+    a.path?.split?.("/")?.pop?.() ??
+    a.storagePath?.split?.("/")?.pop?.() ??
+    a.key?.split?.("/")?.pop?.();
+  return String(name || `ไฟล์ #${idx + 1}`);
+}
+
+
 // ----------------- ✅ Decision reasons (HR / EXECUTIVE_MANAGER) -----------------
 type DecisionReason = {
   role: string;
@@ -167,6 +232,143 @@ function fmtDateTime(ts: any) {
   } catch {
     return "-";
   }
+}
+
+
+// ----------------- ✅ Workflow bars (HR / EXECUTIVE_MANAGER) -----------------
+type StageKey = "HR" | "EXECUTIVE_MANAGER";
+
+type StageInfo = {
+  role: StageKey;
+  status: string; // APPROVED/REJECTED/CANCELED/PENDING/BLOCKED/-
+  by: string;
+  at: any;
+  reason: string;
+  blocked?: boolean; // ยังไม่ถึงขั้น
+};
+
+function isFinalDecisionStatus(st: any) {
+  const s = normalizeAction(st);
+  return s === "APPROVED" || s === "REJECTED" || s === "CANCELED";
+}
+
+function isRejectOrCancel(st: any) {
+  const s = normalizeAction(st);
+  return s === "REJECTED" || s === "CANCELED";
+}
+
+function stageBadgeClass(st: string) {
+  const s = normalizeAction(st);
+  if (s === "BLOCKED")
+    // ✅ เห็นว่า 'ยังไม่ถึงขั้น' แต่ไม่ให้แดงทั้งแถบจนล้นตา
+    return "bg-gray-50 text-red-700 border border-gray-200 dark:bg-gray-800/40 dark:text-red-200 dark:border-gray-700";
+  return badgeClass(s);
+}
+
+function stageStatusText(st: string) {
+  const s = normalizeAction(st);
+  if (s === "BLOCKED") return "ยังไม่ถึงขั้น";
+  return statusText(s);
+}
+
+function getStageReason(r: any, role: StageKey) {
+  // direct fields (new workflow)
+  const direct =
+    role === "HR"
+      ? pickStr(r?.hrComment, r?.hrReason, r?.hrNote)
+      : pickStr(r?.managerComment, r?.emComment, r?.executiveComment, r?.managerReason);
+
+  if (direct) return direct;
+
+  // legacy single fields
+  const legacy = pickStr(r?.rejectReason, r?.decisionNote, r?.canceledReason, r?.cancelReason);
+  if (legacy && role === "HR") return legacy;
+
+  // try history arrays
+  const all = getDecisionReasons(r);
+  const want = roleLabelTH(role);
+  const hit = all.find((x) => roleLabelTH(x.role) === want);
+  return hit?.reason ? String(hit.reason) : "";
+}
+
+function getStageInfo(r: any, role: StageKey): StageInfo {
+  if (role === "HR") {
+    const status = normalizeAction(pickStr(r?.hrStatus, r?.hrDecision?.status, r?.hrDecision?.action, r?.hrApproval?.status));
+    return {
+      role,
+      status: status || "PENDING",
+      by: pickActor(r?.hrActionBy, r?.hrBy, r?.hrActor, r?.hrApprovedBy, r?.hrRejectedBy, r?.approvedBy, r?.rejectedBy),
+      at: r?.hrActionAt || r?.hrDecidedAt || r?.hrApprovedAt || r?.hrRejectedAt || r?.decidedAt || r?.approvedAt || r?.rejectedAt,
+      reason: getStageReason(r, role),
+    };
+  }
+
+  const status = normalizeAction(
+    pickStr(
+      r?.managerStatus,
+      r?.emStatus,
+      r?.executiveManagerStatus,
+      r?.executiveStatus,
+      r?.executiveDecision?.status,
+      r?.emDecision?.status
+    )
+  );
+
+  return {
+    role,
+    status: status || "PENDING",
+    by: pickActor(
+      r?.managerActionBy,
+      r?.emActionBy,
+      r?.executiveActionBy,
+      r?.executiveManagerActionBy,
+      r?.managerBy,
+      r?.emBy
+    ),
+    at: r?.managerActionAt || r?.emActionAt || r?.executiveActionAt || r?.managerDecidedAt,
+    reason: getStageReason(r, role),
+  };
+}
+
+function openStageReasonDialog(dialog: any, stage: StageInfo) {
+  const title = `เหตุผล/หมายเหตุ (${stage.role})`;
+
+  const d: any = dialog as any;
+  if (typeof d?.openModal === "function") {
+    d.openModal({
+      title,
+      size: "md",
+      content: (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">
+                {stage.role}: {actionLabelTH(stage.status)}
+              </div>
+              <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">{stage.at ? fmtDateTime(stage.at) : ""}</div>
+            </div>
+
+            {stage.by && (
+              <div className="mt-1 text-xs font-semibold text-gray-600 dark:text-gray-300">
+                โดย: <span className="font-extrabold">{stage.by}</span>
+              </div>
+            )}
+
+            <div className="mt-3 whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">
+              {stage.reason || "-"}
+            </div>
+          </div>
+        </div>
+      ),
+    });
+    return;
+  }
+
+  window.alert(`${title}
+
+${stage.role}: ${actionLabelTH(stage.status)}
+โดย: ${stage.by || "-"}
+${stage.reason || "-"}`);
 }
 
 function fmtRange(startAt: any, endAt: any) {
@@ -739,6 +941,7 @@ export default function MyLeaveRequestsPage() {
 
               const attachments = Array.isArray(r.attachments) ? r.attachments : [];
               const legacyFiles = Array.isArray(r.files) ? r.files : [];
+              const allFiles = [...attachments, ...legacyFiles];
               const showDueWarn = needWarnDue(r);
               const provided = isProvided(r);
 
@@ -754,17 +957,6 @@ export default function MyLeaveRequestsPage() {
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(status)}`}>
                           {statusText(status)}
                         </span>
-                        {hasDecisionReasons && (
-                          <AppButton
-                            variant="outline"
-                            size="sm"
-                            className="h-7 rounded-full px-3 text-xs font-extrabold"
-                            onClick={() => openDecisionReasons(r)}
-                            title="ดูเหตุผล/หมายเหตุจากผู้อนุมัติ"
-                          >
-                            ดูเหตุผล
-                          </AppButton>
-                        )}
                       </div>
 
                       <div className="mt-2 text-sm text-gray-600 dark:text-gray-300">
@@ -782,7 +974,73 @@ export default function MyLeaveRequestsPage() {
                         <div className="mt-1">
                           <span className="font-semibold">ส่งเมื่อ:</span> {fmtDateTime(r.submittedAt)}
                         </div>
-                      </div>
+                      
+                      {/* ✅ Workflow bar: HR / EXECUTIVE_MANAGER */}
+                      {(() => {
+                        const hr = getStageInfo(r, "HR");
+                        const hrFinal = isRejectOrCancel(hr.status);
+                        const emRaw = getStageInfo(r, "EXECUTIVE_MANAGER");
+                        const em: StageInfo = hrFinal
+                          ? { ...emRaw, status: "BLOCKED", blocked: true, by: "", at: null, reason: "" }
+                          : emRaw;
+
+                        const Row = ({ s }: { s: StageInfo }) => {
+                          const hasReason = !!String(s.reason || "").trim();
+                          const showReasonBtn = !s.blocked && hasReason;
+
+                          return (
+                            <div className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="text-xs font-extrabold text-gray-900 dark:text-gray-100">{s.role}</div>
+
+                                  <span className={`rounded-full px-3 py-1 text-xs font-extrabold ${stageBadgeClass(s.status)}`}>
+                                    {stageStatusText(s.status)}
+                                  </span>
+
+                                  {s.blocked ? (
+                                    <span className="text-xs font-semibold text-red-700 dark:text-red-200">
+                                      คำร้องสิ้นสุดที่ขั้น HR
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                {!s.blocked && (s.by || s.at) && (
+                                  <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                                    {s.by ? (
+                                      <>
+                                        โดย: <span className="font-semibold text-gray-900 dark:text-gray-100">{s.by}</span>
+                                      </>
+                                    ) : null}
+                                    {s.by && s.at ? <span className="mx-2 text-gray-400">•</span> : null}
+                                    {s.at ? <span>{fmtDateTime(s.at)}</span> : null}
+                                  </div>
+                                )}
+                              </div>
+
+                              {showReasonBtn && (
+                                <AppButton
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 rounded-full px-3 text-xs font-extrabold"
+                                  onClick={() => openStageReasonDialog(dialog, s)}
+                                >
+                                  ดูเหตุผล
+                                </AppButton>
+                              )}
+                            </div>
+                          );
+                        };
+
+                        return (
+                          <div className="mt-3 space-y-2">
+                            <Row s={hr} />
+                            <Row s={em} />
+                          </div>
+                        );
+                      })()}
+
+</div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -832,51 +1090,40 @@ export default function MyLeaveRequestsPage() {
                     </div>
                   </div>
 
-                  {r.reason && (
-                    <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
-                      <div className="font-semibold">เหตุผล/รายละเอียด</div>
-                      <div className="mt-1 whitespace-pre-wrap">{r.reason}</div>
+                                    <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-200">
+                    <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">หมายเหตุ/เหตุผล</div>
+                    <div className="mt-2 whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">
+                      {getUserNote(r) || "–"}
                     </div>
-                  )}
+                  </div>
 
-                  {(r.requireMedicalCert || r.medicalCertDueAt) && (
-                    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="font-semibold text-gray-900 dark:text-gray-100">ใบรับรองแพทย์</div>
-                          <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                            {provided ? (
-                              <span className="font-semibold text-emerald-700 dark:text-emerald-200">✅ แนบแล้ว</span>
-                            ) : (
-                              <span className="font-semibold text-amber-700 dark:text-amber-200">⚠️ ยังไม่แนบ</span>
-                            )}
-                          </div>
+                  <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900">
+                    <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">ไฟล์แนบ</div>
 
-                          {r.medicalCertDueAt && (
-                            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                              เดดไลน์แนบ: <span className="font-semibold">{fmtDateOnly(r.medicalCertDueAt)}</span>
-                            </div>
-                          )}
-                        </div>
+                    {allFiles.length === 0 ? (
+                      <div className="mt-2 text-sm text-gray-600 dark:text-gray-300">–</div>
+                    ) : (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {allFiles.map((a: any, idx: number) => {
+                          const key = getAttachmentKey(a);
+                          const label = attachmentLabel(a, idx);
 
-                        {showDueWarn && (
-                          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
-                            เลยเดดไลน์แนบใบรับรองแล้ว (ให้ HR/ผู้จัดการพิจารณา)
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                          // ✅ ถ้าไม่มี key (ไฟล์แบบเก่า/ข้อมูลไม่ครบ) ให้แสดงเป็นชิปเฉยๆ กดไม่ได้
+                          if (!key) {
+                            return (
+                              <span
+                                key={`nofile-${idx}`}
+                                className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-500 dark:border-gray-800 dark:bg-white/[0.03] dark:text-gray-400"
+                                title="ไฟล์นี้ไม่มี key (storagePath) จึงเปิดไม่ได้"
+                              >
+                                {label}
+                              </span>
+                            );
+                          }
 
-                  {(attachments.length > 0 || legacyFiles.length > 0) && (
-                    <div className="mt-3">
-                      <div className="text-xs font-semibold text-gray-600 dark:text-gray-300">ไฟล์แนบ</div>
-
-                      {attachments.length > 0 ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {attachments.map((a: any, idx: number) => (
+                          return (
                             <AppButton
-                              key={(getAttachmentKey(a) || "") + idx}
+                              key={`${key}-${idx}`}
                               variant="outlinePill"
                               onClick={async () => {
                                 try {
@@ -887,19 +1134,45 @@ export default function MyLeaveRequestsPage() {
                               }}
                               title="เปิดไฟล์"
                             >
-                              {String(a?.name || "ไฟล์")} <span className="text-gray-400">#{idx + 1}</span>
+                              {label}
                             </AppButton>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                          (มีไฟล์แบบเก่า {legacyFiles.length} รายการ แต่ไม่มี key สำหรับเปิดผ่าน Supabase)
-                        </div>
-                      )}
-                    </div>
-                  )}
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
-                  {openAttachId === r.id && (
+                  {(r.requireMedicalCert || r.medicalCertDueAt) ? (
+                    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-semibold text-gray-900 dark:text-gray-100">ใบรับรองแพทย์</div>
+
+                          <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                            {provided ? (
+                              <span className="font-semibold text-emerald-700 dark:text-emerald-200">✅ แนบแล้ว</span>
+                            ) : (
+                              <span className="font-semibold text-amber-700 dark:text-amber-200">⚠️ ยังไม่แนบ</span>
+                            )}
+                          </div>
+
+                          {r.medicalCertDueAt ? (
+                            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              เดดไลน์แนบ: <span className="font-semibold">{fmtDateOnly(r.medicalCertDueAt)}</span>
+                            </div>
+                          ) : null}
+
+                          {showDueWarn ? (
+                            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-200">
+                              เลยกำหนดแนบใบรับรองแพทย์แล้ว
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+{openAttachId === r.id && (
                     <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-4 dark:border-teal-900/40 dark:bg-teal-900/20">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>

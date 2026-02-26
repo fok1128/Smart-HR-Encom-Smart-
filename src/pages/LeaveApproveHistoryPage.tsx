@@ -96,6 +96,30 @@ function pickStr(...vals: any[]) {
   return "";
 }
 
+
+// ✅ Fix [object Object] for approver fields (HR / EXECUTIVE_MANAGER)
+function actorToText(v: any) {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+
+  const fname = v.fname ?? v.firstName ?? "";
+  const lname = v.lname ?? v.lastName ?? "";
+  const displayName = v.displayName ?? v.name ?? "";
+  const email = v.email ?? v.mail ?? "";
+
+  const name = String([fname, lname].filter(Boolean).join(" ")).trim() || String(displayName || "").trim();
+  if (name && email) return `${name} (${email})`;
+  return name || email || "";
+}
+
+function pickActor(...vals: any[]) {
+  for (const v of vals) {
+    const s = actorToText(v);
+    if (s) return s;
+  }
+  return "";
+}
+
 function getRowUid(r: any) {
   return pickStr(r?.uid, r?.createdByUid, r?.userUid, r?.userId);
 }
@@ -293,6 +317,209 @@ function getExporterProfile(u: any) {
 }
 
 type DeleteMode = "DEL_UID" | "DEL_SELECTED" | "DEL_ONE" | null;
+
+// -------------------------
+// ✅ Workflow bar: HR / EXECUTIVE_MANAGER (show who/when/reason)
+// -------------------------
+type StageRole = "HR" | "EXECUTIVE_MANAGER";
+type StageStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELED" | "BLOCKED" | "UNKNOWN";
+
+type StageInfo = {
+  role: StageRole;
+  status: StageStatus;
+  by: any;
+  at: any;
+  reason: string;
+  blocked?: boolean;
+};
+
+function normStr(x: any) {
+  return String(x ?? "").trim();
+}
+
+function normUpper(x: any) {
+  return normStr(x).toUpperCase();
+}
+
+function normalizeStageStatus(raw: any): StageStatus {
+  const v = normUpper(raw);
+  if (!v) return "PENDING";
+
+  if (v === "APPROVED" || v === "อนุมัติ".toUpperCase()) return "APPROVED";
+  if (v === "REJECTED" || v === "ไม่อนุมัติ".toUpperCase()) return "REJECTED";
+  if (v === "CANCELED" || v === "CANCELLED" || v === "ยกเลิก".toUpperCase()) return "CANCELED";
+
+  // workflow pending variants
+  if (v.includes("PENDING")) return "PENDING";
+  if (v.includes("WAIT") || v.includes("รอดำเนินการ".toUpperCase())) return "PENDING";
+
+  return "UNKNOWN";
+}
+
+function isRejectOrCancelStage(st: any) {
+  const s = normalizeStageStatus(st);
+  return s === "REJECTED" || s === "CANCELED";
+}
+
+function stageLabelTH(st: any) {
+  const s = normalizeStageStatus(st);
+  if (s === "APPROVED") return "อนุมัติ";
+  if (s === "REJECTED") return "ไม่อนุมัติ";
+  if (s === "CANCELED") return "ยกเลิก";
+  if (s === "BLOCKED") return "ยังไม่ถึงขั้น";
+  if (s === "PENDING") return "รอดำเนินการ";
+  return "ไม่ทราบสถานะ";
+}
+
+function stageBadge(st: any) {
+  const s = normalizeStageStatus(st);
+  const base = "inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold";
+  const cls =
+    s === "APPROVED"
+      ? "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-900/40"
+      : s === "REJECTED"
+      ? "text-red-700 bg-red-50 border-red-200 dark:text-red-200 dark:bg-red-500/10 dark:border-red-900/40"
+      : s === "CANCELED"
+      ? "text-gray-700 bg-gray-100 border-gray-200 dark:text-gray-200 dark:bg-white/5 dark:border-white/10"
+      : s === "BLOCKED"
+      ? // ✅ อย่าแดงทั้งแถบ: ใช้พื้นเทา แต่ข้อความแดง
+        "text-red-700 bg-gray-50 border-gray-200 dark:text-red-200 dark:bg-white/5 dark:border-white/10"
+      : "text-amber-700 bg-amber-50 border-amber-200 dark:text-amber-200 dark:bg-amber-500/10 dark:border-amber-900/40";
+
+  return <span className={cn(base, cls)}>{stageLabelTH(s)}</span>;
+}
+
+function pickFirst(...xs: any[]) {
+  for (const x of xs) {
+    const v = normStr(x);
+    if (v) return v;
+  }
+  return "";
+}
+
+function extractStageFromHistory(r: any, role: StageRole) {
+  const arrays = [r?.decisionHistory, r?.approvalHistory, r?.approvals, r?.decisions, r?.history];
+  const want = role.toUpperCase();
+  let best: any = null;
+
+  for (const arr of arrays) {
+    if (!Array.isArray(arr)) continue;
+    for (const it of arr) {
+      const rr = normUpper(it?.role || it?.byRole || it?.approverRole);
+      if (rr && rr !== want) continue;
+
+      const at = it?.at || it?.time || it?.createdAt || it?.actionAt || it?.decidedAt;
+      if (!best) {
+        best = it;
+      } else {
+        const a = tsToMs(at);
+        const b = tsToMs(best?.at || best?.time || best?.createdAt || best?.actionAt || best?.decidedAt);
+        if (a >= b) best = it;
+      }
+    }
+  }
+
+  if (!best) return null;
+
+  const status = normalizeStageStatus(best?.status || best?.action || best?.decision || best?.result);
+  const by = pickActor(best?.by, best?.byName, best?.actor, best?.actorName, best?.approver, best?.approverName, best?.email);
+  const reason = pickReasonFromObj(best) || "";
+  const at = best?.at || best?.time || best?.createdAt || best?.actionAt || best?.decidedAt;
+
+  return { status, by, reason, at };
+}
+
+function getStageInfo(r: any, role: StageRole): StageInfo {
+  const cancelRole = normUpper(r?.canceledByRole || r?.cancelledByRole);
+  const canceledBy = pickActor(r?.canceledBy, r?.cancelledBy);
+  const canceledAt = r?.canceledAt || r?.cancelledAt;
+  const canceledReason = pickFirst(r?.canceledReason, r?.cancelledReason);
+
+  // Prefer explicit stage fields
+  let statusRaw: any = "";
+  let byRaw: any = "";
+  let atRaw: any = null;
+  let reasonRaw: any = "";
+
+  if (role === "HR") {
+    statusRaw = pickFirst(r?.hrStatus, r?.hrDecision?.status, r?.hr?.status);
+    byRaw = pickActor(r?.hrActionBy, r?.hrActionUser, r?.hrBy, r?.hrApprovedBy, r?.hrRejectedBy);
+    atRaw = r?.hrActionAt || r?.hrActionTime || r?.hrDecidedAt;
+    reasonRaw = pickFirst(r?.hrComment, r?.hrNote, r?.hrReason);
+
+    // legacy fallback (HR reject/cancel often stored here)
+    if (!statusRaw) statusRaw = pickFirst(r?.status, r?.overallStatus);
+    if (!reasonRaw) reasonRaw = pickFirst(r?.rejectReason, r?.decisionNote);
+    if (!byRaw) byRaw = pickActor(r?.rejectedBy, r?.approvedBy);
+    if (!atRaw) atRaw = r?.rejectedAt || r?.approvedAt || r?.decidedAt;
+  } else {
+    statusRaw = pickFirst(
+      r?.managerStatus,
+      r?.emStatus,
+      r?.executiveManagerStatus,
+      r?.managerDecision?.status,
+      r?.executiveManagerDecision?.status
+    );
+    byRaw = pickActor(r?.managerActionBy, r?.emActionBy, r?.executiveManagerActionBy, r?.managerBy);
+    atRaw = r?.managerActionAt || r?.emActionAt || r?.executiveManagerActionAt;
+    reasonRaw = pickFirst(r?.managerComment, r?.emComment, r?.executiveManagerComment);
+  }
+
+  // If canceled at some role, reflect it
+  if (cancelRole === role.toUpperCase()) {
+    statusRaw = "CANCELED";
+    byRaw = canceledBy || byRaw;
+    atRaw = canceledAt || atRaw;
+    reasonRaw = canceledReason || reasonRaw;
+  }
+
+  // History fallback (if still empty)
+  const h = extractStageFromHistory(r, role);
+  const status = normalizeStageStatus(statusRaw || h?.status);
+  const by = pickActor(byRaw, h?.by);
+  const at = atRaw || h?.at || null;
+  const reason = pickFirst(reasonRaw, h?.reason);
+
+  return { role, status, by, at, reason };
+}
+
+function openStageReasonDialog(dialog: any, s: StageInfo) {
+  const reason = normStr(s.reason);
+  if (!reason) return;
+
+  const openModal = (dialog as any)?.openModal;
+  const title = "เหตุผล/หมายเหตุจากผู้อนุมัติ";
+
+  const header = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="text-sm font-extrabold text-gray-900 dark:text-gray-100">
+        {s.role}: {stageLabelTH(s.status)}
+      </div>
+      {s.at ? <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">{fmtDate(s.at)}</div> : null}
+    </div>
+  );
+
+  const body = (
+    <div className="space-y-2">
+      {header}
+      {actorToText(s.by) ?  (
+        <div className="text-xs text-gray-600 dark:text-gray-300">
+          โดย: <span className="font-semibold text-gray-900 dark:text-gray-100">{actorToText(s.by)}</span>
+        </div>
+      ) : null}
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 text-sm leading-7 text-gray-800 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100">
+        {reason}
+      </div>
+    </div>
+  );
+
+  if (typeof openModal === "function") {
+    openModal({ title, size: "md", content: body });
+  } else {
+    alert(`${s.role}: ${stageLabelTH(s.status)}\n${actorToText(s.by) ?  "โดย: " + s.by + "\n" : ""}${reason}`);
+  }
+}
+
 
 export default function LeaveApproveHistoryPage() {
   const { user } = useAuth();
@@ -1033,20 +1260,72 @@ export default function LeaveApproveHistoryPage() {
                         )}
                       </div>
 
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {statusBadge(stTH)}
-                        {hasDecisionReasons && (
-                          <AppButton
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 rounded-full px-3 text-xs font-extrabold"
-                            onClick={() => openDecisionReasons(r)}
-                            title="ดูเหตุผล/หมายเหตุจากผู้อนุมัติ"
-                          >
-                            ดูเหตุผล
-                          </AppButton>
-                        )}
+                      <div className="mt-3 space-y-2">
+                        {/* ✅ สถานะรวม */}
+                        <div>{statusBadge(stTH)}</div>
+
+                        {/* ✅ Workflow bar: HR / EXECUTIVE_MANAGER */}
+                        {(() => {
+                          const hr = getStageInfo(r, "HR");
+                          const hrFinal = isRejectOrCancelStage(hr.status);
+
+                          const emRaw = getStageInfo(r, "EXECUTIVE_MANAGER");
+                          const em: StageInfo = hrFinal
+                            ? { ...emRaw, status: "BLOCKED", blocked: true, by: "", at: null, reason: "" }
+                            : emRaw;
+
+                          const Row = ({ s }: { s: StageInfo }) => {
+                            const hasReason = !!String(s.reason || "").trim();
+                            const showReasonBtn = !s.blocked && hasReason;
+
+                            return (
+                              <div className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <div className="text-xs font-extrabold text-gray-900 dark:text-gray-100">{s.role}</div>
+                                    {stageBadge(s.status)}
+                                    {s.blocked ? (
+                                      <span className="text-xs font-semibold text-red-700 dark:text-red-200">
+                                        คำร้องสิ้นสุดที่ขั้น HR
+                                      </span>
+                                    ) : null}
+                                  </div>
+
+                                  {!s.blocked && (actorToText(s.by) || s.at) && (
+                                    <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                                      {actorToText(s.by) ?  (
+                                        <>
+                                          โดย: <span className="font-semibold text-gray-900 dark:text-gray-100">{actorToText(s.by)}</span>
+                                        </>
+                                      ) : null}
+                                      {s.by && s.at ? <span className="mx-2 text-gray-400">•</span> : null}
+                                      {s.at ? <span>{fmtDate(s.at)}</span> : null}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {showReasonBtn && (
+                                  <AppButton
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 rounded-full px-3 text-xs font-extrabold"
+                                    onClick={() => openStageReasonDialog(dialog, s)}
+                                  >
+                                    ดูเหตุผล
+                                  </AppButton>
+                                )}
+                              </div>
+                            );
+                          };
+
+                          return (
+                            <div className="space-y-2">
+                              <Row s={hr} />
+                              <Row s={em} />
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
