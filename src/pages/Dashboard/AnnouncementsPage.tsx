@@ -67,11 +67,47 @@ async function openSignedUrlInNewTab(
     return;
   }
 
+  function writeLoadingPage(w: Window) {
+    try {
+      w.document.open();
+      w.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>กำลังเปิดไฟล์…</title>
+</head>
+<body style="font-family: system-ui, -apple-system, Segoe UI, Roboto; padding: 24px;">
+  <div style="max-width: 560px; margin: 0 auto;">
+    <div style="font-size: 18px; font-weight: 800;">กำลังเปิดไฟล์…</div>
+    <div style="margin-top: 10px; opacity: .75;">โปรดรอสักครู่</div>
+  </div>
+</body>
+</html>`);
+      w.document.close();
+    } catch {
+      // ignore
+    }
+  }
+
   // ✅ iOS/Safari popup: ต้องเปิดแท็บก่อน await
   const w = window.open("", "_blank", "noopener,noreferrer");
+
+  if (w) {
+    try {
+      (w as any).opener = null;
+    } catch {
+      // ignore
+    }
+    // ✅ กันแท็บขาว (about:blank) — ใส่หน้า Loading ทันที
+    writeLoadingPage(w);
+  }
+
   try {
     const url = await getSignedUrl(storageKey, { forceFresh: true });
-    if (w) w.location.href = url;
+
+    // ✅ replace ลดโอกาสค้าง about:blank / history แปลก ๆ
+    if (w) w.location.replace(url);
     else window.location.href = url;
   } catch (e) {
     try {
@@ -563,41 +599,38 @@ export default function AnnouncementsPage() {
   // ✅ NEW: state map เพื่อให้ UI re-render ตอน url มาแล้ว (แก้ค้าง)
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
 
-  async function getSignedCached(key: string, opts?: { forceFresh?: boolean }) {
+  async function getSignedCached(
+    key: string,
+    opts?: { forceFresh?: boolean; ttlMs?: number }
+  ) {
     const k = String(key || "").trim();
     if (!k) throw new Error("SIGNED_URL_EMPTY_KEY");
 
-    // ✅ iOS: ห้าม reuse URL เก่า (bfcache/cache) -> ขอใหม่ทุกครั้ง
-    const forceFresh = !!opts?.forceFresh || isIOS();
-
-    if (forceFresh) {
-      const u = await getSignedUrl(k, { forceFresh: true });
-      // ไม่ cache บน iOS เพื่อกัน exp fail ซ้ำ
-      if (!isIOS()) {
-        signedCacheRef.current.set(k, { url: u, exp: Date.now() + PAGE_SIGNED_TTL_MS });
-        setSignedMap((prev) => (prev[k] === u ? prev : { ...prev, [k]: u }));
-      }
-      return u;
-    }
-
     const now = Date.now();
+    // ✅ iOS: อนุญาต cache ได้ แต่ TTL สั้นมาก เพื่อให้รูป render ได้ทัน ไม่ค้าง “ไม่มีรูป”
+    const ttl = opts?.ttlMs ?? (isIOS() ? 60 * 1000 : PAGE_SIGNED_TTL_MS);
+    const forceFresh = !!opts?.forceFresh;
 
-    const hit = signedCacheRef.current.get(k);
-    if (hit && hit.exp > now) {
-      // ✅ sync เข้า state เผื่อ state ยังไม่มี
-      setSignedMap((prev) => (prev[k] ? prev : { ...prev, [k]: hit.url }));
-      return hit.url;
+    // ✅ cache hit (รวม iOS ด้วย ถ้าไม่ได้สั่ง forceFresh)
+    if (!forceFresh) {
+      const hit = signedCacheRef.current.get(k);
+      if (hit && hit.exp > now) {
+        // ✅ sync เข้า state เผื่อ state ยังไม่มี
+        setSignedMap((prev) => (prev[k] ? prev : { ...prev, [k]: hit.url }));
+        return hit.url;
+      }
+      if (hit) signedCacheRef.current.delete(k);
     }
-
-    if (hit) signedCacheRef.current.delete(k);
 
     const inflight = inflightRef.current.get(k);
     if (inflight) return inflight;
 
     const p = (async () => {
-      const u = await getSignedUrl(k, { forceFresh: false });
+      // ✅ iOS: ขอใหม่จาก backend เวลา fetch จริง เพื่อลดโอกาสเจอ URL เก่าจาก bfcache
+      const u = await getSignedUrl(k, { forceFresh: forceFresh || isIOS() });
 
-      signedCacheRef.current.set(k, { url: u, exp: Date.now() + PAGE_SIGNED_TTL_MS });
+      // ✅ เก็บลง cache + state เสมอ (รวม iOS) เพื่อให้ <img src> มี url แล้ว re-render
+      signedCacheRef.current.set(k, { url: u, exp: Date.now() + ttl });
       setSignedMap((prev) => (prev[k] === u ? prev : { ...prev, [k]: u }));
 
       inflightRef.current.delete(k);
@@ -610,6 +643,20 @@ export default function AnnouncementsPage() {
     inflightRef.current.set(k, p);
     return p;
   }
+
+
+  // ✅ iOS bfcache: กลับมาหน้านี้แล้ว signed-url เก่าอาจหมดอายุ -> เคลียร์ cache เพื่อให้ขอใหม่
+  useEffect(() => {
+    const onPageShow = (e: any) => {
+      if (e?.persisted) {
+        signedCacheRef.current.clear();
+        inflightRef.current.clear();
+        setSignedMap({});
+      }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   // ✅ Lightbox state
   const [lbOpen, setLbOpen] = useState(false);
