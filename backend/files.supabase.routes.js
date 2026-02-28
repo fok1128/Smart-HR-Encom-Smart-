@@ -267,6 +267,12 @@ router.post(
 router.get("/signed-url", requireAuth, async (req, res) => {
   try {
     const key = String(req.query.key || "").trim();
+    const wantDownload = String(req.query.download || "").trim();
+    const filename = String(req.query.filename || "").trim();
+    const isDownload =
+      wantDownload === "1" ||
+      wantDownload.toLowerCase() === "true" ||
+      wantDownload.toLowerCase() === "yes";
     if (!key) return res.status(400).json({ ok: false, error: "MISSING_KEY" });
 
     if (isBadKey(key)) {
@@ -301,7 +307,22 @@ router.get("/signed-url", requireAuth, async (req, res) => {
     const { data, error } = await supabase.storage.from(bucket).createSignedUrl(key, 60 * 5);
     if (error) return res.status(500).json({ ok: false, error: error.message });
 
-    return res.json({ ok: true, signedUrl: data.signedUrl });
+    let signedUrl = data.signedUrl;
+
+    // ✅ download mode: บังคับ Content-Disposition เป็น attachment
+    // Supabase รองรับ query: ?download หรือ ?download=filename
+    if (isDownload && signedUrl) {
+      try {
+        const u = new URL(signedUrl);
+        const safe = filename ? safeName(filename) : "";
+        u.searchParams.set("download", safe);
+        signedUrl = u.toString();
+      } catch {
+        // ignore
+      }
+    }
+
+    return res.json({ ok: true, signedUrl });
   } catch (e) {
     console.error("/files/signed-url error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "SIGNED_URL_FAILED" });

@@ -91,7 +91,9 @@ async function openSignedUrlInNewTab(
   }
 
   // ✅ iOS/Safari popup: ต้องเปิดแท็บก่อน await
-  const w = window.open("", "_blank", "noopener,noreferrer");
+    // ✅ iOS Safari: ห้ามใส่ "noopener,noreferrer" ตอนเปิดแท็บว่าง
+  // เพราะบางเวอร์ชันจะเปิดแท็บได้ แต่คืนค่าเป็น null ทำให้คุมแท็บนั้นไม่ได้และค้าง about:blank
+  const w = window.open("", "_blank");
 
   if (w) {
     try {
@@ -780,9 +782,22 @@ export default function AnnouncementsPage() {
 
   async function downloadAttachment(att: AnnouncementAttachment, fallbackUrl?: string | null) {
     try {
-      // ✅ iOS: อย่า fetch->blob ให้เปิดไฟล์ตรง ๆ (กันได้ไฟล์ .json error)
+      // ✅ iOS: ขอ signed-url แบบ download (Content-Disposition: attachment) เพื่อให้ "ดาวน์โหลดอย่างเดียว"
       if (isIOS()) {
-        await openSignedUrlInNewTab(att.key, { fallbackUrl });
+        const url = await getSignedUrl(att.key, {
+          forceFresh: true,
+          download: true,
+          filename: att.name || undefined,
+        });
+
+        // Safari iOS บางรุ่นไม่เคารพ a.download ข้ามโดเมน -> ให้ใช้ลิงก์แบบปกติ (attachment จะทำให้ดาวน์โหลด)
+        const a = document.createElement("a");
+        a.href = url;
+        a.rel = "noopener noreferrer";
+        a.target = "_self";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
         return;
       }
 

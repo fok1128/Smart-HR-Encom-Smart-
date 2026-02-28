@@ -114,21 +114,32 @@ function setCached(normalized: string, url: string, ttlMs = DEFAULT_TTL_MS) {
 type SignedUrlResponse = { ok: boolean; signedUrl?: string; error?: string };
 
 /** fetch signed-url พร้อม retry ที่จำเป็นเท่านั้น */
-async function fetchSignedUrlOnce(normalized: string, token: string) {
+async function fetchSignedUrlOnce(
+  normalized: string,
+  token: string,
+  opts?: { download?: boolean; filename?: string }
+) {
   // ✅ ใส่ cache-buster + no-store กัน Safari/iOS แคช signed-url response
   const bust = Date.now();
-  const res = await fetch(
-    `${API_BASE}/files/signed-url?key=${encodeURIComponent(normalized)}&t=${bust}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Cache-Control": "no-store",
-        Pragma: "no-cache",
-      },
-      // @ts-ignore - บาง runtime ยังไม่รู้จัก แต่ browser รองรับ
-      cache: "no-store",
-    }
-  );
+
+  const u = new URL(`/files/signed-url`, API_BASE);
+  u.searchParams.set("key", normalized);
+  u.searchParams.set("t", String(bust));
+
+  if (opts?.download) {
+    u.searchParams.set("download", "1");
+    if (opts.filename) u.searchParams.set("filename", String(opts.filename));
+  }
+
+  const res = await fetch(u.toString(), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
+    },
+    // @ts-ignore - บาง runtime ยังไม่รู้จัก แต่ browser รองรับ
+    cache: "no-store",
+  });
 
   const data = (await res.json().catch(() => null)) as SignedUrlResponse | null;
   return { res, data };
@@ -152,15 +163,35 @@ function isIOS() {
  * @param key storagePath/key
  * @param opts.forceFresh ถ้า true จะไม่ใช้ cache และขอ URL ใหม่ทันที (แนะนำเวลา user กดดู/ดาวน์โหลด)
  */
-export async function getSignedUrl(key: string, opts?: { forceFresh?: boolean }) {
+export async function getSignedUrl(
+  key: string,
+  opts?: { forceFresh?: boolean; download?: boolean; filename?: string }
+) {
   const normalized = normalizeStorageKey(key);
 
   // already url
-  if (isHttpUrl(normalized)) return normalized;
+  if (isHttpUrl(normalized)) {
+    if (opts?.download) {
+      try {
+        const u = new URL(normalized);
+        if (!u.searchParams.has("download")) {
+          // Supabase รองรับ ?download หรือ ?download=filename
+          u.searchParams.set("download", opts.filename ? String(opts.filename) : "");
+        }
+        return u.toString();
+      } catch {
+        return normalized;
+      }
+    }
+    return normalized;
+  }
 
   if (!normalized) throw new Error("SIGNED_URL_EMPTY_KEY");
 
-  const forceFresh = !!opts?.forceFresh || isIOS();
+  const download = !!opts?.download;
+
+  // ✅ download mode = ต้องขอใหม่เสมอ (ไม่ใช้ cache)
+  const forceFresh = download || !!opts?.forceFresh || isIOS();
 
   // cache hit (ยกเว้น forceFresh/iOS)
   if (!forceFresh) {
@@ -169,24 +200,25 @@ export async function getSignedUrl(key: string, opts?: { forceFresh?: boolean })
   }
 
   // inflight hit
-  const p0 = inflight.get(normalized);
+  const inflightKey = download ? `${normalized}|download|${String(opts?.filename || "")}` : normalized;
+  const p0 = inflight.get(inflightKey);
   if (p0) return p0;
 
   const job = (async () => {
     // 1) token ปกติ
     let token = await getToken(false);
-    let { res, data } = await fetchSignedUrlOnce(normalized, token);
+    let { res, data } = await fetchSignedUrlOnce(normalized, token, { download, filename: opts?.filename });
 
     // 2) 401/403 -> refresh token แล้ว retry 1 ครั้ง
     if (res.status === 401 || res.status === 403) {
       token = await getToken(true);
-      ({ res, data } = await fetchSignedUrlOnce(normalized, token));
+      ({ res, data } = await fetchSignedUrlOnce(normalized, token, { download, filename: opts?.filename }));
     }
 
     // 3) server error -> retry เบา ๆ 1 ครั้ง
     if (!res.ok && res.status >= 500) {
       await sleep(300);
-      ({ res, data } = await fetchSignedUrlOnce(normalized, token));
+      ({ res, data } = await fetchSignedUrlOnce(normalized, token, { download, filename: opts?.filename }));
     }
 
     const signed = data?.signedUrl ? String(data.signedUrl).trim() : "";
@@ -208,12 +240,12 @@ export async function getSignedUrl(key: string, opts?: { forceFresh?: boolean })
     return signed;
   })();
 
-  inflight.set(normalized, job);
+  inflight.set(inflightKey, job);
 
   try {
     return await job;
   } finally {
-    inflight.delete(normalized);
+    inflight.delete(inflightKey);
   }
 }
 
