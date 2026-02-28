@@ -77,8 +77,9 @@ export type UploadedAttachment = {
 
 // ===== signed-url cache (ลด login ช้า / กันยิงซ้ำ) =====
 
-// ✅ cache นานขึ้น (เหมาะกับ signed url อายุ ~1 ชม.)
-const DEFAULT_TTL_MS = 45 * 60 * 1000;
+// ✅ หมายเหตุ (iOS Safari): signed-url มักพังเพราะใช้ URL เก่าจาก cache/bfcache
+// เลยตั้ง TTL ให้สั้นลง และมีโหมด forceFresh เพื่อขอใหม่ตอนคลิกทุกครั้ง
+const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 นาที
 
 // cache: key -> { url, exp }
 const signedUrlCache = new Map<string, { url: string; exp: number }>();
@@ -114,9 +115,19 @@ type SignedUrlResponse = { ok: boolean; signedUrl?: string; error?: string };
 
 /** fetch signed-url พร้อม retry ที่จำเป็นเท่านั้น */
 async function fetchSignedUrlOnce(normalized: string, token: string) {
+  // ✅ ใส่ cache-buster + no-store กัน Safari/iOS แคช signed-url response
+  const bust = Date.now();
   const res = await fetch(
-    `${API_BASE}/files/signed-url?key=${encodeURIComponent(normalized)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    `${API_BASE}/files/signed-url?key=${encodeURIComponent(normalized)}&t=${bust}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Cache-Control": "no-store",
+        Pragma: "no-cache",
+      },
+      // @ts-ignore - บาง runtime ยังไม่รู้จัก แต่ browser รองรับ
+      cache: "no-store",
+    }
   );
 
   const data = (await res.json().catch(() => null)) as SignedUrlResponse | null;
@@ -124,17 +135,24 @@ async function fetchSignedUrlOnce(normalized: string, token: string) {
 }
 
 /**
- * ✅ ขอ signed url จาก backend เพื่อเปิดไฟล์ใน Supabase Storage
- * - cache 45 นาที
- * - inflight กันยิงซ้ำ
- * - 401/403 => refresh token แล้ว retry 1 ครั้ง
- * - 5xx/เครือข่าย => backoff เบา ๆ 1 ครั้ง
- *
  * ✅ IMPORTANT FIX:
  * - ถ้า backend ไม่คืน signedUrl ที่เป็น https:// ให้ throw ทันที (ห้ามคืน key กลับไป)
- *   เพราะถ้าหลุดไปเป็น src="177...jpg" จะกลายเป็น request ไปที่ localhost:5173 แล้วเจอ 400 แบบที่คุณเห็น
  */
-export async function getSignedUrl(key: string) {
+function isIOS() {
+  // iPhone/iPad Safari (รวม iPadOS ที่รายงานเป็น Mac)
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const iOS = /iPad|iPhone|iPod/i.test(ua);
+  const iPadOS13Plus = /Macintosh/i.test(ua) && (navigator as any).maxTouchPoints > 1;
+  return iOS || iPadOS13Plus;
+}
+
+/**
+ * ✅ ขอ signed url จาก backend เพื่อเปิดไฟล์ใน Supabase Storage
+ * @param key storagePath/key
+ * @param opts.forceFresh ถ้า true จะไม่ใช้ cache และขอ URL ใหม่ทันที (แนะนำเวลา user กดดู/ดาวน์โหลด)
+ */
+export async function getSignedUrl(key: string, opts?: { forceFresh?: boolean }) {
   const normalized = normalizeStorageKey(key);
 
   // already url
@@ -142,9 +160,13 @@ export async function getSignedUrl(key: string) {
 
   if (!normalized) throw new Error("SIGNED_URL_EMPTY_KEY");
 
-  // cache hit
-  const cached = getCached(normalized);
-  if (cached) return cached;
+  const forceFresh = !!opts?.forceFresh || isIOS();
+
+  // cache hit (ยกเว้น forceFresh/iOS)
+  if (!forceFresh) {
+    const cached = getCached(normalized);
+    if (cached) return cached;
+  }
 
   // inflight hit
   const p0 = inflight.get(normalized);
@@ -169,22 +191,20 @@ export async function getSignedUrl(key: string) {
 
     const signed = data?.signedUrl ? String(data.signedUrl).trim() : "";
 
-    // ❌ ห้ามปล่อยค่าที่ไม่ใช่ URL เต็มออกไป
     if (!res.ok || !data?.ok || !signed) {
       signedUrlCache.delete(normalized);
       const msg = data?.error || `SIGNED_URL_${res.status || "FAILED"}`;
       throw new Error(msg);
     }
 
-    // ✅ validate ให้เป็น https/http เท่านั้น
     if (!isHttpUrl(signed)) {
       signedUrlCache.delete(normalized);
-      // log ไว้ช่วย debug ได้เลย
       console.warn("[getSignedUrl] SIGNED_URL_INVALID", { key: normalized, signed });
       throw new Error("SIGNED_URL_INVALID");
     }
 
-    setCached(normalized, signed);
+    // ✅ cache เฉพาะเมื่อไม่ได้ forceFresh และไม่ใช่ iOS
+    if (!forceFresh) setCached(normalized, signed);
     return signed;
   })();
 

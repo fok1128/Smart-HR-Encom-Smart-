@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { getAuth } from "firebase/auth";
+import { getSignedUrl } from "./files";
 
 export type LeaveMode = "allDay" | "time";
 
@@ -180,20 +181,10 @@ export function getAttachmentKey(att: any): string | null {
 }
 
 export async function getSignedUrlForKey(key: string): Promise<string> {
-  const token = await getIdToken();
-  const url = `${API_BASE}/files/signed-url?key=${encodeURIComponent(key)}`;
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.ok || !data?.signedUrl) {
-    const msg = data?.error || `SIGNED_URL_FAILED (${res.status})`;
-    throw new Error(msg);
-  }
-
-  return data.signedUrl as string;
+  // ✅ รวม logic signed-url ไว้ที่ services/files.ts
+  // - iOS จะ forceFresh อัตโนมัติ
+  // - เวลา user กดดู/ดาวน์โหลด แนะนำ forceFresh
+  return await getSignedUrl(key, { forceFresh: true });
 }
 
 function normalizeUploadResponse(data: any, f: File): LeaveAttachment {

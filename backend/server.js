@@ -1366,7 +1366,17 @@ app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
 
 // ----------------- ✅ Files Router (Supabase) -----------------
 const filesRouter = require("./files.supabase.routes");
-app.use("/files", filesRouter);
+// ✅ iOS/Safari มัก cache signed-url response ทำให้เอา URL เก่าที่หมดอายุไปใช้ต่อ
+app.use(
+  "/files",
+  (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    next();
+  },
+  filesRouter
+);
 
 // ----------------- Listen -----------------
 const port = process.env.PORT || 4000;

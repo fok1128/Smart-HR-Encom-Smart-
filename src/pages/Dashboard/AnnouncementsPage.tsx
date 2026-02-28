@@ -9,12 +9,12 @@ import {
   listenAnnouncements,
   deleteAnnouncement,
   setAnnouncementPinned,
-  getAnnouncementSignedUrl,
   type Announcement,
   type AnnouncementAttachment,
   type AnnouncementLink,
 } from "../../services/announcements";
 import SmartImg from "../../components/common/SmartImg";
+import { getSignedUrl } from "../../services/files";
 /* ---------------- helpers ---------------- */
 function isValidUrl(s: string) {
   try {
@@ -46,6 +46,41 @@ function formatTs(ts: any) {
 
 function openInNewTab(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function isIOS() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const iOS = /iPad|iPhone|iPod/i.test(ua);
+  const iPadOS13Plus =
+    /Macintosh/i.test(ua) && (navigator as any).maxTouchPoints > 1;
+  return iOS || iPadOS13Plus;
+}
+
+async function openSignedUrlInNewTab(
+  storageKey: string,
+  opts?: { fallbackUrl?: string | null }
+) {
+  const fallbackUrl = opts?.fallbackUrl;
+  if (fallbackUrl && isValidUrl(fallbackUrl)) {
+    openInNewTab(fallbackUrl);
+    return;
+  }
+
+  // ✅ iOS/Safari popup: ต้องเปิดแท็บก่อน await
+  const w = window.open("", "_blank", "noopener,noreferrer");
+  try {
+    const url = await getSignedUrl(storageKey, { forceFresh: true });
+    if (w) w.location.href = url;
+    else window.location.href = url;
+  } catch (e) {
+    try {
+      w?.close();
+    } catch {
+      // ignore
+    }
+    throw e;
+  }
 }
 
 function mergeFiles(prev: File[], next: File[]) {
@@ -528,36 +563,51 @@ export default function AnnouncementsPage() {
   // ✅ NEW: state map เพื่อให้ UI re-render ตอน url มาแล้ว (แก้ค้าง)
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
 
-  async function getSignedCached(key: string) {
+  async function getSignedCached(key: string, opts?: { forceFresh?: boolean }) {
+    const k = String(key || "").trim();
+    if (!k) throw new Error("SIGNED_URL_EMPTY_KEY");
+
+    // ✅ iOS: ห้าม reuse URL เก่า (bfcache/cache) -> ขอใหม่ทุกครั้ง
+    const forceFresh = !!opts?.forceFresh || isIOS();
+
+    if (forceFresh) {
+      const u = await getSignedUrl(k, { forceFresh: true });
+      // ไม่ cache บน iOS เพื่อกัน exp fail ซ้ำ
+      if (!isIOS()) {
+        signedCacheRef.current.set(k, { url: u, exp: Date.now() + PAGE_SIGNED_TTL_MS });
+        setSignedMap((prev) => (prev[k] === u ? prev : { ...prev, [k]: u }));
+      }
+      return u;
+    }
+
     const now = Date.now();
 
-    const hit = signedCacheRef.current.get(key);
+    const hit = signedCacheRef.current.get(k);
     if (hit && hit.exp > now) {
       // ✅ sync เข้า state เผื่อ state ยังไม่มี
-      setSignedMap((prev) => (prev[key] ? prev : { ...prev, [key]: hit.url }));
+      setSignedMap((prev) => (prev[k] ? prev : { ...prev, [k]: hit.url }));
       return hit.url;
     }
 
-    if (hit) signedCacheRef.current.delete(key);
+    if (hit) signedCacheRef.current.delete(k);
 
-    const inflight = inflightRef.current.get(key);
+    const inflight = inflightRef.current.get(k);
     if (inflight) return inflight;
 
     const p = (async () => {
-      const u = await getAnnouncementSignedUrl(key);
+      const u = await getSignedUrl(k, { forceFresh: false });
 
-      // ✅ cache + ✅ state (สำคัญมาก)
-      signedCacheRef.current.set(key, { url: u, exp: Date.now() + PAGE_SIGNED_TTL_MS });
-      setSignedMap((prev) => (prev[key] === u ? prev : { ...prev, [key]: u }));
+      signedCacheRef.current.set(k, { url: u, exp: Date.now() + PAGE_SIGNED_TTL_MS });
+      setSignedMap((prev) => (prev[k] === u ? prev : { ...prev, [k]: u }));
 
-      inflightRef.current.delete(key);
+      inflightRef.current.delete(k);
       return u;
     })().catch((e) => {
-      inflightRef.current.delete(key);
+      inflightRef.current.delete(k);
       throw e;
     });
 
-    inflightRef.current.set(key, p);
+    inflightRef.current.set(k, p);
     return p;
   }
 
@@ -674,12 +724,7 @@ export default function AnnouncementsPage() {
 
   async function openAttachment(att: AnnouncementAttachment, fallbackUrl?: string | null) {
     try {
-      if (fallbackUrl && isValidUrl(fallbackUrl)) {
-        openInNewTab(fallbackUrl);
-        return;
-      }
-      const signed = await getSignedCached(att.key);
-      openInNewTab(signed);
+      await openSignedUrlInNewTab(att.key, { fallbackUrl });
     } catch (e: any) {
       console.error("openAttachment error:", e);
       dcAlert("เปิดไฟล์ไม่ได้", e?.message || "ลองใหม่อีกครั้ง");
@@ -688,9 +733,18 @@ export default function AnnouncementsPage() {
 
   async function downloadAttachment(att: AnnouncementAttachment, fallbackUrl?: string | null) {
     try {
-      const url = fallbackUrl && isValidUrl(fallbackUrl) ? fallbackUrl : await getSignedCached(att.key);
+      // ✅ iOS: อย่า fetch->blob ให้เปิดไฟล์ตรง ๆ (กันได้ไฟล์ .json error)
+      if (isIOS()) {
+        await openSignedUrlInNewTab(att.key, { fallbackUrl });
+        return;
+      }
 
-      const res = await fetch(url);
+      const url =
+        fallbackUrl && isValidUrl(fallbackUrl)
+          ? fallbackUrl
+          : await getSignedCached(att.key, { forceFresh: true });
+
+      const res = await fetch(url, { cache: "no-store" as any });
       if (!res.ok) throw new Error(`DOWNLOAD_FAILED (${res.status})`);
 
       const blob = await res.blob();
