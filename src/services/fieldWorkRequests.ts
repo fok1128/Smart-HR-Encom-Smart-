@@ -1,7 +1,6 @@
 // src/services/fieldWorkRequests.ts
 import {
-  addDoc,
-  collection,
+    collection,
   deleteDoc,
   doc,
   getDoc,
@@ -15,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { getAuth } from "firebase/auth";
+import { createWithUniqueRequestNo, makeFieldWorkRequestNo } from "../utils/requestNo";
 
 export type FieldWorkAttachment = {
   name: string;
@@ -64,17 +64,9 @@ const colRef = collection(db, "field_work_requests");
 const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:4000";
 
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-function rand4() {
-  return Math.random().toString(36).slice(2, 6).toUpperCase();
-}
-function genRequestNo(d = new Date()) {
-  const y = d.getFullYear();
-  const m = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  return `FW-${y}${m}${day}-${rand4()}`;
+// ✅ requestNo generator (Field Work)
+function genRequestNo() {
+  return makeFieldWorkRequestNo();
 }
 
 async function getToken() {
@@ -192,8 +184,6 @@ export async function createFieldWorkRequest(payload: {
   note?: string;
   submitter?: FieldWorkSubmitter | null;
 }) {
-  const requestNo = genRequestNo();
-
   const clean: any = {
     uid: payload.uid,
     email: payload.email ?? null,
@@ -202,7 +192,6 @@ export async function createFieldWorkRequest(payload: {
     startAt: payload.startAt,
     endAt: payload.endAt,
     place: payload.place,
-    requestNo,
 
     status: "APPROVED",
     approvedBy: "SYSTEM",
@@ -214,8 +203,15 @@ export async function createFieldWorkRequest(payload: {
   const note = String(payload.note ?? "").trim();
   if (note) clean.note = note;
 
-  const docRef = await addDoc(colRef, clean);
-  return { id: docRef.id, requestNo };
+  const { id, requestNo } = await createWithUniqueRequestNo({
+    db,
+    colName: "field_work_requests",
+    ownerUid: payload.uid,
+    makeNo: genRequestNo,
+    data: clean,
+  });
+
+  return { id, requestNo };
 }
 
 /**
@@ -241,9 +237,6 @@ export async function createFieldWorkRequestWithFiles(payload: {
       : payload.files?.length
         ? await uploadFieldWorkFiles(payload.files)
         : [];
-
-  const requestNo = genRequestNo();
-
   const clean: any = {
     uid: payload.uid,
     email: payload.email ?? null,
@@ -254,7 +247,6 @@ export async function createFieldWorkRequestWithFiles(payload: {
     startAt: payload.startAt,
     endAt: payload.endAt,
     place: payload.place,
-    requestNo,
 
     status: "APPROVED",
     approvedBy: "SYSTEM",
@@ -268,8 +260,15 @@ export async function createFieldWorkRequestWithFiles(payload: {
 
   if (attachments.length) clean.attachments = attachments;
 
-  const docRef = await addDoc(colRef, clean);
-  return { id: docRef.id, requestNo, attachmentsCount: attachments.length };
+  const { id, requestNo } = await createWithUniqueRequestNo({
+    db,
+    colName: "field_work_requests",
+    ownerUid: payload.uid,
+    makeNo: genRequestNo,
+    data: clean,
+  });
+
+  return { id, requestNo, attachmentsCount: attachments.length };
 }
 
 export function listenMyFieldWorkRequests(

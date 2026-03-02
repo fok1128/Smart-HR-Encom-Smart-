@@ -1,7 +1,6 @@
 // src/services/leaveRequests.ts
 import {
-  addDoc,
-  arrayUnion,
+    arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -17,6 +16,7 @@ import {
 import { db } from "../firebase";
 import { getAuth } from "firebase/auth";
 import { getSignedUrl } from "./files";
+import { createWithUniqueRequestNo, makeLeaveRequestNo } from "../utils/requestNo";
 
 export type LeaveMode = "allDay" | "time";
 
@@ -120,17 +120,9 @@ export type LeaveRequestDoc = {
 
 const colRef = collection(db, "leave_requests");
 
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-function rand4() {
-  return Math.random().toString(36).slice(2, 6).toUpperCase();
-}
-export function genRequestNo(d = new Date()) {
-  const y = d.getFullYear();
-  const m = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  return `LV-${y}${m}${day}-${rand4()}`;
+// ✅ requestNo generator (prefix by category)
+export function genRequestNo(category?: string) {
+  return makeLeaveRequestNo(category);
 }
 
 export const API_BASE =
@@ -269,39 +261,43 @@ export async function getLeaveRequestById(id: string): Promise<LeaveRequestDoc |
 export async function createLeaveRequest(
   payload: Omit<LeaveRequestDoc, "id" | "requestNo" | "status" | "submittedAt" | "updatedAt">
 ) {
-  const requestNo = genRequestNo();
-  const docRef = await addDoc(colRef, {
-    ...payload,
-    requestNo,
+  const { id, requestNo } = await createWithUniqueRequestNo({
+    db,
+    colName: "leave_requests",
+    ownerUid: payload.uid,
+    makeNo: () => genRequestNo(payload.category),
+    data: {
+      ...payload,
 
-    // legacy
-    status: "PENDING",
+      // legacy
+      status: "PENDING",
 
-    // new workflow
-    overallStatus: "PENDING_HR",
-    hrStatus: "PENDING",
-    hrComment: null,
-    hrActionAt: null,
-    hrActionBy: null,
+      // new workflow
+      overallStatus: "PENDING_HR",
+      hrStatus: "PENDING",
+      hrComment: null,
+      hrActionAt: null,
+      hrActionBy: null,
 
-    managerStatus: "LOCKED",
-    managerComment: null,
-    managerActionAt: null,
-    managerActionBy: null,
+      managerStatus: "LOCKED",
+      managerComment: null,
+      managerActionAt: null,
+      managerActionBy: null,
 
-    canceledByRole: null,
-    canceledBy: null,
-    canceledReason: null,
-    canceledAt: null,
+      canceledByRole: null,
+      canceledBy: null,
+      canceledReason: null,
+      canceledAt: null,
 
-    submittedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
   });
 
   // ✅ แจ้ง backend เพื่อส่ง SMS/Noti (HR ทุกคน + ผู้ยื่น)
-  await notifySubmitSafe(docRef.id);
+  await notifySubmitSafe(id);
 
-  return { id: docRef.id, requestNo };
+  return { id, requestNo };
 }
 
 export async function createLeaveRequestWithFiles(

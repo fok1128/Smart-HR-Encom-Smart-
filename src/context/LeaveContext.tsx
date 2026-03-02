@@ -8,8 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  addDoc,
-  collection,
+    collection,
   deleteDoc,
   doc,
   getDocs,
@@ -21,6 +20,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { createWithUniqueRequestNo, makeLeaveRequestNo } from "../utils/requestNo";
 import { useAuth } from "./AuthContext";
 
 export type LeaveStatus = "รอดำเนินการ" | "อนุมัติ" | "ไม่อนุมัติ";
@@ -100,9 +100,8 @@ type LeaveCtx = {
 
 const LeaveContext = createContext<LeaveCtx | undefined>(undefined);
 
-function genRequestNo6() {
-  const n = Math.floor(Math.random() * 1_000_000);
-  return String(n).padStart(6, "0");
+function genLeaveRequestNo(category: LeaveCategory) {
+  return makeLeaveRequestNo(category);
 }
 
 function normRole(role?: string) {
@@ -281,8 +280,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
   const submitLeave = async (payload: LeavePayload) => {
     if (!user?.uid) throw new Error("UNAUTHORIZED");
 
-    const requestNo = genRequestNo6();
-
     const employeeNo =
       pickStr((user as any)?.employeeNo, (user as any)?.empNo, (user as any)?.employee?.employeeNo) || null;
 
@@ -292,7 +289,12 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
 
     const phone = pickStr((user as any)?.phone, (user as any)?.employee?.phone, (user as any)?.user?.phone) || null;
 
-    const docRef = await addDoc(collection(db, "leave_requests"), {
+        const { id, requestNo } = await createWithUniqueRequestNo({
+      db,
+      colName: "leave_requests",
+      ownerUid: user.uid,
+      makeNo: () => genLeaveRequestNo(payload.category),
+      data: {
       uid: user.uid,
       createdByEmail: user.email ?? null,
 
@@ -300,7 +302,6 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       employeeName,
       phone,
 
-      requestNo,
       category: payload.category,
       subType: payload.subType,
       startAt: payload.startAt,
@@ -317,9 +318,10 @@ export function LeaveProvider({ children }: { children: ReactNode }) {
       submittedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      },
     });
 
-    return { id: docRef.id, requestNo };
+    return { id, requestNo };
   };
 
   const updateStatus = async (id: string, status: LeaveStatus, reason?: string) => {
