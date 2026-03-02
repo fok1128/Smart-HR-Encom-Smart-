@@ -17,8 +17,6 @@ import { getSignedUrl } from "../services/files";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 
-// ✅ Modal กลาง (ไฟล์แนบทั้งหมด)
-import { Modal } from "../components/ui/modal";
 
 // ✅ Theme กลาง
 import { inputTheme } from "../components/ui/theme/inputTheme";
@@ -395,6 +393,25 @@ const canDelete = role === "ADMIN" || role === "EXECUTIVE_MANAGER";
     setAttModal({ open: false, requestNo: "", attachments: [] });
   }
 
+  // ✅ กัน scroll หน้าเว็บตอนเปิด modal + ปิดด้วยปุ่ม ESC
+  useEffect(() => {
+    if (!attModal.open) return;
+
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeAllFiles();
+    };
+    window.addEventListener("keydown", onKey);
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [attModal.open]);
+
+
   // ✅ ล้างช่วงวันที่ + Confirm
   async function resetDates() {
     if (isDateDefault) {
@@ -495,51 +512,85 @@ const canDelete = role === "ADMIN" || role === "EXECUTIVE_MANAGER";
         input[type="date"]::-webkit-inner-spin-button, input[type="date"]::-webkit-clear-button { display: none; }
       `}</style>
 
-      {/* ✅ Modal กลาง: ไฟล์แนบทั้งหมด */}
-      <Modal
-        isOpen={attModal.open}
-        onClose={closeAllFiles}
-        title="ไฟล์แนบทั้งหมด"
-        closeOnBackdrop
-        zIndexClassName="z-[2147483646]"
-      >
-        <div className="text-sm font-semibold text-violet-700/80 dark:text-violet-200/80">{attModal.requestNo}</div>
-
-        <div className="mt-5 overflow-hidden rounded-2xl border border-violet-200/80 dark:border-violet-500/20">
-          <div className="divide-y divide-violet-100 dark:divide-violet-500/15">
-            {attModal.attachments.length === 0 ? (
-              <div className="px-4 py-4 text-sm font-semibold text-violet-700/70 dark:text-violet-200/70">
-                ไม่มีไฟล์แนบ
-              </div>
-            ) : (
-              attModal.attachments.map((a, idx) => (
-                <div key={`${a.storagePath}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0 flex-1 pr-2">
-                    <div className="break-words text-sm font-extrabold text-gray-900 dark:text-gray-100">
-                      {normalizeAttName(a.name)}
-                    </div>
+      {/* ✅ Modal กลาง: ไฟล์แนบทั้งหมด (แก้ให้ fit viewport แบบไม่พึ่ง Modal กลาง) */}
+      {attModal.open && (
+        <div
+          className="fixed inset-0 z-[2147483646] flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={closeAllFiles}
+        >
+          <div
+            className="w-full max-w-3xl overflow-hidden rounded-2xl border border-violet-200/60 bg-white shadow-xl dark:border-violet-500/20 dark:bg-gray-900 max-h-[90vh] flex flex-col"
+            onMouseDown={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Header */}
+            <div className="shrink-0 border-b border-gray-200/80 bg-white/90 p-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/90">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-base font-semibold text-gray-900 dark:text-gray-100">ไฟล์แนบทั้งหมด</div>
+                  <div className="mt-1 truncate text-sm font-semibold text-violet-700/80 dark:text-violet-200/80" title={attModal.requestNo}>
+                    {attModal.requestNo}
                   </div>
-
-                  <AppButton
-                    type="button"
-                    onClick={() => openAttachment(a.storagePath || "")}
-                    variant="outlinePill"
-                    className="h-10 px-6"
-                  >
-                    เปิด
-                  </AppButton>
                 </div>
-              ))
-            )}
+
+                <button
+                  type="button"
+                  onClick={closeAllFiles}
+                  className="shrink-0 inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 hover:text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:text-white"
+                  aria-label="ปิด"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Body (scroll เฉพาะใน modal) */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="divide-y divide-violet-100 dark:divide-violet-500/15">
+                {attModal.attachments.length === 0 ? (
+                  <div className="px-4 py-4 text-sm font-semibold text-violet-700/70 dark:text-violet-200/70">
+                    ไม่มีไฟล์แนบ
+                  </div>
+                ) : (
+                  attModal.attachments.map((a, idx) => {
+                    const attName = normalizeAttName(a.name);
+                    return (
+                      <div key={`${a.storagePath}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
+                        <div className="min-w-0 flex-1 pr-2">
+                          <div className="truncate text-sm font-extrabold text-gray-900 dark:text-gray-100" title={attName}>
+                            {attName}
+                          </div>
+                        </div>
+
+                        <AppButton
+                          type="button"
+                          onClick={() => openAttachment(a.storagePath || "")}
+                          variant="outlinePill"
+                          className="shrink-0 h-10 whitespace-nowrap px-6"
+                        >
+                          เปิด
+                        </AppButton>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="shrink-0 border-t border-gray-200/80 bg-white/90 p-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/90">
+              <div className="flex justify-end">
+                <AppButton type="button" onClick={closeAllFiles} variant="outlinePill" className="h-10 px-5">
+                  ปิดหน้าต่าง
+                </AppButton>
+              </div>
+            </div>
           </div>
         </div>
-
-        <div className="mt-6 flex justify-end">
-          <AppButton type="button" onClick={closeAllFiles} variant="outlinePill" className="h-10 px-5">
-            ปิดหน้าต่าง
-          </AppButton>
-        </div>
-      </Modal>
+      )}
 
       
       {/* ✅ ปุ่มสลับมุมมอง (เฉพาะ EXECUTIVE_MANAGER / ADMIN): วางนอกกรอบเพื่อไม่ให้รกข้างใน */}
