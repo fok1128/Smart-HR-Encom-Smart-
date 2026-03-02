@@ -62,10 +62,10 @@ export function makeFieldWorkRequestNo() {
 export async function createWithUniqueRequestNo<T extends Record<string, any>>(args: {
   db: Firestore;
   colName: string;
-  data: T;                 // data to write (requestNo will be injected)
-  ownerUid: string;        // request.auth.uid
-  makeNo: () => string;    // produces requestNo candidate
-  maxRetry?: number;       // default 25
+  data: T;
+  ownerUid: string;
+  makeNo: () => string;
+  maxRetry?: number;
 }): Promise<{ id: string; requestNo: string }> {
   const { db, colName, data, ownerUid, makeNo } = args;
   const maxRetry = args.maxRetry ?? 25;
@@ -77,10 +77,12 @@ export async function createWithUniqueRequestNo<T extends Record<string, any>>(a
 
     try {
       await runTransaction(db, async (tx) => {
+        // ✅ Web SDK ไม่มี tx.create -> ใช้ tx.get + tx.set
         const lockSnap = await tx.get(lockRef);
-        if (lockSnap.exists()) throw new Error("REQNO_DUP");
+        if (lockSnap.exists()) {
+          throw new Error("REQNO_DUP");
+        }
 
-        // Lock first
         tx.set(lockRef, {
           requestNo,
           colName,
@@ -89,17 +91,17 @@ export async function createWithUniqueRequestNo<T extends Record<string, any>>(a
           createdAt: serverTimestamp(),
         });
 
-        // Create actual request
         tx.set(reqRef, {
           ...data,
           requestNo,
+          createdAt: serverTimestamp(),
         });
       });
 
       return { id: reqRef.id, requestNo };
     } catch (e: any) {
       const msg = String(e?.message || e);
-      if (msg.includes("REQNO_DUP")) continue;
+      if (msg.includes("REQNO_DUP")) continue; // ✅ ชน -> สุ่มใหม่
       throw e;
     }
   }
