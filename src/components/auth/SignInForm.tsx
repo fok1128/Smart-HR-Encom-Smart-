@@ -61,6 +61,7 @@ export default function SignInForm() {
   const [loading, setLoading] = useState(false);
 
   const { login, user, loading: authLoading } = useAuth();
+  const busy = loading || authLoading;
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -84,6 +85,7 @@ export default function SignInForm() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (busy) return;
     setError(null);
 
     const emailTrim = email.trim();
@@ -156,7 +158,11 @@ export default function SignInForm() {
                 type="email"
                 placeholder="Enter your email"
                 value={email}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
+                disabled={busy}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  setEmail(e.target.value);
+                  if (error) setError(null);
+                }}
                 className={inputBlackBorder}
               />
             </div>
@@ -176,7 +182,10 @@ export default function SignInForm() {
       type={showPassword ? "text" : "password"}
       placeholder="Enter your password"
       value={password}
-      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+        setPassword(e.target.value);
+        if (error) setError(null);
+      }}
       className={inputBlackBorder + " pr-12"} // ✅ กันพื้นที่ให้ปุ่มตา
     />
 
@@ -216,10 +225,17 @@ export default function SignInForm() {
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading || authLoading}
+              disabled={busy}
               className="w-full rounded-lg bg-green-600 px-4 py-3 text-base font-medium text-white hover:bg-green-700 disabled:opacity-60 xl:py-4 xl:text-lg 2xl:text-xl"
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {busy ? (
+                <span className="inline-flex items-center justify-center gap-2">
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/60 border-t-white" />
+                  Signing in...
+                </span>
+              ) : (
+                "Sign in"
+              )}
             </button>
           </div>
 
