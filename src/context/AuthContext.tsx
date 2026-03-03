@@ -395,32 +395,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string, remember: boolean) => {
     setLoading(true);
 
-    await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+    try {
+      await setPersistence(
+        auth,
+        remember ? browserLocalPersistence : browserSessionPersistence
+      );
 
-    // login firebase
-    await signInWithEmailAndPassword(auth, email, password);
+      // login firebase
+      const cred = await signInWithEmailAndPassword(auth, email, password);
 
-    // return lite เร็ว ๆ (จะ hydrate /me ตามหลัง)
-    const fb = auth.currentUser;
-    if (!fb) {
+      // return lite เร็ว ๆ (จะ hydrate /me ตามหลัง)
+      const fb = cred.user || auth.currentUser;
+      if (!fb) throw new Error("FIREBASE_NOT_SIGNED_IN");
+
+      const lite = buildLiteUser(fb);
+
+      // ให้ login() resolve เร็ว (ไม่รอ /me)
+      const p = new Promise<MeResponse>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pendingLoginRef.current = null;
+          resolve(lite);
+        }, 1200);
+        pendingLoginRef.current = { resolve, reject, timer };
+      });
+
+      return p;
+    } catch (e) {
+      // กันกรณีมี pending เก่าคาไว้ (ปกติไม่ควรมี แต่ใส่ไว้ให้ปลอดภัย)
+      rejectPendingLogin(e);
+      throw e;
+    } finally {
+      // ✅ สำคัญสุด: ไม่ว่า error อะไร loading ต้องกลับ false เสมอ
       setLoading(false);
-      throw new Error("FIREBASE_NOT_SIGNED_IN");
     }
-
-    const lite = buildLiteUser(fb);
-
-    // ให้ login() resolve เร็ว (ไม่รอ /me)
-    const p = new Promise<MeResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pendingLoginRef.current = null;
-        resolve(lite);
-      }, 1200);
-      pendingLoginRef.current = { resolve, reject, timer };
-    });
-
-    setLoading(false);
-    return p;
   };
+
 
   const logout = async () => {
     setLoading(true);
