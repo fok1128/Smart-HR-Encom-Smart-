@@ -340,7 +340,25 @@ export async function updateMyPendingLeaveRequest(
   id: string,
   uid: string,
   patch: Partial<
-    Pick<LeaveRequestDoc, "category" | "subType" | "startAt" | "endAt" | "reason" | "attachments" | "files">
+    Pick<
+      LeaveRequestDoc,
+      | "category"
+      | "subType"
+      | "startAt"
+      | "endAt"
+      | "reason"
+      | "attachments"
+      | "files"
+      | "workdaysCount"
+      | "leaveUnits"
+      | "isRetroactive"
+      | "retroReason"
+      | "requireMedicalCert"
+      | "medicalCertDueAt"
+      | "medicalCertProvided"
+      | "medicalCertSubmittedAt"
+      | "medicalCertSource"
+    >
   >,
   newFiles?: File[],
   onProgress?: (percent: number) => void

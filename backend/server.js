@@ -1316,10 +1316,9 @@ app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
       await nsSet(ref, "cancelledAt");
     }
 
-    // ถ้าเคสเคยไปถึงขั้นผู้บริหารแล้ว ค่อยแจ้ง EXEC ด้วย (กัน spam)
-    if (asUpper(wf.overallStatus) === "PENDING_MANAGER" || asUpper(wf.managerStatus) === "PENDING") {
-      await sendLineToRole("EXECUTIVE_MANAGER", msgCancelLog);
-    }
+    // NOTE:
+    // เดิมมีการเรียกใช้ตัวแปร msgCancelLog ที่ไม่ได้ประกาศไว้ ซึ่งเสี่ยงทำให้ route cancel พัง
+    // ตรงนี้ไม่ต้องส่งซ้ำแล้ว เพราะด้านบนได้ส่ง CANCELED_FINAL ให้ EXEC แบบกันซ้ำไว้แล้ว
 
     // (optional) ถ้า owner cancel ระหว่าง pending HR/EXEC -> แจ้งคนอนุมัติให้รู้ด้วย (in-app)
     if (canceledByRole === "OWNER") {
@@ -1363,7 +1362,438 @@ app.post("/leave-requests/:id/cancel", requireAuth, async (req, res) => {
     return res.status(status).json({ ok: false, error: String(err?.message || err) });
   }
 });
+// ----------------- ✅ BACKFILL LEAVE UNITS -----------------
+function parseLocalDateTime(s) {
+  const v = String(s || "").trim();
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
 
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function addDays(date, n) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+function isNonWorkingDay(d) {
+  const day = d.getDay();
+  return day === 0; // หยุดเฉพาะวันอาทิตย์
+}
+
+function overlapMinutes(aStart, aEnd, bStart, bEnd) {
+  const start = Math.max(aStart.getTime(), bStart.getTime());
+  const end = Math.min(aEnd.getTime(), bEnd.getTime());
+  if (end <= start) return 0;
+  return Math.floor((end - start) / 60000);
+}
+
+// ✅ คิดเฉพาะเวลางาน 09:00–12:00 และ 13:00–18:00
+// ✅ ไม่นับพักเที่ยง 12:00–13:00
+function computeBusinessLeaveMinutes(startAt, endAt) {
+  const start = parseLocalDateTime(startAt);
+  const end = parseLocalDateTime(endAt);
+
+  if (!start || !end) return 0;
+  if (end <= start) return 0;
+
+  let total = 0;
+  let cursor = startOfDay(start);
+  const last = startOfDay(end);
+
+  while (cursor.getTime() <= last.getTime()) {
+    if (!isNonWorkingDay(cursor)) {
+      const y = cursor.getFullYear();
+      const m = cursor.getMonth();
+      const d = cursor.getDate();
+
+      const work1Start = new Date(y, m, d, 9, 0, 0, 0);
+      const work1End = new Date(y, m, d, 12, 0, 0, 0);
+
+      const work2Start = new Date(y, m, d, 13, 0, 0, 0);
+      const work2End = new Date(y, m, d, 18, 0, 0, 0);
+
+      total += overlapMinutes(start, end, work1Start, work1End);
+      total += overlapMinutes(start, end, work2Start, work2End);
+    }
+
+    cursor = addDays(cursor, 1);
+  }
+
+  return total;
+}
+
+function roundLeaveUnits(v) {
+  return Number(Number(v || 0).toFixed(6));
+}
+
+function formatLeaveHumanFromMinutes(totalMinutes) {
+  const mins = Math.max(0, Math.floor(Number(totalMinutes || 0)));
+  const days = Math.floor(mins / 480);
+  const remAfterDays = mins % 480;
+  const hours = Math.floor(remAfterDays / 60);
+  const minutes = remAfterDays % 60;
+
+  const parts = [];
+  if (days > 0) parts.push(`${days} วัน`);
+  if (hours > 0) parts.push(`${hours} ชั่วโมง`);
+  if (minutes > 0) parts.push(`${minutes} นาที`);
+  if (!parts.length) parts.push(`0 นาที`);
+
+  return parts.join(" ");
+}
+
+function toFiniteNumberOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sameNumber(a, b, eps = 1e-9) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return Math.abs(Number(a) - Number(b)) <= eps;
+}
+
+function isRejectedOrCanceledLeave(data = {}) {
+  const upperValues = [data.status, data.overallStatus, data.hrStatus, data.managerStatus].map((v) =>
+    asUpper(v)
+  );
+
+  if (
+    upperValues.some((v) =>
+      [
+        "REJECTED",
+        "CANCELED",
+        "CANCELLED",
+        "REJECTED_BY_HR",
+        "REJECTED_BY_MANAGER",
+      ].includes(v)
+    )
+  ) {
+    return true;
+  }
+
+  const rawValues = [data.status, data.overallStatus].map((v) => String(v || "").trim()).filter(Boolean);
+
+  if (rawValues.some((v) => ["ไม่อนุมัติ", "ยกเลิก"].includes(v))) {
+    return true;
+  }
+
+  return false;
+}
+
+function pushSample(samples, item, sampleLimit) {
+  if (samples.length < sampleLimit) samples.push(item);
+}
+
+function addReason(reasonCounts, key) {
+  reasonCounts[key] = (reasonCounts[key] || 0) + 1;
+}
+
+function evaluateBackfillDoc(snap, { onlyMissing = true } = {}) {
+  const data = snap.data() || {};
+  const id = snap.id;
+
+  if (isRejectedOrCanceledLeave(data)) {
+    return {
+      kind: "skip",
+      reason: "REJECTED_OR_CANCELED",
+      sample: {
+        id,
+        action: "skip",
+        reason: "REJECTED_OR_CANCELED",
+        status: data.status || null,
+        overallStatus: data.overallStatus || null,
+      },
+    };
+  }
+
+  const startAt = String(data.startAt || "").trim();
+  const endAt = String(data.endAt || "").trim();
+
+  if (!startAt || !endAt) {
+    return {
+      kind: "skip",
+      reason: "MISSING_START_OR_END",
+      sample: {
+        id,
+        action: "skip",
+        reason: "MISSING_START_OR_END",
+        startAt: startAt || null,
+        endAt: endAt || null,
+      },
+    };
+  }
+
+  const oldLeaveMinutes = toFiniteNumberOrNull(data.leaveMinutes);
+  const oldLeaveUnits = toFiniteNumberOrNull(data.leaveUnits);
+  const oldWorkdaysCount = toFiniteNumberOrNull(data.workdaysCount);
+
+  if (onlyMissing && oldLeaveUnits !== null) {
+    return {
+      kind: "skip",
+      reason: "ALREADY_HAS_LEAVE_UNITS",
+      sample: {
+        id,
+        action: "skip",
+        reason: "ALREADY_HAS_LEAVE_UNITS",
+        oldLeaveUnits,
+      },
+    };
+  }
+
+  const leaveMinutes = computeBusinessLeaveMinutes(startAt, endAt);
+  const leaveUnits = roundLeaveUnits(leaveMinutes / 480);
+
+  const patch = {
+    leaveMinutes,
+    leaveUnits,
+    workdaysCount: leaveUnits,
+    updatedAt: nowTs(),
+  };
+
+  const noChange =
+    oldLeaveMinutes === leaveMinutes &&
+    sameNumber(oldLeaveUnits, leaveUnits) &&
+    sameNumber(oldWorkdaysCount, leaveUnits);
+
+  if (noChange) {
+    return {
+      kind: "unchanged",
+      reason: "NO_CHANGE",
+      sample: {
+        id,
+        action: "skip",
+        reason: "NO_CHANGE",
+        startAt,
+        endAt,
+        leaveMinutes,
+        leaveUnits,
+        human: formatLeaveHumanFromMinutes(leaveMinutes),
+      },
+    };
+  }
+
+  return {
+    kind: "ready",
+    reason: "READY",
+    patch,
+    sample: {
+      id,
+      action: "preview",
+      startAt,
+      endAt,
+      oldLeaveMinutes,
+      oldLeaveUnits,
+      oldWorkdaysCount,
+      newLeaveMinutes: leaveMinutes,
+      newLeaveUnits: leaveUnits,
+      human: formatLeaveHumanFromMinutes(leaveMinutes),
+    },
+  };
+}
+
+/**
+ * POST /admin/backfill-leave-units
+ * body:
+ * {
+ *   apply?: boolean,        // false = dry-run
+ *   pageSize?: number,      // default 200, max 400
+ *   cursor?: string,        // doc id ของตัวสุดท้ายจากรอบก่อน
+ *   runAllPages?: boolean,  // true = ไล่ทั้ง collection ใน request เดียว (เหมาะ local)
+ *   maxDocs?: number,       // 0 = ไม่จำกัด
+ *   onlyMissing?: boolean,  // default true
+ *   docIds?: string[],      // ระบุ doc id เฉพาะที่อยากทำ
+ *   sampleLimit?: number    // default 30
+ * }
+ */
+app.post("/admin/backfill-leave-units", requireAuth, async (req, res) => {
+  try {
+    const role = normalizeRole(req.user?.role);
+    if (role !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_ADMIN_ONLY" });
+    }
+
+    const apply = req.body?.apply === true;
+    const runAllPages = req.body?.runAllPages === true;
+    const onlyMissing = req.body?.onlyMissing !== false;
+
+    const pageSize = Math.max(1, Math.min(Number(req.body?.pageSize || 200), 400));
+    const maxDocs = Math.max(0, Math.min(Number(req.body?.maxDocs || 0), 50000));
+    const sampleLimit = Math.max(1, Math.min(Number(req.body?.sampleLimit || 30), 100));
+
+    const inputCursor = String(req.body?.cursor || "").trim() || null;
+
+    const docIds = Array.isArray(req.body?.docIds)
+      ? Array.from(new Set(req.body.docIds.map((x) => String(x || "").trim()).filter(Boolean)))
+      : [];
+
+    const summary = {
+      scanned: 0,
+      ready: 0,
+      updated: 0,
+      unchanged: 0,
+      skipped: 0,
+      pages: 0,
+    };
+
+    const reasonCounts = {};
+    const samples = [];
+
+    async function processDocs(docs) {
+      if (!docs.length) return;
+
+      summary.pages += 1;
+
+      let batch = apply ? db.batch() : null;
+      let pendingWrites = 0;
+
+      for (const snap of docs) {
+        if (maxDocs > 0 && summary.scanned >= maxDocs) break;
+
+        summary.scanned += 1;
+
+        const result = evaluateBackfillDoc(snap, { onlyMissing });
+
+        if (result.kind === "skip") {
+          summary.skipped += 1;
+          addReason(reasonCounts, result.reason);
+          pushSample(samples, result.sample, sampleLimit);
+          continue;
+        }
+
+        if (result.kind === "unchanged") {
+          summary.unchanged += 1;
+          addReason(reasonCounts, result.reason);
+          pushSample(samples, result.sample, sampleLimit);
+          continue;
+        }
+
+        summary.ready += 1;
+        addReason(reasonCounts, result.reason);
+
+        const sample = {
+          ...result.sample,
+          action: apply ? "updated" : "preview",
+        };
+        pushSample(samples, sample, sampleLimit);
+
+        if (apply) {
+          batch.set(snap.ref, result.patch, { merge: true });
+          pendingWrites += 1;
+          summary.updated += 1;
+
+          if (pendingWrites >= 400) {
+            await batch.commit();
+            batch = db.batch();
+            pendingWrites = 0;
+          }
+        }
+      }
+
+      if (apply && batch && pendingWrites > 0) {
+        await batch.commit();
+      }
+    }
+
+    if (docIds.length > 0) {
+      const chunkSize = 200;
+
+      for (let i = 0; i < docIds.length; i += chunkSize) {
+        if (maxDocs > 0 && summary.scanned >= maxDocs) break;
+
+        const chunk = docIds.slice(i, i + chunkSize);
+        const snaps = await Promise.all(chunk.map((id) => db.collection(LEAVE_COL).doc(id).get()));
+        const existingDocs = snaps.filter((s) => s.exists);
+
+        if (existingDocs.length > 0) {
+          await processDocs(existingDocs);
+        }
+
+        const missingCount = chunk.length - existingDocs.length;
+        if (missingCount > 0) {
+          summary.skipped += missingCount;
+          addReason(reasonCounts, "DOC_NOT_FOUND");
+        }
+      }
+
+      return res.json({
+        ok: true,
+        apply,
+        mode: "docIds",
+        runAllPages: false,
+        onlyMissing,
+        pageSize: null,
+        maxDocs,
+        cursor: null,
+        nextCursor: null,
+        hasMore: false,
+        summary,
+        reasonCounts,
+        samples,
+      });
+    }
+
+    let cursor = inputCursor;
+    let hasMore = false;
+    let nextCursor = null;
+
+    do {
+      let query = db.collection(LEAVE_COL).orderBy(admin.firestore.FieldPath.documentId()).limit(pageSize);
+
+      if (cursor) {
+        query = query.startAfter(cursor);
+      }
+
+      const snap = await query.get();
+
+      if (snap.empty) {
+        hasMore = false;
+        nextCursor = null;
+        break;
+      }
+
+      await processDocs(snap.docs);
+
+      const lastDoc = snap.docs[snap.docs.length - 1];
+      cursor = lastDoc.id;
+
+      const reachedMaxDocs = maxDocs > 0 && summary.scanned >= maxDocs;
+      hasMore = snap.size === pageSize && !reachedMaxDocs;
+      nextCursor = hasMore ? cursor : null;
+
+      if (!runAllPages) {
+        break;
+      }
+    } while (hasMore);
+
+    return res.json({
+      ok: true,
+      apply,
+      mode: runAllPages ? "collection_run_all" : "collection_page",
+      runAllPages,
+      onlyMissing,
+      pageSize,
+      maxDocs,
+      cursor: inputCursor,
+      nextCursor,
+      hasMore,
+      summary,
+      reasonCounts,
+      samples,
+    });
+  } catch (err) {
+    console.error("/admin/backfill-leave-units error:", err);
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
 // ----------------- ✅ Files Router (Supabase) -----------------
 const filesRouter = require("./files.supabase.routes");
 // ✅ iOS/Safari มัก cache signed-url response ทำให้เอา URL เก่าที่หมดอายุไปใช้ต่อ

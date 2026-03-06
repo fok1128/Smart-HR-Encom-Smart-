@@ -289,6 +289,88 @@ function minutesOfDayFromDateTimeLocal(s: string): number | null {
   return hh * 60 + mm;
 }
 
+const MINUTES_PER_HOUR = 60;
+const MINUTES_PER_WORKDAY = 8 * 60;
+const WORK_WINDOWS: Array<[number, number]> = [
+  [9 * 60, 12 * 60],
+  [13 * 60, 18 * 60],
+];
+
+function roundLeaveUnits(v: number) {
+  return Number((Number.isFinite(v) ? v : 0).toFixed(6));
+}
+
+function overlapMinutes(startA: number, endA: number, startB: number, endB: number) {
+  return Math.max(0, Math.min(endA, endB) - Math.max(startA, startB));
+}
+
+function diffWorkingMinutesFromLocalDateTime(start: string, end: string) {
+  if (!start || !end) return 0;
+
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) return 0;
+  if (endDate.getTime() <= startDate.getTime()) return 0;
+
+  const startYMD = datePartFromDateTimeLocal(start);
+  const endYMD = datePartFromDateTimeLocal(end);
+  if (!startYMD || !endYMD) return 0;
+
+  let total = 0;
+  let cursor = toDateOnlyLocal(startYMD);
+  const last = toDateOnlyLocal(endYMD);
+
+  while (cursor.getTime() <= last.getTime()) {
+    if (isCompanyWorkday(cursor)) {
+      const y = cursor.getFullYear();
+      const m = cursor.getMonth();
+      const d = cursor.getDate();
+
+      const dayStart = new Date(y, m, d, 0, 0, 0, 0).getTime();
+      const reqStart = Math.max(startDate.getTime(), dayStart);
+      const reqEnd = Math.min(endDate.getTime(), dayStart + 24 * 60 * 60 * 1000);
+
+      if (reqEnd > reqStart) {
+        const reqStartMin = Math.floor((reqStart - dayStart) / 60000);
+        const reqEndMin = Math.ceil((reqEnd - dayStart) / 60000);
+
+        for (const [winStart, winEnd] of WORK_WINDOWS) {
+          total += overlapMinutes(reqStartMin, reqEndMin, winStart, winEnd);
+        }
+      }
+    }
+
+    cursor = addDays(cursor, 1);
+  }
+
+  return total;
+}
+
+
+function formatMinutesAsLeaveText(totalMinutes: number) {
+  const mins = Math.max(0, Math.round(Number.isFinite(totalMinutes) ? totalMinutes : 0));
+  const days = Math.floor(mins / MINUTES_PER_WORKDAY);
+  const remainAfterDays = mins % MINUTES_PER_WORKDAY;
+  const hours = Math.floor(remainAfterDays / MINUTES_PER_HOUR);
+  const minutes = remainAfterDays % MINUTES_PER_HOUR;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} วัน`);
+  if (hours > 0) parts.push(`${hours} ชั่วโมง`);
+  if (minutes > 0) parts.push(`${minutes} นาที`);
+
+  if (parts.length === 0) return '0 นาที';
+  return parts.join(' ');
+}
+
+function leaveUnitsToMinutes(units: number) {
+  return Math.max(0, Math.round((Number.isFinite(units) ? units : 0) * MINUTES_PER_WORKDAY));
+}
+
+function formatLeaveUnitsAsText(units: number) {
+  return formatMinutesAsLeaveText(leaveUnitsToMinutes(units));
+}
+
 /** ✅ การ์ดสรุปสิทธิ (ใช้ร่วมกันทุกประเภท) + progress bar แบบเดียวกัน */
 function YearEntitlementCard({
   title,
@@ -310,13 +392,16 @@ function YearEntitlementCard({
   note?: React.ReactNode;
 }) {
   const usedNum = Number.isFinite(used as number) ? Number(used) : 0;
+  const requestedNum = Number.isFinite(requested as number) ? Number(requested) : 0;
 
   const isUnlimited = total === "UNLIMITED";
   const hasTotal = typeof total === "number" && Number.isFinite(total);
   const totalNum = hasTotal ? Number(total) : 0;
 
   const remain = hasTotal ? Math.max(0, totalNum - usedNum) : null;
-  const pct = hasTotal && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
+  const previewRemain = hasTotal ? Math.max(0, totalNum - usedNum - requestedNum) : null;
+  const pctUsed = hasTotal && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
+  const pctPreview = hasTotal && totalNum > 0 ? Math.min(100, Math.max(pctUsed, ((usedNum + requestedNum) / totalNum) * 100)) : 0;
 
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-gray-800 dark:bg-gray-900/40">
@@ -331,17 +416,20 @@ function YearEntitlementCard({
               <>
                 <span className="text-gray-500 dark:text-gray-400">•</span>
                 <span className="font-semibold text-gray-700 dark:text-gray-200">สิทธิ: ไม่จำกัด (ตามแพทย์/นโยบาย)</span>
+                <span className="text-gray-500 dark:text-gray-400">•</span>
+                <span>
+                  ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span>
+                </span>
               </>
             ) : hasTotal ? (
               <>
                 <span className="text-gray-500 dark:text-gray-400">•</span>
                 <span>
-                  ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span> วันทำการ
+                  ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span>
                 </span>
                 <span className="text-gray-500 dark:text-gray-400">•</span>
                 <span>
-                  คงเหลือ{" "}
-                  <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : remain}</span> วันทำการ
+                  คงเหลือ <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : formatLeaveUnitsAsText(remain ?? 0)}</span>
                 </span>
               </>
             ) : (
@@ -354,26 +442,37 @@ function YearEntitlementCard({
         </div>
 
         <div className="shrink-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-extrabold text-gray-800 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100">
-          กำลังยื่นรอบนี้: <span className="font-extrabold text-gray-900 dark:text-gray-100">{requested ?? 0}</span> วัน
+          จำนวนเวลาที่ยื่นในรอบนี้: <span className="font-extrabold text-gray-900 dark:text-gray-100">{formatLeaveUnitsAsText(requestedNum)}</span>
         </div>
       </div>
 
       {hasTotal && (
         <div className="mt-4">
-          <div className="flex items-center justify-between text-xs font-semibold text-gray-600 dark:text-gray-300">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300">
             <div>
-              ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span> วันทำการ
+              ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span>
             </div>
-            <div className="text-gray-900 dark:text-gray-100">{loading ? "…" : remain} วันทำการ</div>
+            <div>
+              คงเหลือ <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(remain ?? 0)}</span>
+            </div>
           </div>
 
           <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-            <div className="h-full bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pct}%` }} />
+            <div className="relative h-full w-full">
+              <div className="absolute inset-y-0 left-0 bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pctPreview}%`, opacity: requestedNum > 0 ? 0.35 : 1 }} />
+              <div className="absolute inset-y-0 left-0 bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pctUsed}%` }} />
+            </div>
           </div>
+
+          {requestedNum > 0 && (
+            <div className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
+              หลังรวมคำร้องรอบนี้จะเหลือ {loading ? "…" : formatLeaveUnitsAsText(previewRemain ?? 0)}
+            </div>
+          )}
         </div>
       )}
 
-      {!!note && <div className="mt-4 text-sm text-gray-700 dark:text-gray-200">{note}</div>}
+      {!!note && <div className="mt-5 space-y-3 text-sm text-gray-700 dark:text-gray-200">{note}</div>}
 
       {!!error && (
         <div className="mt-3 text-xs font-semibold text-amber-700 dark:text-amber-200">* โหลดข้อมูลสิทธิไม่สำเร็จ: {error}</div>
@@ -408,18 +507,18 @@ function EntitlementRow({
           <div className="text-base font-extrabold text-gray-900 dark:text-gray-100">{title}</div>
           <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
             {isUnlimited ? (
-              <>ใช้ไป {loading ? "…" : usedNum} วันทำการ • คงเหลือ ไม่จำกัด</>
+              <>ใช้ไป {loading ? "…" : formatLeaveUnitsAsText(usedNum)} • คงเหลือ ไม่จำกัด</>
             ) : (
               <>
-                ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : usedNum}</span> วันทำการ • คงเหลือ{" "}
-                <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : remain}</span> วันทำการ
+                ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span> • คงเหลือ{' '}
+                <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(remain ?? 0)}</span>
               </>
             )}
           </div>
         </div>
 
         <div className="shrink-0 text-sm font-extrabold text-gray-900 dark:text-gray-100">
-          {typeof total === "number" ? `${total} วันทำการ` : "ไม่จำกัด"}
+          {typeof total === "number" ? formatLeaveUnitsAsText(total) : "ไม่จำกัด"}
         </div>
       </div>
 
@@ -628,10 +727,29 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   const leaveStartDateOnly = useMemo(() => (startYMD ? toDateOnlyLocal(startYMD) : null), [startYMD]);
   const leaveEndDateOnly = useMemo(() => (endYMD ? toDateOnlyLocal(endYMD) : null), [endYMD]);
 
-  const workdaysCount = useMemo(() => {
-    if (!leaveStartDateOnly || !leaveEndDateOnly) return 0;
-    return countWorkdaysInclusive(leaveStartDateOnly, leaveEndDateOnly);
-  }, [leaveStartDateOnly, leaveEndDateOnly]);
+  const leaveCalc = useMemo(() => {
+    if (!leaveStartDateOnly || !leaveEndDateOnly || !startDT || !endDT) {
+      return {
+        workdaysCount: 0,
+        leaveMinutes: 0,
+        leaveUnits: 0,
+      };
+    }
+
+    const workdays = countWorkdaysInclusive(leaveStartDateOnly, leaveEndDateOnly);
+    const leaveMinutes = diffWorkingMinutesFromLocalDateTime(startDT, endDT);
+    const leaveUnits = roundLeaveUnits(leaveMinutes / MINUTES_PER_WORKDAY);
+
+    return {
+      workdaysCount: workdays,
+      leaveMinutes,
+      leaveUnits,
+    };
+  }, [leaveStartDateOnly, leaveEndDateOnly, startDT, endDT]);
+
+  const workdaysCount = leaveCalc.workdaysCount;
+  const requestedLeaveMinutes = leaveCalc.leaveMinutes;
+  const requestedLeaveUnits = leaveCalc.leaveUnits;
 
   const isSick = category === "ลาป่วย";
   const isSickInDay = isSick && subType === "ป่วยระหว่างวัน";
@@ -766,14 +884,14 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
       for (const r of okRows) {
         const cat = String(r.category || "") as LeaveCategory;
         const sub = String(r.subType || "") as LeaveSubType;
-        const days = Number(r.workdaysCount || 0) || 0;
+        const units = typeof r.leaveUnits === "number" ? Number(r.leaveUnits) : Number(r.workdaysCount || 0) || 0;
 
         if (cat === "ลากรณีพิเศษ") {
           const k = usedKey("ลากรณีพิเศษ", sub);
-          next[k] = (next[k] || 0) + days;
+          next[k] = roundLeaveUnits((next[k] || 0) + units);
         } else if (cat === "ลากิจ" || cat === "ลาป่วย" || cat === "ลาพักร้อน") {
           const k = usedKey(cat);
-          next[k] = (next[k] || 0) + days;
+          next[k] = roundLeaveUnits((next[k] || 0) + units);
         }
       }
 
@@ -852,14 +970,14 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
       for (const r of okRows) {
         const cat = String(r.category || "") as LeaveCategory;
         const sub = String(r.subType || "") as LeaveSubType;
-        const days = Number(r.workdaysCount || 0) || 0;
+        const units = typeof r.leaveUnits === "number" ? Number(r.leaveUnits) : Number(r.workdaysCount || 0) || 0;
 
         if (cat === "ลากรณีพิเศษ") {
           const k = usedKey("ลากรณีพิเศษ", sub);
-          next[k] = (next[k] || 0) + days;
+          next[k] = roundLeaveUnits((next[k] || 0) + units);
         } else if (cat === "ลากิจ" || cat === "ลาป่วย" || cat === "ลาพักร้อน") {
           const k = usedKey(cat);
-          next[k] = (next[k] || 0) + days;
+          next[k] = roundLeaveUnits((next[k] || 0) + units);
         }
       }
 
@@ -977,24 +1095,24 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
       e.files = "อนุญาตเฉพาะ PDF และรูป (JPG/PNG/WEBP)";
     }
 
-    if (isSick && !isSickInDay && workdaysCount >= 3 && isRetroactive) {
+    if (isSick && !isSickInDay && requestedLeaveUnits >= 3 && isRetroactive) {
       if (totalFileCount === 0) e.files = "ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองแพทย์จากโรงพยาบาลตอนยื่น";
     }
 
-    if (isBusinessLeave && workdaysCount > 0) {
-      if (workdaysCount > bizRemain) e.businessLimit = `ลากิจปีนี้เหลือ ${bizRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    if (isBusinessLeave && requestedLeaveUnits > 0) {
+      if (requestedLeaveUnits > bizRemain) e.businessLimit = `ลากิจปีนี้เหลือ ${formatLeaveUnitsAsText(bizRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
     }
-    if (isSick && workdaysCount > 0) {
-      if (workdaysCount > sickRemain) e.sickLimit = `ลาป่วยปีนี้เหลือ ${sickRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    if (isSick && requestedLeaveUnits > 0) {
+      if (requestedLeaveUnits > sickRemain) e.sickLimit = `ลาป่วยปีนี้เหลือ ${formatLeaveUnitsAsText(sickRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
     }
-    if (isVacation && workdaysCount > 0) {
-      if (workdaysCount > vacationRemain) e.vacationLimit = `ลาพักร้อนปีนี้เหลือ ${vacationRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    if (isVacation && requestedLeaveUnits > 0) {
+      if (requestedLeaveUnits > vacationRemain) e.vacationLimit = `ลาพักร้อนปีนี้เหลือ ${formatLeaveUnitsAsText(vacationRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
     }
-    if (isMaternity && workdaysCount > 0) {
-      if (workdaysCount > maternityRemain) e.maternityLimit = `ลาคลอดปีนี้เหลือ ${maternityRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    if (isMaternity && requestedLeaveUnits > 0) {
+      if (requestedLeaveUnits > maternityRemain) e.maternityLimit = `ลาคลอดปีนี้เหลือ ${formatLeaveUnitsAsText(maternityRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
     }
-    if (isMilitary && workdaysCount > 0) {
-      if (workdaysCount > militaryRemain) e.militaryLimit = `ลาเพื่อรับราชการทหารปีนี้เหลือ ${militaryRemain} วัน (คุณกำลังยื่น ${workdaysCount} วันทำการ)`;
+    if (isMilitary && requestedLeaveUnits > 0) {
+      if (requestedLeaveUnits > militaryRemain) e.militaryLimit = `ลาเพื่อรับราชการทหารปีนี้เหลือ ${formatLeaveUnitsAsText(militaryRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
     }
 
     if (isMaternity && !isRetroactive && startYMD) {
@@ -1044,6 +1162,7 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
           endAt: endDT,
           reason,
           workdaysCount: workdaysCount || 0,
+          leaveUnits: requestedLeaveUnits || 0,
           isRetroactive: !!isRetroactive,
           retroReason: isRetroactive ? retroReason.trim() : null,
           requireMedicalCert: !!needMedicalCert,
@@ -1126,6 +1245,7 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
         reason,
 
         workdaysCount: workdaysCount || 0,
+        leaveUnits: requestedLeaveUnits || 0,
 
         isRetroactive: !!isRetroactive,
         retroReason: isRetroactive ? retroReason.trim() : null,
@@ -1206,7 +1326,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
             used={bizUsed}
             loading={usageLoading}
             error={usageErr}
-            requested={workdaysCount}
+            requested={requestedLeaveUnits}
             note={
               <>
                 {isBusinessNormal && !isRetroactive && (
@@ -1218,7 +1338,11 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                   </div>
                 )}
 
-                {errors.businessLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.businessLimit}</div>}
+                <div className="text-sm">
+                  <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
+                  <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatMinutesAsLeaveText(requestedLeaveMinutes)}</span>
+                </div>
+                {errors.businessLimit && <div className="text-xs font-extrabold text-red-600">{errors.businessLimit}</div>}
               </>
             }
           />
@@ -1244,12 +1368,12 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
             used={sickUsed}
             loading={usageLoading}
             error={usageErr}
-            requested={workdaysCount}
+            requested={requestedLeaveUnits}
             note={
               <>
                 <div className="text-sm">
-                  <span className="font-semibold">จำนวนวันทำการ (ประเมิน):</span>{" "}
-                  <span className="font-extrabold text-teal-700 dark:text-teal-200">{workdaysCount} วัน</span>
+                  <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
+                  <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatLeaveUnitsAsText(requestedLeaveUnits)}</span>
                   {startYMD && (
                     <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{isRetroactive ? "• ยื่นย้อนหลัง" : "• ไม่ย้อนหลัง"}</span>
                   )}
@@ -1294,11 +1418,15 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
             used={vacationUsed}
             loading={usageLoading}
             error={usageErr}
-            requested={workdaysCount}
+            requested={requestedLeaveUnits}
             note={
               <>
+                <div className="text-sm">
+                  <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
+                  <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatMinutesAsLeaveText(requestedLeaveMinutes)}</span>
+                </div>
                 <div className="text-sm">* หากบริษัทมีเงื่อนไขเพิ่มเติม ให้ยึดตามนโยบาย/HR</div>
-                {errors.vacationLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.vacationLimit}</div>}
+                {errors.vacationLimit && <div className="text-xs font-extrabold text-red-600">{errors.vacationLimit}</div>}
               </>
             }
           />
@@ -1352,9 +1480,13 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
           used={isMaternity ? maternityUsed : isMilitary ? militaryUsed : isSterilization ? sterilUsed : null}
           loading={usageLoading}
           error={usageErr}
-          requested={workdaysCount}
+          requested={requestedLeaveUnits}
           note={
             <>
+              <div className="text-sm">
+                <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
+                <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatMinutesAsLeaveText(requestedLeaveMinutes)}</span>
+              </div>
               {!subType && <div className="text-sm">* โปรดเลือก “ประเภทย่อย” เพื่อแสดงสิทธิของรายการนั้น</div>}
               {errors.maternityLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.maternityLimit}</div>}
               {errors.militaryLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.militaryLimit}</div>}
@@ -1367,6 +1499,8 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
     category,
     subType,
     workdaysCount,
+    requestedLeaveUnits,
+    requestedLeaveMinutes,
     usageLoading,
     usageErr,
     bizUsed,
