@@ -26,7 +26,7 @@ type NavItem = {
 
 const LOGO_SRC = "/images/logo/smart-hr-logo.png";
 
-const BRAND_PURPLE = "#6B1F78";
+
 const ACCENT_YELLOW = "#D6BE13";
 const ACCENT_GREEN = "#2D5C0E";
 
