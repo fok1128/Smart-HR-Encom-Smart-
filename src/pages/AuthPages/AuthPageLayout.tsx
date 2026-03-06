@@ -25,7 +25,7 @@ export default function AuthPageLayout({
                          flex items-center justify-center px-8 py-6"
             >
               <img
-                src="/company-logo2.png"
+                src="/โลโก้ บริษัท.png"
                 alt="PEA ENCOM SMART SOLUTION"
                 className="w-full h-full object-contain -translate-y-1"
               />

@@ -1,4 +1,3 @@
-// AppSidebar.tsx
 import type { ReactNode } from "react";
 import { useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -21,11 +20,11 @@ import {
 type NavItem = {
   name: string;
   icon: ReactNode;
-  path?: string;          // ✅ ถ้าเป็นเมนูไปหน้า จะมี path
-  action?: () => void;    // ✅ ถ้าเป็นเมนู action เช่น logout จะมี action
+  path?: string;
+  action?: () => void;
 };
 
-const LOGO_SRC = "/images/logo/company-logo3.jpg";
+const LOGO_SRC = "/images/logo/smart-hr-logo.png";
 
 const BRAND_PURPLE = "#6B1F78";
 const ACCENT_YELLOW = "#D6BE13";
@@ -55,13 +54,13 @@ const AppSidebar = () => {
     [location.pathname]
   );
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await logout();
     } finally {
       navigate("/signin", { replace: true });
     }
-  };
+  }, [logout, navigate]);
 
   const navItems: NavItem[] = useMemo(() => {
     const iconProps = {
@@ -90,7 +89,6 @@ const AppSidebar = () => {
       );
     }
 
-    // ✅ Logout อยู่ในเมนูเลย (action item)
     base.push({
       icon: <SignOut {...iconProps} />,
       name: "Logout",
@@ -134,48 +132,43 @@ const AppSidebar = () => {
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* Brand */}
-      <div className="px-4 pt-8 pb-6 shrink-0">
+      <div className="px-4 pt-6 pb-6 shrink-0">
         <Link to="/" className="flex w-full justify-center">
-          <div className="flex flex-col items-center">
+          <div className="flex flex-col items-center w-full">
             <div
               className={cn(
-                "grid place-items-center",
-                "rounded-full",
-                "ring-1 ring-gray-200/80 dark:ring-gray-700/70",
-                "shadow-[0_12px_30px_rgba(17,24,39,0.12)]",
-                isCollapsed ? "h-16 w-16" : "h-24 w-24"
+                "w-full overflow-hidden rounded-2xl transition-all duration-300",
+                "border border-transparent shadow-none",
+                "bg-white dark:bg-gray-900",
+                isCollapsed ? "p-1.5" : "p-2"
               )}
-              style={{
-                background:
-                  "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(249,250,251,0.98) 100%)",
-              }}
             >
-              <img
-                src={LOGO_SRC}
-                alt="Company Logo"
-                className={cn("object-contain", isCollapsed ? "h-12 w-12" : "h-18 w-18")}
-              />
+              <div
+                className={cn(
+                  "flex items-center justify-center overflow-hidden rounded-xl",
+                  isCollapsed ? "h-[52px]" : "h-[86px]"
+                )}
+              >
+                <img
+                  src={LOGO_SRC}
+                  alt="Smart HR Logo"
+                  className={cn(
+                    "block object-contain",
+                    isCollapsed ? "h-full w-full" : "max-h-full w-full"
+                  )}
+                  draggable={false}
+                />
+              </div>
             </div>
 
             {!isCollapsed && (
               <div
-                className="mt-5 h-[4px] w-28 rounded-full"
+                className="mt-4 h-[4px] w-42 rounded-full"
                 style={{
                   background: `linear-gradient(90deg, ${ACCENT_YELLOW} 0%, ${ACCENT_GREEN} 100%)`,
-                  opacity: 0.9,
+                  opacity: 0.95,
                 }}
               />
-            )}
-
-            {!isCollapsed && (
-              <div className="mt-5 text-center leading-tight">
-                <div className="text-xl font-extrabold" style={{ color: BRAND_PURPLE }}>
-                  Smart HR
-                </div>
-                <div className="text-base text-gray-500 dark:text-gray-400">
-                  Encom Smart Solution
-                </div>
-              </div>
             )}
           </div>
         </Link>
@@ -194,7 +187,12 @@ const AppSidebar = () => {
               const content = (
                 <>
                   {!isCollapsed && (
-                    <span className={cn("h-7 w-1 rounded-full transition", active ? "bg-[#6B1F78]" : "bg-transparent")} />
+                    <span
+                      className={cn(
+                        "h-7 w-1 rounded-full transition",
+                        active ? "bg-[#6B1F78]" : "bg-transparent"
+                      )}
+                    />
                   )}
 
                   <span className={cn(iconBox, active ? iconActive : iconInactive)}>
