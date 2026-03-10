@@ -106,35 +106,97 @@ function normalizeMode(r: any): "TIME" | "DAY" | "" {
   return "";
 }
 
+const APPROVE_WORK_WINDOWS: Array<[number, number]> = [
+  [9 * 60, 12 * 60],
+  [13 * 60, 18 * 60],
+];
+const APPROVE_MINUTES_PER_WORKDAY = 8 * 60;
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function overlapMinutes(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+  const start = Math.max(aStart, bStart);
+  const end = Math.min(aEnd, bEnd);
+  return Math.max(0, end - start);
+}
+
+function diffWorkingMinutes(startD: Date, endD: Date): number {
+  if (!(startD instanceof Date) || !(endD instanceof Date)) return 0;
+  if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return 0;
+  if (endD.getTime() <= startD.getTime()) return 0;
+
+  let total = 0;
+  let cursor = startOfDay(startD);
+  const lastDay = startOfDay(endD);
+
+  while (cursor.getTime() <= lastDay.getTime()) {
+    const y = cursor.getFullYear();
+    const m = cursor.getMonth();
+    const d = cursor.getDate();
+
+    const dayStart = new Date(y, m, d, 0, 0, 0, 0).getTime();
+    const rangeStart = Math.max(startD.getTime(), dayStart);
+    const rangeEnd = Math.min(endD.getTime(), dayStart + 24 * 60 * 60 * 1000);
+
+    if (rangeEnd > rangeStart) {
+      const startMinute = Math.floor((rangeStart - dayStart) / 60000);
+      const endMinute = Math.ceil((rangeEnd - dayStart) / 60000);
+
+      for (const [winStart, winEnd] of APPROVE_WORK_WINDOWS) {
+        total += overlapMinutes(startMinute, endMinute, winStart, winEnd);
+      }
+    }
+
+    cursor = addDays(cursor, 1);
+  }
+
+  return total;
+}
+
+function formatHoursFromMinutes(minutes: number): string {
+  const hrs = Math.round((minutes / 60) * 100) / 100;
+  const pretty = Number.isInteger(hrs) ? String(hrs) : String(hrs.toFixed(2)).replace(/\.?0+$/, "");
+  return `${pretty} ชั่วโมง`;
+}
+
 function calcLeaveDurationText(r: any): string {
   const mode = normalizeMode(r);
 
   const startD = toDateSafe(pickVal(r.startAt, r.startDate, r.from, r.startTime, r.start));
   const endD = toDateSafe(pickVal(r.endAt, r.endDate, r.to, r.endTime, r.end));
 
-  // TIME: แสดงชั่วโมง
   if (mode === "TIME") {
-    if (typeof r?.hours === "number") return `${r.hours} ชั่วโมง`;
-    if (typeof r?.hour === "number") return `${r.hour} ชั่วโมง`;
-    if (typeof r?.durationHours === "number") return `${r.durationHours} ชั่วโมง`;
+    const leaveUnits = Number(r?.leaveUnits);
+    if (Number.isFinite(leaveUnits) && leaveUnits > 0) {
+      return formatHoursFromMinutes(leaveUnits * APPROVE_MINUTES_PER_WORKDAY);
+    }
 
     if (startD && endD) {
-      const ms = endD.getTime() - startD.getTime();
-      const hrs = ms / (1000 * 60 * 60);
-      if (!isNaN(hrs) && hrs > 0) {
-        const pretty = Number.isInteger(hrs) ? String(hrs) : hrs.toFixed(1);
-        return `${pretty} ชั่วโมง`;
-      }
+      const mins = diffWorkingMinutes(startD, endD);
+      if (mins > 0) return formatHoursFromMinutes(mins);
     }
+
+    if (typeof r?.hours === "number" && r.hours > 0) return `${r.hours} ชั่วโมง`;
+    if (typeof r?.hour === "number" && r.hour > 0) return `${r.hour} ชั่วโมง`;
+    if (typeof r?.durationHours === "number" && r.durationHours > 0) return `${r.durationHours} ชั่วโมง`;
+
     return "-";
   }
 
-  // DAY: แสดงวันทำการ
   if (typeof r?.workdaysCount === "number") return `${r.workdaysCount} วันทำการ`;
   if (typeof r?.days === "number") return `${r.days} วัน`;
   if (typeof r?.durationDays === "number") return `${r.durationDays} วัน`;
 
-  // fallback จาก diff
   if (startD && endD) {
     const ms = endD.getTime() - startD.getTime();
     const days = ms / (1000 * 60 * 60 * 24);
