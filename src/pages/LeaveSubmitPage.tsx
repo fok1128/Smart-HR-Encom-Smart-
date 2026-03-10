@@ -62,7 +62,49 @@ function pickStr(...vals: any[]) {
   }
   return "";
 }
+function buildEmployeeNameForLeave(user: any): string {
+  const first = pickStr(
+    user?.fname,
+    user?.employee?.fname,
+    user?.user?.fname,
+    user?.firstName
+  );
+  const last = pickStr(
+    user?.lname,
+    user?.employee?.lname,
+    user?.user?.lname,
+    user?.lastName
+  );
 
+  const full = `${first} ${last}`.trim();
+  if (full) return full;
+
+  return pickStr(
+    user?.displayName,
+    user?.user?.displayName,
+    user?.user?.name,
+    user?.name
+  );
+}
+
+function buildEmployeeNoForLeave(user: any): string {
+  return pickStr(
+    user?.employeeNo,
+    user?.employee?.employeeNo,
+    user?.user?.employeeNo,
+    user?.empNo
+  );
+}
+
+function buildPhoneForLeave(user: any): string {
+  return pickStr(
+    user?.phone,
+    user?.employee?.phone,
+    user?.user?.phone,
+    user?.tel,
+    user?.mobile
+  );
+}
 /** ✅ Dropdown custom (ปรับให้เข้าธีม inputTheme) */
 function SelectBox<T extends string>({
   label,
@@ -537,7 +579,7 @@ type LeaveSubmitPageProps = {
 };
 
 export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
-  const { user } = useAuth();
+ const { user, roleReady } = useAuth();
   const _navigate = useNavigate();
 
   const allowGoMyLeavesRef = useRef(false);
@@ -682,7 +724,7 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [uploadPct, setUploadPct] = useState<number>(0);
-
+  const profileHydratingForCreate = !isEdit && !!user?.uid && (!roleReady || !!(user as any)?._lite);
   useEffect(() => {
     // ✅ ตอนแก้ไข (Edit) ไม่ให้ reset ประเภทย่อยทิ้ง
     if (isEdit) return;
@@ -1134,131 +1176,76 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   // ✅ SAVE (ไม่ใช้ form submit เพื่อกันเด้งตอนกดปุ่มอื่น เช่น ลบไฟล์/เปิดไฟล์)
   // =======================
   const doSave = async () => {
-    if (!user?.uid) {
-      await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "sm" });
-      return;
-    }
+  if (!user?.uid) {
+    await dialog.alert("ยังไม่เข้าสู่ระบบ", { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "sm" });
+    return;
+  }
 
-    const e = validate();
-    if (Object.keys(e).length > 0) {
-      const msg = Object.values(e).join(" • ");
-      await dialog.alert(msg, { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "md" });
-      console.log("VALIDATE_ERRORS:", e);
-      return;
-    }
+  if (!isEdit && (!roleReady || !!(user as any)?._lite)) {
+    await dialog.alert("กรุณารอสักครู่ ระบบกำลังโหลดข้อมูลพนักงานก่อนส่งคำร้อง", {
+      title: "กำลังเตรียมข้อมูลผู้ใช้",
+      variant: "warning",
+      size: "md",
+    });
+    return;
+  }
 
-    setSubmitting(true);
-    setUploadPct(0);
+  const e = validate();
+  if (Object.keys(e).length > 0) {
+    const msg = Object.values(e).join(" • ");
+    await dialog.alert(msg, { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "md" });
+    console.log("VALIDATE_ERRORS:", e);
+    return;
+  }
 
-    try {
-      // =======================
-      // ✅ UPDATE (edit)
-      // =======================
-      if (isEdit) {
-        const patch: any = {
-          category: category as any,
-          subType: subType as any,
-          startAt: startDT,
-          endAt: endDT,
-          reason,
-          workdaysCount: workdaysCount || 0,
-          leaveUnits: requestedLeaveUnits || 0,
-          isRetroactive: !!isRetroactive,
-          retroReason: isRetroactive ? retroReason.trim() : null,
-          requireMedicalCert: !!needMedicalCert,
-          medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
+  setSubmitting(true);
+  setUploadPct(0);
 
-          // ✅ สถานะใบรับรองแพทย์ (พิจารณาทั้งไฟล์เดิม + ไฟล์ใหม่ที่เลือกเพิ่ม)
-          medicalCertProvided: (() => {
-            if (!needMedicalCert) return false;
-            const existingCount = existingAttachments?.length || 0;
-            const total = existingCount + (files?.length || 0);
-            return total > 0;
-          })(),
-
-          // ถ้าแนบ "ไฟล์ใหม่" ตอนแก้ไข ค่อยบันทึก submittedAt/source
-          // - ถ้าไม่มีไฟล์เลย (เดิม+ใหม่) ให้เคลียร์ค่า (null)
-          // - ถ้าไม่ได้แนบเพิ่ม ให้คงค่าเดิมไว้ (undefined)
-          medicalCertSubmittedAt: (() => {
-            if (!needMedicalCert) return null;
-            const existingCount = existingAttachments?.length || 0;
-            const total = existingCount + (files?.length || 0);
-            if (total === 0) return null;
-            if ((files?.length || 0) > 0) return new Date().toISOString();
-            return (undefined as any);
-          })(),
-
-          medicalCertSource: (() => {
-            if (!needMedicalCert) return null;
-            const existingCount = existingAttachments?.length || 0;
-            const total = existingCount + (files?.length || 0);
-            if (total === 0) return null;
-            if ((files?.length || 0) > 0) return "UPLOADED_WITH_REQUEST";
-            return (undefined as any);
-          })(),
-        };
-
-        await updateMyPendingLeaveRequest(effectiveEditId, user.uid, patch, files, (p) => setUploadPct(p));
-
-        await loadYearUsageAll();
-        await loadUsageAllByYear(toAdYear(summaryYearTH));
-
-        setErrors({});
-        setFiles([]);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        setUploadPct(0);
-
-        await dialog.alert("บันทึกการแก้ไขเรียบร้อย", { title: "แก้ไขคำร้องสำเร็จ", variant: "success", size: "md" });
-
-        if (embedded) props.onDone?.();
-        else {
-          if (allowGoMyLeavesRef.current) navigate(MY_LEAVES_PATH);
-        }
-
-        return;
-      }
-
-      // =======================
-      // ✅ CREATE (new)
-      // =======================
-      const employeeNo = pickStr((user as any)?.employeeNo, (user as any)?.empNo);
-      const employeeName = `${pickStr((user as any)?.fname, (user as any)?.firstName)} ${pickStr(
-        (user as any)?.lname,
-        (user as any)?.lastName
-      )}`.trim();
-      const phone = pickStr((user as any)?.phone, (user as any)?.tel, (user as any)?.mobile);
-
-      const payload: any = {
-        uid: user.uid,
-        email: user.email ?? null,
-
-        createdByEmail: user.email ?? null,
-        employeeNo: employeeNo || null,
-        employeeName: employeeName || null,
-        phone: phone || null,
-
+  try {
+    // =======================
+    // ✅ UPDATE (edit)
+    // =======================
+    if (isEdit) {
+      const patch: any = {
         category: category as any,
         subType: subType as any,
-        mode: "time",
         startAt: startDT,
         endAt: endDT,
         reason,
-
         workdaysCount: workdaysCount || 0,
         leaveUnits: requestedLeaveUnits || 0,
-
         isRetroactive: !!isRetroactive,
         retroReason: isRetroactive ? retroReason.trim() : null,
-
         requireMedicalCert: !!needMedicalCert,
         medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
 
-        medicalCertProvided: !!needMedicalCert ? files.length > 0 : false,
-        medicalCertSubmittedAt: !!needMedicalCert && files.length > 0 ? new Date().toISOString() : null,
-        medicalCertSource: !!needMedicalCert && files.length > 0 ? "UPLOADED_WITH_REQUEST" : null,
+        medicalCertProvided: (() => {
+          if (!needMedicalCert) return false;
+          const existingCount = existingAttachments?.length || 0;
+          const total = existingCount + (files?.length || 0);
+          return total > 0;
+        })(),
+
+        medicalCertSubmittedAt: (() => {
+          if (!needMedicalCert) return null;
+          const existingCount = existingAttachments?.length || 0;
+          const total = existingCount + (files?.length || 0);
+          if (total === 0) return null;
+          if ((files?.length || 0) > 0) return new Date().toISOString();
+          return (undefined as any);
+        })(),
+
+        medicalCertSource: (() => {
+          if (!needMedicalCert) return null;
+          const existingCount = existingAttachments?.length || 0;
+          const total = existingCount + (files?.length || 0);
+          if (total === 0) return null;
+          if ((files?.length || 0) > 0) return "UPLOADED_WITH_REQUEST";
+          return (undefined as any);
+        })(),
       };
 
-      const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
+      await updateMyPendingLeaveRequest(effectiveEditId, user.uid, patch, files, (p) => setUploadPct(p));
 
       await loadYearUsageAll();
       await loadUsageAllByYear(toAdYear(summaryYearTH));
@@ -1267,24 +1254,90 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setUploadPct(0);
-      setRetroReason("");
 
-      const requestNo = created.requestNo ?? created.id ?? "-";
-      await dialog.alert(`เลขคำร้อง: ${requestNo}`, { title: "ส่งคำร้องสำเร็จ", variant: "success", size: "md" });
+      await dialog.alert("บันทึกการแก้ไขเรียบร้อย", { title: "แก้ไขคำร้องสำเร็จ", variant: "success", size: "md" });
 
-      resetAll();
       if (embedded) props.onDone?.();
       else {
         if (allowGoMyLeavesRef.current) navigate(MY_LEAVES_PATH);
       }
-    } catch (err: any) {
-      console.error(err);
-      await dialog.alert(err?.message || String(err), { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "lg" });
-    } finally {
-      allowGoMyLeavesRef.current = false;
-      setSubmitting(false);
+
+      return;
     }
-  };
+
+    // =======================
+    // ✅ CREATE (new)
+    // =======================
+    const employeeNo = buildEmployeeNoForLeave(user);
+    const employeeName = buildEmployeeNameForLeave(user);
+    const phone = buildPhoneForLeave(user);
+
+    if (!employeeName) {
+      await dialog.alert("ไม่พบชื่อ-นามสกุลพนักงานในโปรไฟล์ กรุณาออกจากหน้านี้แล้วเข้าใหม่อีกครั้ง", {
+        title: "ส่งคำร้องไม่สำเร็จ",
+        variant: "danger",
+        size: "md",
+      });
+      return;
+    }
+
+    const payload: any = {
+      uid: user.uid,
+      email: user.email ?? null,
+
+      createdByEmail: user.email ?? null,
+      employeeNo: employeeNo || null,
+      employeeName: employeeName || null,
+      phone: phone || null,
+
+      category: category as any,
+      subType: subType as any,
+      mode: "time",
+      startAt: startDT,
+      endAt: endDT,
+      reason,
+
+      workdaysCount: workdaysCount || 0,
+      leaveUnits: requestedLeaveUnits || 0,
+
+      isRetroactive: !!isRetroactive,
+      retroReason: isRetroactive ? retroReason.trim() : null,
+
+      requireMedicalCert: !!needMedicalCert,
+      medicalCertDueAt: medicalCertDueAt ? medicalCertDueAt.toISOString() : null,
+
+      medicalCertProvided: !!needMedicalCert ? files.length > 0 : false,
+      medicalCertSubmittedAt: !!needMedicalCert && files.length > 0 ? new Date().toISOString() : null,
+      medicalCertSource: !!needMedicalCert && files.length > 0 ? "UPLOADED_WITH_REQUEST" : null,
+    };
+
+    const created = await createLeaveRequestWithFiles(payload, files, (p) => setUploadPct(p));
+
+    await loadYearUsageAll();
+    await loadUsageAllByYear(toAdYear(summaryYearTH));
+
+    setErrors({});
+    setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setUploadPct(0);
+    setRetroReason("");
+
+    const requestNo = created.requestNo ?? created.id ?? "-";
+    await dialog.alert(`เลขคำร้อง: ${requestNo}`, { title: "ส่งคำร้องสำเร็จ", variant: "success", size: "md" });
+
+    resetAll();
+    if (embedded) props.onDone?.();
+    else {
+      if (allowGoMyLeavesRef.current) navigate(MY_LEAVES_PATH);
+    }
+  } catch (err: any) {
+    console.error(err);
+    await dialog.alert(err?.message || String(err), { title: "ส่งคำร้องไม่สำเร็จ", variant: "danger", size: "lg" });
+  } finally {
+    allowGoMyLeavesRef.current = false;
+    setSubmitting(false);
+  }
+};
 
   // ✅ กัน form submit ทุกกรณี (ฟอร์มนี้ "ห้าม" submit)
 // เหตุผล: มีหลาย action ในหน้า (เช่น ลบไฟล์/เปิดดูไฟล์/confirm dialog) ที่อาจทำให้เกิด submit โดยไม่ตั้งใจ
@@ -1924,20 +1977,26 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
           {/* ✅ Submit button: อยู่นอก form แต่ submit ได้ด้วย form="leaveForm" */}
           <div className="flex justify-end">
             <AppButton
-              type="button"
-              data-action="save"
-              variant="primary"
-              disabled={submitting}
-              loading={submitting}
-              onClick={() => {
-                if (submitting) return;
-                console.log("SAVE CLICKED", new Date().toISOString());
-                allowGoMyLeavesRef.current = true;
-                void doSave();
-              }}
-            >
-              {submitting ? "กำลังบันทึก..." : isEdit ? "บันทึกการแก้ไข" : "ส่งคำร้อง"}
-            </AppButton>
+  type="button"
+  data-action="save"
+  variant="primary"
+  disabled={submitting || profileHydratingForCreate}
+  loading={submitting}
+  onClick={() => {
+    if (submitting || profileHydratingForCreate) return;
+    console.log("SAVE CLICKED", new Date().toISOString());
+    allowGoMyLeavesRef.current = true;
+    void doSave();
+  }}
+>
+  {submitting
+    ? "กำลังบันทึก..."
+    : profileHydratingForCreate
+    ? "กำลังโหลดข้อมูลพนักงาน..."
+    : isEdit
+    ? "บันทึกการแก้ไข"
+    : "ส่งคำร้อง"}
+</AppButton>
           </div>
 
         {/* รวมสิทธิการลาทั้งหมด */}
