@@ -847,65 +847,63 @@ export default function AnnouncementsPage() {
 
   
   async function onPost() {
-    if (!user) {
-      dcAlert("ยังไม่ได้เข้าสู่ระบบ");
-      return;
-    }
-    if (!title.trim() || !body.trim()) {
-      dcAlert("กรอกหัวเรื่องและเนื้อหาให้ครบ");
-      return;
-    }
-
-    setPosting(true);
-    try {
-      setUploadPct(0);
-
-      const safeLinks: AnnouncementLink[] = links
-        .map((l) => {
-          const url = String(l?.url || "").trim();
-          const label = String(l?.label || "").trim();
-
-          if (!url || !isValidUrl(url)) return null;
-          return label ? { url, label } : { url };
-        })
-        .filter((l): l is AnnouncementLink => l !== null);
-
-      const safeCreatedBy = user.email
-        ? { uid: user.uid, email: user.email }
-        : { uid: user.uid };
-
-      await createAnnouncementWithFiles(
-        {
-          title: title.trim(),
-          body: body.trim(),
-          pinned: pinnedNew,
-          createdBy: safeCreatedBy,
-          links: safeLinks.length ? safeLinks : null,
-        },
-        pickedFiles,
-        (p: number) => setUploadPct(p)
-      );
-
-      setTitle("");
-      setBody("");
-      setPinnedNew(false);
-      setPickedFiles([]);
-      setUploadPct(0);
-      setLinks([]);
-      setNewLinkUrl("");
-      setNewLinkLabel("");
-
-      dcAlert("โพสประกาศแล้ว ✅");
-    } catch (e: any) {
-      console.error("POST ANNOUNCEMENT ERROR:", e);
-      dcAlert("โพสไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
-    } finally {
-      setPosting(false);
-    }
+  if (!user) {
+    dcAlert("ยังไม่ได้เข้าสู่ระบบ");
+    return;
+  }
+  if (!title.trim() || !body.trim()) {
+    dcAlert("กรอกหัวเรื่องและเนื้อหาให้ครบ");
+    return;
   }
 
-  
-  
+  setPosting(true);
+  try {
+    setUploadPct(0);
+
+    const safeLinks = links
+      .map((l) => {
+        const url = String(l?.url || "").trim();
+        const label = String(l?.label || "").trim();
+
+        if (!url || !isValidUrl(url)) return null;
+        return label ? { url, label } : { url };
+      })
+      .filter((l) => l !== null) as AnnouncementLink[];
+
+    const safeCreatedBy = user.email
+      ? { uid: user.uid, email: user.email }
+      : { uid: user.uid };
+
+    await createAnnouncementWithFiles(
+      {
+        title: title.trim(),
+        body: body.trim(),
+        pinned: pinnedNew,
+        createdBy: safeCreatedBy,
+        links: safeLinks.length ? safeLinks : null,
+      },
+      pickedFiles,
+      (p: number) => setUploadPct(p)
+    );
+
+    setTitle("");
+    setBody("");
+    setPinnedNew(false);
+    setPickedFiles([]);
+    setUploadPct(0);
+    setLinks([]);
+    setNewLinkUrl("");
+    setNewLinkLabel("");
+
+    dcAlert("โพสประกาศแล้ว ✅");
+  } catch (e: any) {
+    console.error("POST ANNOUNCEMENT ERROR:", e);
+    dcAlert("โพสไม่สำเร็จ", e?.message || "ลองใหม่อีกครั้ง");
+  } finally {
+    setPosting(false);
+  }
+}
+
   async function onDelete(a: Announcement) {
     if (!canManageAnnouncements) return;
 
