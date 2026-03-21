@@ -838,7 +838,7 @@ export default function AnnouncementsPage() {
     setLinks((prev) => {
       const dedup = prev.some((x) => x.url === url);
       if (dedup) return prev;
-      return [...prev, { url, label: label || undefined }];
+      return [...prev, ...(label ? [{ url, label }] : [{ url }])];
     });
 
     setNewLinkUrl("");
@@ -860,13 +860,27 @@ export default function AnnouncementsPage() {
     try {
       setUploadPct(0);
 
+      const safeLinks: AnnouncementLink[] = links
+        .map((l) => {
+          const url = String(l?.url || "").trim();
+          const label = String(l?.label || "").trim();
+
+          if (!url || !isValidUrl(url)) return null;
+          return label ? { url, label } : { url };
+        })
+        .filter((l): l is AnnouncementLink => l !== null);
+
+      const safeCreatedBy = user.email
+        ? { uid: user.uid, email: user.email }
+        : { uid: user.uid };
+
       await createAnnouncementWithFiles(
         {
           title: title.trim(),
           body: body.trim(),
           pinned: pinnedNew,
-          createdBy: { uid: user.uid, email: user.email || undefined },
-          links: links.length ? links : null,
+          createdBy: safeCreatedBy,
+          links: safeLinks.length ? safeLinks : null,
         },
         pickedFiles,
         (p: number) => setUploadPct(p)
