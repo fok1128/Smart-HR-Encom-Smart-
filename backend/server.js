@@ -80,18 +80,101 @@ const lineClient = process.env.LINE_CHANNEL_ACCESS_TOKEN
   ? new line.Client({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN })
   : null;
 
+console.log(
+  lineClient
+    ? "✅ LINE client enabled"
+    : "⚠️ LINE client disabled: missing LINE_CHANNEL_ACCESS_TOKEN"
+);
+
+function extractLineUserId(userDoc = {}) {
+  return [
+    userDoc.lineUserId,
+    userDoc.line_user_id,
+    userDoc.lineUid,
+    userDoc.line_uid,
+    userDoc.lineId,
+    userDoc.line_id,
+    userDoc.line?.userId,
+    userDoc.line?.uid,
+    userDoc.line?.lineUserId,
+    userDoc.lineProfile?.userId,
+  ]
+    .map((v) => String(v || "").trim())
+    .find(Boolean) || "";
+}
+
+function isLikelyLineUserId(v) {
+  return /^U[0-9A-Fa-f]{10,}$/i.test(String(v || "").trim());
+}
+
+function normalizeLineUserId(v) {
+  const id = String(v || "").trim();
+  return isLikelyLineUserId(id) ? id : "";
+}
+
+function isUserActive(userDoc = {}) {
+  const raw = userDoc?.active;
+
+  if (raw === undefined || raw === null || raw === "") return true;
+  if (raw === true) return true;
+  if (raw === false) return false;
+
+  const s = String(raw).trim().toLowerCase();
+  return !["false", "0", "inactive", "disabled", "no"].includes(s);
+}
+
+async function getUsersByRole(roleUpper, { activeOnly = true } = {}) {
+  const role = String(roleUpper || "").trim().toUpperCase();
+  if (!role) return [];
+
+  const snap = await db.collection("users").get();
+
+  return snap.docs
+    .map((d) => ({ uid: d.id, ...(d.data() || {}) }))
+    .filter((u) => String(u.role || "").trim().toUpperCase() === role)
+    .filter((u) => (activeOnly ? isUserActive(u) : true));
+}
+
 async function linePush(to, text) {
   if (!lineClient) return { ok: false, error: "NO_LINE_TOKEN" };
-  if (!to) return { ok: false, error: "NO_TO" };
+
+  const target = String(to || "").trim();
+  if (!target) return { ok: false, error: "NO_TO" };
+
   try {
-    await lineClient.pushMessage(String(to), {
+    await lineClient.pushMessage(target, {
       type: "text",
       text: String(text || ""),
     });
-    return { ok: true };
+    return { ok: true, to: target };
   } catch (err) {
-    console.error("[LINE-PUSH-ERROR]", err?.message || err);
-    return { ok: false, error: err?.message || String(err) };
+    const statusCode =
+      err?.statusCode ||
+      err?.status ||
+      err?.originalError?.response?.status ||
+      err?.response?.status ||
+      null;
+
+    const responseData =
+      err?.originalError?.response?.data ||
+      err?.response?.data ||
+      err?.body ||
+      null;
+
+    console.error("[LINE-PUSH-ERROR]", {
+      to: target,
+      statusCode,
+      message: err?.message || String(err),
+      responseData,
+    });
+
+    return {
+      ok: false,
+      to: target,
+      error: err?.message || String(err),
+      statusCode,
+      responseData,
+    };
   }
 }
 
@@ -102,15 +185,20 @@ function sleep(ms) {
 async function linePushMany(toList, text) {
   if (!lineClient) return { ok: false, error: "NO_LINE_TOKEN" };
 
-  const list = Array.from(new Set((toList || []).filter(Boolean).map(String)));
-  if (!list.length) return { ok: false, error: "EMPTY_LIST" };
+  const list = Array.from(new Set((toList || []).filter(Boolean).map((v) => String(v).trim())));
+  if (!list.length) return { ok: false, error: "EMPTY_LIST", count: 0, failed: [] };
 
   const failed = [];
 
   for (const to of list) {
     const result = await linePush(to, text);
     if (!result.ok) {
-      failed.push({ to, error: result.error });
+      failed.push({
+        to,
+        error: result.error,
+        statusCode: result.statusCode || null,
+        responseData: result.responseData || null,
+      });
     }
 
     // หน่วงนิดนึง ลดโอกาสชน 429
@@ -120,6 +208,7 @@ async function linePushMany(toList, text) {
   return {
     ok: failed.length === 0,
     count: list.length,
+    sentCount: list.length - failed.length,
     failed,
   };
 }
@@ -127,42 +216,58 @@ async function linePushMany(toList, text) {
 async function getLineUserIdByUid(uid) {
   const id = String(uid || "").trim();
   if (!id) return "";
+
   const snap = await db.collection("users").doc(id).get();
   if (!snap.exists) return "";
+
   const u = snap.data() || {};
-  return String(u.lineUserId || "").trim();
+  return normalizeLineUserId(extractLineUserId(u));
 }
 
 async function getLineUserIdsByUids(uids = []) {
   const uniq = Array.from(new Set((uids || []).filter(Boolean).map(String)));
   const out = [];
+
   for (const uid of uniq) {
     const lineUserId = await getLineUserIdByUid(uid);
     if (lineUserId) out.push(lineUserId);
   }
+
   return out;
 }
 
 async function sendLineToUids(uids = [], text = "") {
   const toList = await getLineUserIdsByUids(uids);
-  if (!toList.length) return { ok: false, error: "NO_LINKED_USERS" };
+  if (!toList.length) {
+    return { ok: false, error: "NO_LINKED_USERS", count: 0, sentCount: 0, failed: [] };
+  }
   return await linePushMany(toList, text);
 }
 
 async function sendLineToRole(roleUpper, text = "") {
   const role = String(roleUpper || "").trim().toUpperCase();
-  if (!role) return { ok: false, error: "MISSING_ROLE" };
+  if (!role) return { ok: false, error: "MISSING_ROLE", count: 0, sentCount: 0, failed: [] };
 
-  const snap = await db.collection("users").where("role", "==", role).get();
-  const toList = [];
-  snap.forEach((d) => {
-    const u = d.data() || {};
-    const lineUserId = String(u.lineUserId || "").trim();
-    if (lineUserId) toList.push(lineUserId);
-  });
+  const users = await getUsersByRole(role, { activeOnly: true });
+  const toList = users.map((u) => normalizeLineUserId(extractLineUserId(u))).filter(Boolean);
 
-  if (!toList.length) return { ok: false, error: "NO_LINKED_ROLE_USERS" };
-  return await linePushMany(toList, text);
+  if (!toList.length) {
+    return {
+      ok: false,
+      error: "NO_LINKED_ROLE_USERS",
+      matchedUsers: users.length,
+      count: 0,
+      sentCount: 0,
+      failed: [],
+    };
+  }
+
+  const result = await linePushMany(toList, text);
+  return {
+    ...result,
+    matchedUsers: users.length,
+    linkedUsers: toList.length,
+  };
 }
 // ----------------- ✅ HELPERS -----------------
 function normalizeRole(r) {
@@ -293,7 +398,7 @@ app.get("/test-firestore", async (req, res) => {
   try {
     const ref = db.collection("test").doc("ping");
     await ref.set({ msg: "hello", at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-    const snap = await ref.get();
+        const snap = await ref.get();
     res.json({ ok: true, id: ref.id, data: snap.data() });
   } catch (err) {
     console.error("/test-firestore error:", err);
@@ -352,7 +457,7 @@ app.get("/me", requireAuth, async (req, res) => {
     const avatarPath = pickStr(empAvatar.avatarPath, userAvatar.avatarPath);
 
     // ✅ เพิ่ม: สถานะเชื่อม LINE
-    const lineUserId = userData.lineUserId || null;
+    const lineUserId = normalizeLineUserId(extractLineUserId(userData)) || null;
 
     return res.json({
       ok: true,
@@ -430,6 +535,10 @@ app.post("/line/link", requireAuth, async (req, res) => {
         {
           lineUserId,
           lineLinkedAt: admin.firestore.FieldValue.serverTimestamp(),
+          line: {
+            userId: lineUserId,
+            linkedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
         },
         { merge: true }
       );
@@ -560,6 +669,43 @@ async function nsSet(ref, key) {
   await ref.set(patch, { merge: true });
 }
 
+function resultSkipped(reason, extra = {}) {
+  return { ok: true, skipped: true, reason, ...extra };
+}
+
+function submitInAppAlreadyMarked(wf) {
+  return Boolean(nsGet(wf, "submittedInAppAt") || nsGet(wf, "submittedAt"));
+}
+
+function submitHrLineAlreadyMarked(wf) {
+  return Boolean(nsGet(wf, "submittedHrLineAt"));
+}
+
+function submitOwnerLineAlreadyMarked(wf) {
+  return Boolean(nsGet(wf, "submittedOwnerLineAt"));
+}
+
+async function finalizeSubmitNotifyState(ref, wf, state) {
+  if (state.inAppDone && !submitInAppAlreadyMarked(wf)) {
+    await nsSet(ref, "submittedInAppAt");
+  }
+  if (state.hrLineDone && !submitHrLineAlreadyMarked(wf)) {
+    await nsSet(ref, "submittedHrLineAt");
+  }
+  if (state.ownerLineDone && !submitOwnerLineAlreadyMarked(wf)) {
+    await nsSet(ref, "submittedOwnerLineAt");
+  }
+
+  const allDone =
+    (submitInAppAlreadyMarked(wf) || state.inAppDone) &&
+    (submitHrLineAlreadyMarked(wf) || state.hrLineDone) &&
+    (submitOwnerLineAlreadyMarked(wf) || state.ownerLineDone);
+
+  if (allDone && !nsGet(wf, "submittedAt")) {
+    await nsSet(ref, "submittedAt");
+  }
+}
+
 // ✅ Template ข้อความ LINE ตามโผยล่าสุด (Emoji + เบอร์ + ลิงก์)
 function buildLineLeaveMessage(type, wf) {
   const reqNo = wf.requestNo || wf.id || "-";
@@ -652,7 +798,7 @@ function buildLineLeaveMessage(type, wf) {
       `เลขคำร้อง: ${reqNo}\n` +
       `ผู้ยื่น: ${empName} (${empNo})\n` +
       `เบอร์: ${phone}\n` +
-      `ประเภท: ${cat} • ${sub}\n` +
+            `ประเภท: ${cat} • ${sub}\n` +
       `ลา: ${dateRange} ${timeRange}\n` +
       `เหตุผล: ${decisionReason || "-"}\n` +
       (actor ? `ผู้ดำเนินการ: ${actor}\n` : "") +
@@ -729,15 +875,7 @@ async function createNotification({ toUid, toRole, type, title, message, ref, me
 }
 
 async function findUsersByRole(roleUpper) {
-  const role = String(roleUpper || "").trim().toUpperCase();
-  if (!role) return [];
-  const snap = await db.collection("users").where("role", "==", role).get();
-  return snap.docs
-    .map((d) => ({ uid: d.id, ...(d.data() || {}) }))
-    .filter((u) => {
-      const a = u.active;
-      return a === true || String(a || "").toLowerCase() === "true";
-    });
+  return await getUsersByRole(roleUpper, { activeOnly: true });
 }
 
 async function getEmployeeDocByNo(employeeNo) {
@@ -825,49 +963,89 @@ app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
       return res.status(409).json({ ok: false, error: "NOT_IN_PENDING_HR" });
     }
 
-    // กันเรียกซ้ำก่อนทำทุกอย่าง
-    if (nsGet(wf, "submittedAt")) {
-      return res.json({ ok: true, id, notified: 0, skipped: "ALREADY_SUBMITTED_NOTIFIED" });
-    }
-
     const hrs = await findUsersByRole("HR");
-    await Promise.all(
-      hrs.map((u) =>
-        createNotification({
-          toUid: u.uid,
-          toRole: "HR",
-          type: "LEAVE_SUBMITTED",
-          title: "มีคำร้องลาใหม่",
-          message: `เลขคำร้อง ${wf.requestNo || id} รอ HR ตรวจสอบ`,
-          ref: { col: LEAVE_COL, id },
-          meta: { overallStatus: wf.overallStatus, employeeNo: wf.employeeNo || null },
-        })
-      )
-    );
-
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
     const wfForMsg = { ...wf, id, __employeeName: senderName };
 
-    const hrLineResult = await sendLineToRole(
-      "HR",
-      buildLineLeaveMessage("SUBMITTED_TO_HR", wfForMsg)
-    );
+    let notified = 0;
+    let inAppResult = null;
+    let hrLineResult = null;
+    let ownerLineResult = null;
 
-    const ownerLineResult = await sendLineToUids(
-      [wf.uid],
-      buildLineLeaveMessage("SUBMITTED_TO_OWNER", wfForMsg)
-    );
+    let inAppDone = submitInAppAlreadyMarked(wf);
+    let hrLineDone = submitHrLineAlreadyMarked(wf);
+    let ownerLineDone = submitOwnerLineAlreadyMarked(wf);
 
-    await nsSet(ref, "submittedAt");
+    if (inAppDone) {
+      inAppResult = resultSkipped("ALREADY_IN_APP_NOTIFIED", { notified: hrs.length });
+      notified = hrs.length;
+    } else {
+      await Promise.all(
+        hrs.map((u) =>
+          createNotification({
+            toUid: u.uid,
+            toRole: "HR",
+            type: "LEAVE_SUBMITTED",
+            title: "มีคำร้องลาใหม่",
+            message: `เลขคำร้อง ${wf.requestNo || id} รอ HR ตรวจสอบ`,
+            ref: { col: LEAVE_COL, id },
+            meta: { overallStatus: wf.overallStatus, employeeNo: wf.employeeNo || null },
+          })
+        )
+      );
+
+      notified = hrs.length;
+      inAppDone = true;
+      inAppResult = { ok: true, notified };
+    }
+
+    if (hrLineDone) {
+      hrLineResult = resultSkipped("ALREADY_SENT_HR_LINE");
+    } else {
+      hrLineResult = await sendLineToRole(
+        "HR",
+        buildLineLeaveMessage("SUBMITTED_TO_HR", wfForMsg)
+      );
+      hrLineDone = hrLineResult.ok === true;
+    }
+
+    if (ownerLineDone) {
+      ownerLineResult = resultSkipped("ALREADY_SENT_OWNER_LINE");
+    } else {
+      ownerLineResult = await sendLineToUids(
+        [wf.uid],
+        buildLineLeaveMessage("SUBMITTED_TO_OWNER", wfForMsg)
+      );
+      ownerLineDone = ownerLineResult.ok === true;
+    }
+
+    await finalizeSubmitNotifyState(ref, wf, {
+      inAppDone,
+      hrLineDone,
+      ownerLineDone,
+    });
+
+    const fullyCompleted =
+      (submitInAppAlreadyMarked(wf) || inAppDone) &&
+      (submitHrLineAlreadyMarked(wf) || hrLineDone) &&
+      (submitOwnerLineAlreadyMarked(wf) || ownerLineDone);
 
     return res.json({
       ok: true,
       id,
-      notified: hrs.length,
+      notified,
+      completed: fullyCompleted,
       line: {
         hr: hrLineResult,
         owner: ownerLineResult,
+      },
+      inApp: inAppResult,
+      notifyState: {
+        submittedAt: Boolean(nsGet(wf, "submittedAt") || fullyCompleted),
+        submittedInAppAt: Boolean(nsGet(wf, "submittedInAppAt") || inAppDone),
+        submittedHrLineAt: Boolean(nsGet(wf, "submittedHrLineAt") || hrLineDone),
+        submittedOwnerLineAt: Boolean(nsGet(wf, "submittedOwnerLineAt") || ownerLineDone),
       },
     });
   } catch (err) {
@@ -1020,7 +1198,7 @@ app.post("/leave-requests/:id/hr-action", requireAuth, async (req, res) => {
     // ✅ กันส่งซ้ำ HR_REJECTED (notifyState.hrRejectedAt)
     if (!nsGet(wf, "hrRejectedAt")) {
       const empDoc = await getEmployeeDocByNo(wf.employeeNo);
-      const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
+            const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
       const actorLabel = `HR(${actorName || "-"})`;
 
       const wfForMsg = {
