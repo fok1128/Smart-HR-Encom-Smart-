@@ -84,7 +84,10 @@ async function linePush(to, text) {
   if (!lineClient) return { ok: false, error: "NO_LINE_TOKEN" };
   if (!to) return { ok: false, error: "NO_TO" };
   try {
-    await lineClient.pushMessage(String(to), { type: "text", text: String(text || "") });
+    await lineClient.pushMessage(String(to), {
+      type: "text",
+      text: String(text || ""),
+    });
     return { ok: true };
   } catch (err) {
     console.error("[LINE-PUSH-ERROR]", err?.message || err);
@@ -92,23 +95,33 @@ async function linePush(to, text) {
   }
 }
 
-async function lineMulticast(toList, text) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function linePushMany(toList, text) {
   if (!lineClient) return { ok: false, error: "NO_LINE_TOKEN" };
+
   const list = Array.from(new Set((toList || []).filter(Boolean).map(String)));
   if (!list.length) return { ok: false, error: "EMPTY_LIST" };
 
-  // LINE multicast จำกัดจำนวนผู้รับต่อครั้ง (โดยทั่วไป 500)
-  const CHUNK = 500;
-  try {
-    for (let i = 0; i < list.length; i += CHUNK) {
-      const chunk = list.slice(i, i + CHUNK);
-      await lineClient.multicast(chunk, { type: "text", text: String(text || "") });
+  const failed = [];
+
+  for (const to of list) {
+    const result = await linePush(to, text);
+    if (!result.ok) {
+      failed.push({ to, error: result.error });
     }
-    return { ok: true, count: list.length };
-  } catch (err) {
-    console.error("[LINE-MULTICAST-ERROR]", err?.message || err);
-    return { ok: false, error: err?.message || String(err) };
+
+    // หน่วงนิดนึง ลดโอกาสชน 429
+    await sleep(150);
   }
+
+  return {
+    ok: failed.length === 0,
+    count: list.length,
+    failed,
+  };
 }
 
 async function getLineUserIdByUid(uid) {
@@ -133,7 +146,7 @@ async function getLineUserIdsByUids(uids = []) {
 async function sendLineToUids(uids = [], text = "") {
   const toList = await getLineUserIdsByUids(uids);
   if (!toList.length) return { ok: false, error: "NO_LINKED_USERS" };
-  return await lineMulticast(toList, text);
+  return await linePushMany(toList, text);
 }
 
 async function sendLineToRole(roleUpper, text = "") {
@@ -147,10 +160,10 @@ async function sendLineToRole(roleUpper, text = "") {
     const lineUserId = String(u.lineUserId || "").trim();
     if (lineUserId) toList.push(lineUserId);
   });
-  if (!toList.length) return { ok: false, error: "NO_LINKED_ROLE_USERS" };
-  return await lineMulticast(toList, text);
-}
 
+  if (!toList.length) return { ok: false, error: "NO_LINKED_ROLE_USERS" };
+  return await linePushMany(toList, text);
+}
 // ----------------- ✅ HELPERS -----------------
 function normalizeRole(r) {
   const role = String(r || "USER").trim().toUpperCase();
@@ -512,11 +525,12 @@ const NOTI_COL = "notifications";
 
 // ✅ BASE URL (โดเมนเว็บของคุณ)
 // (เก็บไว้ได้ เผื่ออนาคตอยากกลับไปต่อ path)
-const BASE_URL = (process.env.APP_BASE_URL || "https://smart-hr-encom-smart.onrender.com").replace(/\/+$/, "");
+const BASE_URL = (
+  process.env.APP_BASE_URL || "https://smart-hr-encom-smart-u9m4.onrender.com"
+).replace(/\/+$/, "");
 
-// ✅ ✅ แก้ตรงนี้: ให้ลิงก์ใน LINE เป็น base URL เท่านั้นทุกเคส
 function buildLeaveLink() {
-  return "https://smart-hr-encom-smart.onrender.com/";
+  return BASE_URL;
 }
 
 // ✅ แสดงเวลาแบบ dd/mm/yyyy HH:MM
@@ -811,6 +825,11 @@ app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
       return res.status(409).json({ ok: false, error: "NOT_IN_PENDING_HR" });
     }
 
+    // กันเรียกซ้ำก่อนทำทุกอย่าง
+    if (nsGet(wf, "submittedAt")) {
+      return res.json({ ok: true, id, notified: 0, skipped: "ALREADY_SUBMITTED_NOTIFIED" });
+    }
+
     const hrs = await findUsersByRole("HR");
     await Promise.all(
       hrs.map((u) =>
@@ -826,27 +845,31 @@ app.post("/leave-requests/:id/notify-submit", requireAuth, async (req, res) => {
       )
     );
 
-    // ✅ กันส่งซ้ำ (notifyState.submittedAt)
-    if (nsGet(wf, "submittedAt")) {
-      return res.json({ ok: true, id, notified: 0, skipped: "ALREADY_SUBMITTED_NOTIFIED" });
-    }
-
-    // ✅ ชื่อผู้ยื่น "ยึดจาก employees/{employeeNo}" เป็นหลัก
     const empDoc = await getEmployeeDocByNo(wf.employeeNo);
     const senderName = fullNameFromEmp(empDoc) || wf.employeeName || "-";
-
     const wfForMsg = { ...wf, id, __employeeName: senderName };
 
-    // ✅ LINE: แจ้ง HR ทุกคน (มีเบอร์ + ลิงก์)
-    await sendLineToRole("HR", buildLineLeaveMessage("SUBMITTED_TO_HR", wfForMsg));
+    const hrLineResult = await sendLineToRole(
+      "HR",
+      buildLineLeaveMessage("SUBMITTED_TO_HR", wfForMsg)
+    );
 
-    // ✅ LINE: ส่งกลับเจ้าของคำร้อง
-    await sendLineToUids([wf.uid], buildLineLeaveMessage("SUBMITTED_TO_OWNER", wfForMsg));
+    const ownerLineResult = await sendLineToUids(
+      [wf.uid],
+      buildLineLeaveMessage("SUBMITTED_TO_OWNER", wfForMsg)
+    );
 
-    // ✅ set notifyState หลังส่งสำเร็จ
     await nsSet(ref, "submittedAt");
 
-    return res.json({ ok: true, id, notified: hrs.length });
+    return res.json({
+      ok: true,
+      id,
+      notified: hrs.length,
+      line: {
+        hr: hrLineResult,
+        owner: ownerLineResult,
+      },
+    });
   } catch (err) {
     console.error("/leave-requests/:id/notify-submit error:", err);
     const status = err?.status || 500;
