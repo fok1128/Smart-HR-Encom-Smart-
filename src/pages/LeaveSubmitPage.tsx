@@ -413,6 +413,38 @@ function formatLeaveUnitsAsText(units: number) {
   return formatMinutesAsLeaveText(leaveUnitsToMinutes(units));
 }
 
+function getEntitlementMetrics(total: number | null | "UNLIMITED", used?: number | null, requested?: number) {
+  const usedNum = Number.isFinite(used as number) ? Number(used) : 0;
+  const requestedNum = Number.isFinite(requested as number) ? Number(requested) : 0;
+
+  const isUnlimited = total === "UNLIMITED";
+  const hasTotal = typeof total === "number" && Number.isFinite(total);
+  const totalNum = hasTotal ? Number(total) : 0;
+
+  const remaining = hasTotal ? Math.max(0, totalNum - usedNum) : null;
+  const projectedUsed = roundLeaveUnits(usedNum + requestedNum);
+  const projectedRemaining = hasTotal ? Math.max(0, totalNum - projectedUsed) : null;
+  const exceeded = hasTotal ? Math.max(0, usedNum - totalNum) : 0;
+  const projectedExceeded = hasTotal ? Math.max(0, projectedUsed - totalNum) : 0;
+  const pctUsed = hasTotal && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
+  const pctProjected = hasTotal && totalNum > 0 ? Math.min(100, Math.max(pctUsed, (projectedUsed / totalNum) * 100)) : 0;
+
+  return {
+    usedNum,
+    requestedNum,
+    isUnlimited,
+    hasTotal,
+    totalNum,
+    remaining,
+    projectedUsed,
+    projectedRemaining,
+    exceeded,
+    projectedExceeded,
+    pctUsed,
+    pctProjected,
+  };
+}
+
 /** ✅ การ์ดสรุปสิทธิ (ใช้ร่วมกันทุกประเภท) + progress bar แบบเดียวกัน */
 function YearEntitlementCard({
   title,
@@ -433,17 +465,20 @@ function YearEntitlementCard({
   requested?: number;
   note?: React.ReactNode;
 }) {
-  const usedNum = Number.isFinite(used as number) ? Number(used) : 0;
-  const requestedNum = Number.isFinite(requested as number) ? Number(requested) : 0;
-
-  const isUnlimited = total === "UNLIMITED";
-  const hasTotal = typeof total === "number" && Number.isFinite(total);
-  const totalNum = hasTotal ? Number(total) : 0;
-
-  const remain = hasTotal ? Math.max(0, totalNum - usedNum) : null;
-  const previewRemain = hasTotal ? Math.max(0, totalNum - usedNum - requestedNum) : null;
-  const pctUsed = hasTotal && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
-  const pctPreview = hasTotal && totalNum > 0 ? Math.min(100, Math.max(pctUsed, ((usedNum + requestedNum) / totalNum) * 100)) : 0;
+  const {
+    usedNum,
+    requestedNum,
+    isUnlimited,
+    hasTotal,
+    totalNum,
+    remaining,
+    projectedUsed,
+    projectedRemaining,
+    exceeded,
+    projectedExceeded,
+    pctUsed,
+    pctProjected,
+  } = getEntitlementMetrics(total, used, requested);
 
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-gray-800 dark:bg-gray-900/40">
@@ -471,8 +506,16 @@ function YearEntitlementCard({
                 </span>
                 <span className="text-gray-500 dark:text-gray-400">•</span>
                 <span>
-                  คงเหลือ <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : formatLeaveUnitsAsText(remain ?? 0)}</span>
+                  คงเหลือ <span className="font-extrabold text-violet-700 dark:text-violet-200">{loading ? "…" : formatLeaveUnitsAsText(remaining ?? 0)}</span>
                 </span>
+                {exceeded > 0 && (
+                  <>
+                    <span className="text-gray-500 dark:text-gray-400">•</span>
+                    <span>
+                      เกินสิทธิ <span className="font-extrabold text-red-600 dark:text-red-300">{loading ? "…" : formatLeaveUnitsAsText(exceeded)}</span>
+                    </span>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -490,27 +533,34 @@ function YearEntitlementCard({
 
       {hasTotal && (
         <div className="mt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300">
+          <div className="flex flex-wrap items-end justify-between gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300">
             <div>
-              ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span>
+              ใช้สิทธิ <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span> / {formatLeaveUnitsAsText(totalNum)}
             </div>
-            <div>
-              คงเหลือ <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(remain ?? 0)}</span>
+            <div className="flex flex-col items-end gap-1 text-right">
+              {((requestedNum > 0 && projectedExceeded > 0) || (requestedNum <= 0 && exceeded > 0)) && (
+                <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-extrabold text-red-700 shadow-sm dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
+                  เกินสิทธิรวม {loading ? "…" : formatLeaveUnitsAsText(requestedNum > 0 ? projectedExceeded : exceeded)}
+                </span>
+              )}
+              <div>
+                คงเหลือ <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(remaining ?? 0)}</span>
+              </div>
             </div>
           </div>
 
           <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
             <div className="relative h-full w-full">
-              <div className="absolute inset-y-0 left-0 bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pctPreview}%`, opacity: requestedNum > 0 ? 0.35 : 1 }} />
+              <div className="absolute inset-y-0 left-0 bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pctProjected}%`, opacity: requestedNum > 0 ? 0.35 : 1 }} />
               <div className="absolute inset-y-0 left-0 bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading ? 0 : pctUsed}%` }} />
             </div>
           </div>
 
-          {requestedNum > 0 && (
+          {requestedNum > 0 && projectedExceeded <= 0 ? (
             <div className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
-              หลังรวมคำร้องรอบนี้จะเหลือ {loading ? "…" : formatLeaveUnitsAsText(previewRemain ?? 0)}
+              หลังรวมคำร้องรอบนี้จะเหลือ {loading ? "…" : formatLeaveUnitsAsText(projectedRemaining ?? 0)}
             </div>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -535,12 +585,7 @@ function EntitlementRow({
   used: number;
   loading?: boolean;
 }) {
-  const isUnlimited = total === "UNLIMITED" || total == null;
-  const totalNum = typeof total === "number" ? total : 0;
-  const usedNum = Number.isFinite(used) ? used : 0;
-
-  const remain = typeof total === "number" ? Math.max(0, totalNum - usedNum) : null;
-  const pct = typeof total === "number" && totalNum > 0 ? Math.min(100, Math.max(0, (usedNum / totalNum) * 100)) : 0;
+  const { usedNum, isUnlimited, hasTotal, totalNum, remaining, exceeded, pctUsed } = getEntitlementMetrics(total, used, 0);
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-gray-900">
@@ -550,11 +595,18 @@ function EntitlementRow({
           <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
             {isUnlimited ? (
               <>ใช้ไป {loading ? "…" : formatLeaveUnitsAsText(usedNum)} • คงเหลือ ไม่จำกัด</>
-            ) : (
+            ) : hasTotal ? (
               <>
-                ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span> • คงเหลือ{' '}
-                <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(remain ?? 0)}</span>
+                ใช้ไป <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(usedNum)}</span> / {formatLeaveUnitsAsText(totalNum)} • คงเหลือ{' '}
+                <span className="font-extrabold text-gray-900 dark:text-gray-100">{loading ? "…" : formatLeaveUnitsAsText(remaining ?? 0)}</span>
+                {exceeded > 0 && (
+                  <>
+                    {' '}• เกินสิทธิ <span className="font-extrabold text-red-600 dark:text-red-300">{loading ? "…" : formatLeaveUnitsAsText(exceeded)}</span>
+                  </>
+                )}
               </>
+            ) : (
+              <>ใช้ไป {loading ? "…" : formatLeaveUnitsAsText(usedNum)} • คงเหลือ ตรวจสอบกับ HR</>
             )}
           </div>
         </div>
@@ -565,8 +617,12 @@ function EntitlementRow({
       </div>
 
       <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-        <div className="h-full bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading || isUnlimited ? 0 : pct}%` }} />
+        <div className="h-full bg-violet-600 dark:bg-violet-400 transition-all" style={{ width: `${loading || isUnlimited ? 0 : pctUsed}%` }} />
       </div>
+
+      {hasTotal && exceeded > 0 && (
+        <div className="mt-2 text-xs font-extrabold text-red-600 dark:text-red-300">ใช้สิทธิเกินสะสม {loading ? "…" : formatLeaveUnitsAsText(exceeded)}</div>
+      )}
     </div>
   );
 }
@@ -620,6 +676,12 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   // ✅ ไฟล์เดิมในคำร้อง (ตอน Edit)
   const [existingAttachments, setExistingAttachments] = useState<LeaveAttachment[]>([]);
   const [deletingKey, setDeletingKey] = useState<string>("");
+  const [editOriginalUsage, setEditOriginalUsage] = useState<{
+    category: LeaveCategory | "";
+    subType: LeaveSubType | "";
+    startAt: string;
+    leaveUnits: number;
+  } | null>(null);
 
   function navigate(to: any, opts?: any) {
   console.group("🚨 NAVIGATE called");
@@ -657,7 +719,10 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
 
     async function run() {
       setEditLoadErr("");
-      if (!isEdit) return;
+      if (!isEdit) {
+        setEditOriginalUsage(null);
+        return;
+      }
 
       if (!user?.uid) {
         setEditLoadErr("ยังไม่เข้าสู่ระบบ");
@@ -698,6 +763,15 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
 
         setReason(String((doc as any).reason || ""));
         setRetroReason(String((doc as any).retroReason || ""));
+        setEditOriginalUsage({
+          category: (((doc as any).category || "") as LeaveCategory | "") || "",
+          subType: (((doc as any).subType || "") as LeaveSubType | "") || "",
+          startAt: String((doc as any).startAt || ""),
+          leaveUnits:
+            typeof (doc as any).leaveUnits === "number"
+              ? Number((doc as any).leaveUnits)
+              : Number((doc as any).workdaysCount || 0) || 0,
+        });
 
         // ✅ ไฟล์เดิมในคำร้อง (โชว์ไฟล์ล่าสุด)
         const atts = pickAttachmentsFromDoc(doc);
@@ -709,6 +783,7 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
         if (fileInputRef.current) fileInputRef.current.value = "";
       } catch (e: any) {
         console.error("load edit leave error:", e);
+        setEditOriginalUsage(null);
         setEditLoadErr(e?.message || String(e));
       } finally {
         if (alive) setLoadingEdit(false);
@@ -888,6 +963,13 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   const [usageErr, setUsageErr] = useState("");
   const [usedMap, setUsedMap] = useState<Record<string, number>>({});
 
+  function startYearFromDateTimeLocal(s: string) {
+    const ymd = datePartFromDateTimeLocal(s);
+    if (!ymd) return null;
+    const y = Number(ymd.slice(0, 4));
+    return Number.isFinite(y) ? y : null;
+  }
+
   function usedKey(cat: LeaveCategory, sub?: LeaveSubType | "") {
     if (cat !== "ลากรณีพิเศษ") return `CAT:${cat}`;
     return `SP:${sub || "UNKNOWN"}`;
@@ -952,19 +1034,27 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  const bizUsed = usedMap[usedKey("ลากิจ")] || 0;
-  const sickUsed = usedMap[usedKey("ลาป่วย")] || 0;
-  const vacationUsed = usedMap[usedKey("ลาพักร้อน")] || 0;
+  const adjustedUsedMap = useMemo(() => {
+    if (!isEdit || !editOriginalUsage || !editOriginalUsage.category) return usedMap;
 
-  const maternityUsed = usedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0;
-  const militaryUsed = usedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0;
-  const sterilUsed = usedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0;
+    const currentYear = new Date().getFullYear();
+    const originalYear = startYearFromDateTimeLocal(editOriginalUsage.startAt);
+    if (!originalYear || originalYear !== currentYear) return usedMap;
 
-  const bizRemain = Math.max(0, LIMIT_BUSINESS - bizUsed);
-  const sickRemain = Math.max(0, LIMIT_SICK - sickUsed);
-  const vacationRemain = Math.max(0, LIMIT_VACATION - vacationUsed);
-  const maternityRemain = Math.max(0, LIMIT_MATERNITY - maternityUsed);
-  const militaryRemain = Math.max(0, LIMIT_MILITARY - militaryUsed);
+    const key = usedKey(editOriginalUsage.category as LeaveCategory, editOriginalUsage.subType as LeaveSubType | "");
+
+    const next = { ...usedMap };
+    next[key] = roundLeaveUnits(Math.max(0, (next[key] || 0) - (editOriginalUsage.leaveUnits || 0)));
+    return next;
+  }, [isEdit, editOriginalUsage, usedMap]);
+
+  const bizUsed = adjustedUsedMap[usedKey("ลากิจ")] || 0;
+  const sickUsed = adjustedUsedMap[usedKey("ลาป่วย")] || 0;
+  const vacationUsed = adjustedUsedMap[usedKey("ลาพักร้อน")] || 0;
+
+  const maternityUsed = adjustedUsedMap[usedKey("ลากรณีพิเศษ", "ลาคลอด")] || 0;
+  const militaryUsed = adjustedUsedMap[usedKey("ลากรณีพิเศษ", "ลาราชการทหาร")] || 0;
+  const sterilUsed = adjustedUsedMap[usedKey("ลากรณีพิเศษ", "ลาเพื่อทำหมัน")] || 0;
 
   // =======================
   // ✅ Summary by year (ย้อนหลัง)
@@ -1042,6 +1132,74 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
   const summaryBizUsed = summaryUsedMap[usedKey("ลากิจ")] || 0;
   const summarySickUsed = summaryUsedMap[usedKey("ลาป่วย")] || 0;
   const summaryVacationUsed = summaryUsedMap[usedKey("ลาพักร้อน")] || 0;
+
+  const selectedEntitlement = useMemo(() => {
+    if (!category) return null;
+
+    if (category === "ลากิจ") {
+      return { label: "ลากิจ", total: LIMIT_BUSINESS as number | null | "UNLIMITED", used: bizUsed };
+    }
+    if (category === "ลาป่วย") {
+      return { label: "ลาป่วย", total: LIMIT_SICK as number | null | "UNLIMITED", used: sickUsed };
+    }
+    if (category === "ลาพักร้อน") {
+      return { label: "ลาพักร้อน", total: LIMIT_VACATION as number | null | "UNLIMITED", used: vacationUsed };
+    }
+    if (category === "ลากรณีพิเศษ") {
+      if (subType === "ลาคลอด") {
+        return { label: "ลาคลอด", total: LIMIT_MATERNITY as number | null | "UNLIMITED", used: maternityUsed };
+      }
+      if (subType === "ลาราชการทหาร") {
+        return { label: "ลาเพื่อรับราชการทหาร", total: LIMIT_MILITARY as number | null | "UNLIMITED", used: militaryUsed };
+      }
+      if (subType === "ลาเพื่อทำหมัน") {
+        return { label: "ลาเพื่อทำหมัน", total: LIMIT_STERILIZATION as number | null | "UNLIMITED", used: sterilUsed };
+      }
+      return {
+        label: subType || "ลากรณีพิเศษ",
+        total: null as number | null | "UNLIMITED",
+        used: 0,
+      };
+    }
+
+    return null;
+  }, [
+    category,
+    subType,
+    bizUsed,
+    sickUsed,
+    vacationUsed,
+    maternityUsed,
+    militaryUsed,
+    sterilUsed,
+  ]);
+
+  const selectedEntitlementMetrics = useMemo(() => {
+    if (!selectedEntitlement) return null;
+    return getEntitlementMetrics(selectedEntitlement.total, selectedEntitlement.used, requestedLeaveUnits);
+  }, [selectedEntitlement, requestedLeaveUnits]);
+
+  const selectedEntitlementAlert = useMemo(() => {
+    if (!selectedEntitlement || !selectedEntitlementMetrics || !selectedEntitlementMetrics.hasTotal) return null;
+
+    if (selectedEntitlementMetrics.projectedExceeded > 0) {
+      return {
+        tone: "danger" as const,
+        title: `คำร้องรอบนี้จะทำให้${selectedEntitlement.label}เกินสิทธิ`,
+        message: `หลังยื่นคำร้องนี้ คุณจะใช้สิทธิรวม ${formatLeaveUnitsAsText(selectedEntitlementMetrics.projectedUsed)} จากสิทธิ ${formatLeaveUnitsAsText(selectedEntitlementMetrics.totalNum)} และมียอดเกินสิทธิรวม ${formatLeaveUnitsAsText(selectedEntitlementMetrics.projectedExceeded)}`,
+      };
+    }
+
+    if (selectedEntitlementMetrics.exceeded > 0) {
+      return {
+        tone: "danger" as const,
+        title: `${selectedEntitlement.label}มีการใช้เกินสิทธิสะสมอยู่แล้ว`,
+        message: `ขณะนี้มียอดใช้สิทธิเกินสะสม ${formatLeaveUnitsAsText(selectedEntitlementMetrics.exceeded)}`,
+      };
+    }
+
+    return null;
+  }, [selectedEntitlement, selectedEntitlementMetrics]);
 
   const resetAll = () => {
     setCategory("");
@@ -1139,22 +1297,6 @@ export default function LeaveSubmitPage(props: LeaveSubmitPageProps = {}) {
 
     if (isSick && !isSickInDay && requestedLeaveUnits >= 3 && isRetroactive) {
       if (totalFileCount === 0) e.files = "ลาป่วยย้อนหลัง ≥ 3 วันทำการ: ต้องแนบใบรับรองแพทย์จากโรงพยาบาลตอนยื่น";
-    }
-
-    if (isBusinessLeave && requestedLeaveUnits > 0) {
-      if (requestedLeaveUnits > bizRemain) e.businessLimit = `ลากิจปีนี้เหลือ ${formatLeaveUnitsAsText(bizRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
-    }
-    if (isSick && requestedLeaveUnits > 0) {
-      if (requestedLeaveUnits > sickRemain) e.sickLimit = `ลาป่วยปีนี้เหลือ ${formatLeaveUnitsAsText(sickRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
-    }
-    if (isVacation && requestedLeaveUnits > 0) {
-      if (requestedLeaveUnits > vacationRemain) e.vacationLimit = `ลาพักร้อนปีนี้เหลือ ${formatLeaveUnitsAsText(vacationRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
-    }
-    if (isMaternity && requestedLeaveUnits > 0) {
-      if (requestedLeaveUnits > maternityRemain) e.maternityLimit = `ลาคลอดปีนี้เหลือ ${formatLeaveUnitsAsText(maternityRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
-    }
-    if (isMilitary && requestedLeaveUnits > 0) {
-      if (requestedLeaveUnits > militaryRemain) e.militaryLimit = `ลาเพื่อรับราชการทหารปีนี้เหลือ ${formatLeaveUnitsAsText(militaryRemain)} (คุณกำลังยื่น ${formatLeaveUnitsAsText(requestedLeaveUnits)})`;
     }
 
     if (isMaternity && !isRetroactive && startYMD) {
@@ -1366,7 +1508,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
         <div className={wrapCls}>
           <div className={headerCls}>เงื่อนไขลากิจ</div>
           <div className={listCls}>
-            <div>• ลาได้ไม่เกิน 5 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม)</div>
+            <div>• สิทธิ 5 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม) หากใช้ครบแล้วยังยื่นลาได้ และระบบจะแสดงจำนวนวันที่เกินสิทธิ</div>
             <div>• ลากิจปกติ ต้องยื่นล่วงหน้าอย่างน้อย 3 วันทำการ (จ.-ส.)</div>
             <div>• ลากิจฉุกเฉิน: ไม่จำเป็นต้องยื่นใบรับรองแพทย์</div>
             <div>• กรณีย้อนหลัง ต้องมีเหตุผล หรือแนบไฟล์หลักฐาน</div>
@@ -1395,7 +1537,20 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                   <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
                   <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatMinutesAsLeaveText(requestedLeaveMinutes)}</span>
                 </div>
-                {errors.businessLimit && <div className="text-xs font-extrabold text-red-600">{errors.businessLimit}</div>}
+                {selectedEntitlementAlert && (
+                  <div
+                    className={[
+                      "rounded-xl border px-3 py-3 text-sm",
+                      selectedEntitlementAlert.tone === "danger"
+                        ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100"
+                        : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                    ].join(" ")}
+                  >
+                    <div className="font-extrabold">{selectedEntitlementAlert.title}</div>
+                    <div className="mt-1 text-sm">{selectedEntitlementAlert.message}</div>
+                  </div>
+                )}
+
               </>
             }
           />
@@ -1412,6 +1567,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
             <div>• “ป่วยระหว่างวัน” ไม่ต้องแนบใบรับรองทุกกรณี</div>
             <div>• ป่วยระหว่างวัน: ต้องเป็นวันเดียวกัน และอยู่ในเวลาทำการ 09:00–18:00</div>
             <div>• ลาป่วย ≥ 3 วันทำการ ต้องมีใบรับรอง “จากโรงพยาบาลเท่านั้น”</div>
+            <div>• หากใช้สิทธิครบแล้วยังยื่นลาได้ โดยระบบจะแสดงจำนวนวันที่เกินสิทธิ</div>
           </div>
 
           <YearEntitlementCard
@@ -1432,6 +1588,20 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                   )}
                 </div>
 
+                {selectedEntitlementAlert && (
+                  <div
+                    className={[
+                      "rounded-xl border px-3 py-3 text-sm",
+                      selectedEntitlementAlert.tone === "danger"
+                        ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100"
+                        : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                    ].join(" ")}
+                  >
+                    <div className="font-extrabold">{selectedEntitlementAlert.title}</div>
+                    <div className="mt-1 text-sm">{selectedEntitlementAlert.message}</div>
+                  </div>
+                )}
+
                 {needMedicalCert && medicalCertMode === "DUE_BY_WORKDAY_3" && medicalCertDueAt && (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
                     <div className="font-extrabold">ต้องแนบใบรับรอง “ภายในวันทำการที่ 3”</div>
@@ -1447,7 +1617,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                   </div>
                 )}
 
-                {errors.sickLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.sickLimit}</div>}
+
               </>
             }
           />
@@ -1460,7 +1630,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
         <div className={wrapCls}>
           <div className={headerCls}>เงื่อนไขลาพักร้อน</div>
           <div className={listCls}>
-            <div>• สิทธิวันลาพักร้อน 6 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม)</div>
+            <div>• สิทธิวันลาพักร้อน 6 วัน/ปี (รีเซ็ตทุกปี / ไม่สะสม) หากใช้ครบแล้วยังยื่นลาได้ และระบบจะแสดงจำนวนวันที่เกินสิทธิ</div>
             <div>• แนะนำให้ยื่นล่วงหน้าเพื่อให้ผู้อนุมัติพิจารณาได้ทันเวลา</div>
           </div>
 
@@ -1478,8 +1648,21 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                   <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
                   <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatMinutesAsLeaveText(requestedLeaveMinutes)}</span>
                 </div>
+                {selectedEntitlementAlert && (
+                  <div
+                    className={[
+                      "rounded-xl border px-3 py-3 text-sm",
+                      selectedEntitlementAlert.tone === "danger"
+                        ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100"
+                        : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                    ].join(" ")}
+                  >
+                    <div className="font-extrabold">{selectedEntitlementAlert.title}</div>
+                    <div className="mt-1 text-sm">{selectedEntitlementAlert.message}</div>
+                  </div>
+                )}
                 <div className="text-sm">* หากบริษัทมีเงื่อนไขเพิ่มเติม ให้ยึดตามนโยบาย/HR</div>
-                {errors.vacationLimit && <div className="text-xs font-extrabold text-red-600">{errors.vacationLimit}</div>}
+
               </>
             }
           />
@@ -1494,6 +1677,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
         <div className={listCls}>
           <div>• ขึ้นกับประเภทที่เลือก (เช่น ลาคลอด / ราชการทหาร / ทำหมัน / อื่นๆ)</div>
           <div>• อาจต้องแนบเอกสารประกอบตามที่ HR/ผู้อนุมัติร้องขอ</div>
+          <div>• ประเภทที่มีสิทธิจำกัดยังสามารถยื่นลาได้ต่อ แม้ใช้ครบแล้ว โดยระบบจะแสดงจำนวนวันที่เกินสิทธิ</div>
         </div>
 
         {isMaternity && (
@@ -1540,9 +1724,21 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                 <span className="font-semibold">จำนวนเวลาที่ยื่นในรอบนี้:</span>{" "}
                 <span className="font-extrabold text-teal-700 dark:text-teal-200">{formatMinutesAsLeaveText(requestedLeaveMinutes)}</span>
               </div>
+                {selectedEntitlementAlert && (
+                  <div
+                    className={[
+                      "rounded-xl border px-3 py-3 text-sm",
+                      selectedEntitlementAlert.tone === "danger"
+                        ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100"
+                        : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                    ].join(" ")}
+                  >
+                    <div className="font-extrabold">{selectedEntitlementAlert.title}</div>
+                    <div className="mt-1 text-sm">{selectedEntitlementAlert.message}</div>
+                  </div>
+                )}
               {!subType && <div className="text-sm">* โปรดเลือก “ประเภทย่อย” เพื่อแสดงสิทธิของรายการนั้น</div>}
-              {errors.maternityLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.maternityLimit}</div>}
-              {errors.militaryLimit && <div className="mt-2 text-xs font-extrabold text-red-600">{errors.militaryLimit}</div>}
+
             </>
           }
         />
@@ -1562,11 +1758,6 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
     maternityUsed,
     militaryUsed,
     sterilUsed,
-    bizRemain,
-    sickRemain,
-    vacationRemain,
-    maternityRemain,
-    militaryRemain,
     isBusinessNormal,
     isRetroactive,
     minStartForBusinessNormal,
@@ -1574,11 +1765,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
     needMedicalCert,
     medicalCertMode,
     medicalCertDueAt,
-    errors.businessLimit,
-    errors.sickLimit,
-    errors.vacationLimit,
-    errors.maternityLimit,
-    errors.militaryLimit,
+    selectedEntitlementAlert,
     isMaternity,
     isMilitary,
     isSterilization,
@@ -1720,19 +1907,6 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                     className={`${inputTheme.control} mt-2`}
                   />
                   {errors.startDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.startDT}</p>}
-                  {(errors.businessLimit ||
-                    errors.sickLimit ||
-                    errors.vacationLimit ||
-                    errors.maternityLimit ||
-                    errors.militaryLimit) && (
-                    <p className="mt-2 text-xs font-semibold text-red-600">
-                      {errors.businessLimit ||
-                        errors.sickLimit ||
-                        errors.vacationLimit ||
-                        errors.maternityLimit ||
-                        errors.militaryLimit}
-                    </p>
-                  )}
                 </div>
 
                 <div>
@@ -1753,6 +1927,20 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
                   {errors.endDT && <p className="mt-2 text-xs font-semibold text-red-600">{errors.endDT}</p>}
                 </div>
               </div>
+
+              {selectedEntitlementAlert && (
+                <div
+                  className={[
+                    "mt-5 rounded-2xl border px-4 py-3 text-sm",
+                    selectedEntitlementAlert.tone === "danger"
+                      ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-100"
+                      : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                  ].join(" ")}
+                >
+                  <div className="font-extrabold">{selectedEntitlementAlert.title}</div>
+                  <div className="mt-1">{selectedEntitlementAlert.message}</div>
+                </div>
+              )}
 
               {isSickInDay && (
                 <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
@@ -2005,7 +2193,7 @@ const handleFormSubmit = (ev: FormEvent<HTMLFormElement>) => {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="text-lg font-extrabold text-gray-900 dark:text-gray-100">รวมสิทธิการลาทั้งหมด</div>
-                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
+                <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">ดูยอด “ใช้ไป/คงเหลือ/เกินสิทธิ” ของแต่ละประเภท และเลือกปีเพื่อดูย้อนหลัง</div>
               </div>
 
               <div className="min-w-[180px]">
