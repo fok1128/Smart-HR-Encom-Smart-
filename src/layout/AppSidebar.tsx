@@ -85,7 +85,8 @@ const AppSidebar = () => {
     if (canApprove) {
       base.push(
         { icon: <Clipboard {...iconProps} />, name: "อนุมัติใบลา", path: "/leave/approve" },
-        { icon: <ClockCounterClockwiseIcon {...iconProps} />, name: "ประวัติการอนุมัติ", path: "/leave/approve-history" }
+        { icon: <ClockCounterClockwiseIcon {...iconProps} />, name: "ประวัติการอนุมัติ", path: "/leave/approve-history" },
+        { icon: <CalendarBlank {...iconProps} />, name: "ปฏิทินการลาพนักงาน", path: "/leave/approved-calendar" }
       );
     }
 

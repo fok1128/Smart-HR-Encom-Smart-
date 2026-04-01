@@ -5,6 +5,7 @@ import ScrollToTop from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
 import UserProfiles from "./pages/UserProfiles";
 import Calendar from "./pages/Calendar";
+import ApprovedLeaveCalendarPage from "./pages/ApprovedLeaveCalendarPage";
 import Blank from "./pages/Blank";
 import FormElements from "./pages/Forms/FormElements";
 import BasicTables from "./pages/Tables/BasicTables";
@@ -69,6 +70,7 @@ export default function App() {
               <Route element={<RequireRole allow={["ADMIN", "HR", "MANAGER", "EXECUTIVE_MANAGER"]} />}>
                 <Route path="leave/approve" element={<LeaveApprovePage />} />
                 <Route path="leave/approve-history" element={<LeaveApproveHistoryPage />} />
+                <Route path="leave/approved-calendar" element={<ApprovedLeaveCalendarPage />} />
               </Route>
             </Route>
           </Route>
