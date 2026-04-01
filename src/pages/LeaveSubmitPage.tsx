@@ -423,6 +423,7 @@ function getEntitlementMetrics(total: number | null | "UNLIMITED", used?: number
 
   const remaining = hasTotal ? Math.max(0, totalNum - usedNum) : null;
   const projectedUsed = roundLeaveUnits(usedNum + requestedNum);
+  void projectedUsed;
   const projectedRemaining = hasTotal ? Math.max(0, totalNum - projectedUsed) : null;
   const exceeded = hasTotal ? Math.max(0, usedNum - totalNum) : 0;
   const projectedExceeded = hasTotal ? Math.max(0, projectedUsed - totalNum) : 0;
@@ -472,7 +473,6 @@ function YearEntitlementCard({
     hasTotal,
     totalNum,
     remaining,
-    projectedUsed,
     projectedRemaining,
     exceeded,
     projectedExceeded,

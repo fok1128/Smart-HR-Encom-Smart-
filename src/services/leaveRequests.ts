@@ -178,6 +178,22 @@ export async function getSignedUrlForKey(key: string): Promise<string> {
   // - เวลา user กดดู/ดาวน์โหลด แนะนำ forceFresh
   return await getSignedUrl(key, { forceFresh: true });
 }
+export async function getSignedUrlForAttachment(att: any): Promise<string> {
+  const direct = String(
+    att?.url || att?.signedUrl || att?.downloadUrl || ""
+  ).trim();
+  if (direct) return direct;
+
+  const key =
+    getAttachmentKey(att) ||
+    String(att?.path || att?.storagePath || att?.key || "").trim();
+
+  if (!key) {
+    throw new Error("ATTACHMENT_KEY_NOT_FOUND");
+  }
+
+  return await getSignedUrlForKey(key);
+}
 
 function normalizeUploadResponse(data: any, f: File): LeaveAttachment {
   const first = (Array.isArray(data?.attachments) && data.attachments[0]) || null;
