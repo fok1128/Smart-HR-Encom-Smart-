@@ -487,10 +487,6 @@ function normalizeStatus(x?: string): LeaveStatus {
   return "รอดำเนินการ";
 }
 
-function normUpper(x: any) {
-  return String(x ?? "").trim().toUpperCase();
-}
-
 /** ✅ หาสถานะสุดท้ายของคำร้องลา (กัน schema หลายแบบ) */
 function pickFinalStatus(r: RequestLike): any {
   return (
