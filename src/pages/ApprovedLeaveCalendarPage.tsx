@@ -507,17 +507,21 @@ function pickFinalStatus(r: RequestLike): any {
 /** ✅ Calendar ต้องโชว์เฉพาะที่ "อนุมัติแล้ว" */
 function isApprovedRequest(r: RequestLike): boolean {
   const raw = pickFinalStatus(r);
-  const th = normalizeStatus(typeof raw === "string" ? raw : String(raw ?? ""));
-  if (th === "อนุมัติ") return true;
+  const txt = String(raw ?? "").trim();
+  const up = txt.toUpperCase();
 
-  // กันเคสที่เก็บเป็นไทยแบบยาว ๆ
-  if (typeof raw === "string" && raw.includes("อนุมัติ")) return true;
+  // exact TH
+  if (txt === "อนุมัติ") return true;
+  if (txt === "ไม่อนุมัติ" || txt === "รอดำเนินการ") return false;
 
-  // กันเคสที่เก็บเป็น EN
-  const up = normUpper(raw);
-  return up === "APPROVED";
+  // exact EN
+  if (up === "APPROVED") return true;
+  if (up === "REJECTED" || up === "PENDING") return false;
+
+  // fallback เผื่อ schema แปลก ๆ
+  const th = normalizeStatus(txt);
+  return th === "อนุมัติ";
 }
-
 
 // ✅ Select ธีมกลาง (ใช้ inputTheme.control + ทำลูกศรให้สวย/คุมได้)
 function ThemedSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
